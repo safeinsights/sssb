@@ -1063,3 +1063,35 @@ authorized read, a machine read, a Simulator read, that download, and a probe th
 **Limits.** A screen (a server component) that reads org-scoped data is not judged, nor is a metadata route
 (`opengraph-image`, `icon`, `sitemap`, `robots`, `manifest`), which Next serves without a `route.ts`: the scan reads
 route handlers and Server Actions only (safeinsights/sssb#221). The conformance check keeps its id, `authz-mutations`, since an app's `optOut` names it.
+
+## Addendum (2026-11-27, later): a reads-only gate
+
+safeinsights/sssb#220. Since reads are judged (the addendum above), three kinds of read that touch no org-scoped data
+had no clean way through: a public read outside `src/app/api` (a feed), which no app exemption could name; a read that
+names an inert value no gate describes (a preflight's shared headers object, a probe reporting a deployment parameter);
+and a provider's verification handshake GET under `webhooks/`, which the framework's `wrapped-by` gate refused and an
+app entry could not replace.
+
+**One new gate kind, `reads-only`, with `names`.** It holds for a READ handler (GET, HEAD, OPTIONS) that reads nothing
+but the names it lists: every name it refers to from outside itself is an inert value (the reads-nothing allow-list)
+or one of `names`, an import by its exported name (a default import by its local one) or a declaration of the route's
+file. No global off the inert list counts (`fetch`, `process`), and no name can excuse an aliased or namespace import, a
+class, `import()`, `import.meta`, `using` or a `constructor` member. It never holds for a mutation, and an entry whose
+gate it is applies to reads only: at its path, a mutation is judged by the exemption it would have had without it.
+
+**Where it may sit, and nothing else may.** An app may put a `reads-only` entry (and only that kind) outside
+`src/app/api`, under a new key `outsideApi: { files, prefixes }` relative to `src/app`; and it may name ONE file
+(not a prefix) under one of the framework's exempt prefixes (`webhooks/`, `simulator/`), not under a framework exact
+entry or a required-alongside prefix (`service/`). Everything else an app's file could say before is unchanged, and
+every other overlap with a framework entry still fails. A `reads-only` entry is stale unless its path has a read
+handler.
+
+**What it proves.** That the read touches nothing but its request, inert values and the listed names: the entry's
+reason has to answer for exactly those names. A listed import is not read (a helper in another module is out of the
+scan's sight, as always), so listing a function that reads org data is a claim the reason makes, which review judges,
+as it judges a `calls` gate's port call.
+
+**Rejected:** treating `process.env` as inert (the app's lint, `sssb/no-process-env`, keeps it out of routes; a value
+from the environment arrives through `config/params.ts`, an import a `reads-only` gate can name); treating a frozen
+object `const` as inert by itself (the gate covers it, by name, with a reason); letting a `reads-only` entry under a
+framework prefix fall back to the prefix's gate for a read it refuses (an exact entry wins, as before).

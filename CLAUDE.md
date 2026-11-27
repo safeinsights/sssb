@@ -188,9 +188,12 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   is `packages/kit/src/authz/app-exemptions.ts`, which applies the app's own exemptions. The FRAMEWORK's exemption map is
   `packages/kit/src/authz/route-policy.ts`, and its staleness is measured against the FIXTURE tree, so a new framework
   exemption needs a file there to demonstrate it; the fixture's routes are scanned, never served. An app's entry that
-  overlaps a framework one, or a prefix nested in another of the app's, fails. **Every exemption's `mustMatch`** is
-  checked on each verb (the handler IS the guard's call, reaches a port call, or opens with the simulated-mode 404),
-  every name in it a value import kept under its exported name, so a local look-alike or an alias is not the gate —
+  overlaps a framework one, or a prefix nested in another of the app's, fails, but for a `reads-only` entry for one
+  file under a framework prefix, which applies to reads only. **Every exemption's `mustMatch`** is
+  checked on each verb (the handler IS the guard's call, reaches a port call, opens with the simulated-mode 404, or
+  is a read that names nothing but inert values and the gate's names), every name in it a value import kept under its
+  exported name (a `reads-only` gate's may also be a declaration of the route's file), so a local look-alike or an
+  alias is not the gate —
   entries are matched by relative path in every root, so a gateless one would exempt an adopter's same-named route from
   authorization entirely. It proves the route is the KIND the reason describes, never the reason's whole claim;
   ADR-0012 states the limit.

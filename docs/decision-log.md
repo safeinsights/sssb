@@ -8001,3 +8001,25 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
   scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
+
+## A reads-only gate for public and inert reads (2026-11-27, `fix/authz-public-reads`)
+
+safeinsights/sssb#220. The design and what it accepts are ADR-0012's later 2026-11-27 addendum; the calls it did not
+settle:
+
+- **One gate kind for all three shapes**, not one allowance each. A public feed, a preflight sharing a headers object
+  and a handshake GET differ only in which names they read; a `reads-only` gate lists them, and the scan checks the
+  rest of the handler reads nothing. Rejected: **a second key space for any gate outside `src/app/api`** (a `calls`
+  gate proves only that one call is reached, not that a read outside `api/` does nothing else) and **app entries of
+  any kind under a framework prefix** (a mutation there must keep the framework's gate).
+- **Reads only, by the gate and by the lookup.** The gate never holds for a mutation, and `exemptionFor` skips a
+  `reads-only` entry for a mutating verb, so a POST beside a reads-only GET under `webhooks/` is still judged by
+  `withWebhookSecret`, and one outside `src/app/api` can match no exemption, as before.
+- **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
+  prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
+  a prefix's gate override every exact entry beneath it (review of this change caught it in the first draft).
+- **`names` are identifiers**, not dotted names: an import's exported name (a default import's local name) or a
+  declaration of the route's file. A namespace import is refused outright, since it names the whole module, and so is
+  an aliased one (`import { headers as cors }`), as for every gate.
+- **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
+  own, in its own PR.
