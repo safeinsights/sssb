@@ -141,6 +141,8 @@ interface RelationRow {
     enabled: boolean
     forced: boolean
     is_partition: boolean
+    /** `app_user` has its OWNER's privileges (a member of the owning role), so ENABLE-only RLS does not hold it. */
+    app_user_owns: boolean
 }
 
 interface PolicyRow {
@@ -192,7 +194,8 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
                c.relkind::text                                                    AS kind,
                c.relrowsecurity                                                   AS enabled,
                c.relforcerowsecurity                                              AS forced,
-               c.relispartition                                                   AS is_partition
+               c.relispartition                                                   AS is_partition,
+               pg_has_role('app_user', c.relowner, 'USAGE')                       AS app_user_owns
         FROM reachable r
         JOIN pg_class c ON c.oid = r.oid
         JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -370,6 +373,13 @@ function declares(exemption: Exemption, privilege: string): boolean {
 function provenWrite(key: string, relation: RelationRow, write: ExemptWrite, policies: PolicyRow[]): string[] {
     if (!relation.enabled) {
         return [`RLS_EXEMPT declares ${write} on ${key}, which has no ROW LEVEL SECURITY to confine it to a tenant`]
+    }
+    // Without FORCE the owner skips every policy, and so does any role with the owner's privileges: a member of the
+    // owning role. A tenant table's FORCE holds such a role; an exempt one's ENABLE does not.
+    if (relation.app_user_owns && !relation.forced) {
+        return [
+            `RLS_EXEMPT declares ${write} on ${key}, whose owner's privileges app_user holds, so no policy applies to it`,
+        ]
     }
     const command = WRITE_COMMANDS[write]
     const applying = policies.filter(

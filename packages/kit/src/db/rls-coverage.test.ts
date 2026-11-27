@@ -154,3 +154,14 @@ describe('the RLS coverage check, on the exempt relations', () => {
         expect(failures).toContain('no permissive policy admits INSERT')
     }, 60_000)
 })
+
+describe('the RLS coverage check, on who owns an exempt relation', () => {
+    it("fails declared writes when app_user holds the owner's privileges, which skip non-forced policies", async () => {
+        const failures = await coverageFailures(async (db) => {
+            await sql`CREATE ROLE probe_owner NOLOGIN`.execute(db)
+            await sql`ALTER TABLE organizations OWNER TO probe_owner`.execute(db)
+            await sql`GRANT probe_owner TO app_user`.execute(db)
+        })
+        expect(failures).toContain("declares INSERT on public.organizations, whose owner's privileges app_user holds")
+    }, 60_000)
+})

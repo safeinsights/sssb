@@ -240,6 +240,9 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
     // create, rename and delete teams, and row-level security confines each of those to the request's own tenant.
     // Every write below is the shape a route would send; each cross-tenant one must land nowhere.
     const orgStamp = Date.now()
+    // Every probe ROLLS BACK, whatever the write does, so a regression shows as a red proof and never leaves a
+    // stray or rewritten team behind in a contract database that is reused.
+    const rolledBack = new Error('rolled back')
     const orgWriteFails = async (tenantId: string | null, write: (trx: Kysely<DB>) => Promise<unknown>) => {
         try {
             await appDb.transaction().execute(async (trx) => {
@@ -248,9 +251,10 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
                     await sql`SELECT set_config('app.current_tenant', ${tenantId}, true)`.execute(trx)
                 }
                 await write(trx)
+                throw rolledBack
             })
         } catch (error) {
-            return String(error)
+            return error === rolledBack ? 'no error' : String(error)
         }
         return 'no error'
     }
@@ -344,12 +348,13 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
             .execute(),
     )
     expect(/row-level security/.test(contextlessInsert)).toBe(true)
-    const contextlessWrites = await appDb.transaction().execute(async (trx) => {
-        await sql`SET LOCAL ROLE app_user`.execute(trx)
+    let contextlessWrites = -1
+    const contextless = await orgWriteFails(null, async (trx) => {
         const update = await trx.updateTable('organizations').set({ name: 'Contextless' }).executeTakeFirst()
         const remove = await trx.deleteFrom('organizations').executeTakeFirst()
-        return Number(update.numUpdatedRows) + Number(remove.numDeletedRows)
+        contextlessWrites = Number(update.numUpdatedRows) + Number(remove.numDeletedRows)
     })
+    expect(contextless).toBe('no error')
     expect(contextlessWrites).toBe(0)
 
     // TRUNCATE ignores row-level security, so it is not granted
