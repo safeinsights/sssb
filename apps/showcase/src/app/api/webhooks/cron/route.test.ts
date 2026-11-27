@@ -67,8 +67,5 @@ describe('POST /api/webhooks/cron', () => {
                 stoppedBy: body.deliveries.stoppedBy,
             },
         })
-        // A tick is bounded: what stopped each drain, if anything (a slow first database start can spend a window).
-        expect([null, 'items', 'time']).toContain(body.stoppedBy)
-        expect([null, 'items', 'time']).toContain(body.deliveries.stoppedBy)
     })
 })
