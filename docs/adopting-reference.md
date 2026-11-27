@@ -472,7 +472,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 87 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 88 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -639,6 +639,14 @@ the tenant for the transaction; each tenant table's policy compares the row's `t
     `tenants`, `organizations` and `service_keys` (SSSB's [`SECURITY.md`](../SECURITY.md) says why). Your app gets no
     exemption: every table it reads through `withTenant` is tenant-scoped, so keep data that every tenant shares in code,
     or a copy per tenant.
+
+    A route may create, rename and delete teams inside `withTenant`: `organizations` is readable across tenants, but its
+    writes are confined to the request's tenant, and `authorize(...)` decides who may make them. A request sets a new
+    team's tenant, slug and name and may change its name; its slug (how the auth provider and its inbound mail address
+    name it) and its id are not a request's to change, and a slug another tenant's team holds is refused. A table of yours that
+    must keep its org in its own tenant can say so in Postgres with a composite foreign key,
+    `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)`; a plain `org_id` reference accepts
+    another tenant's team.
 
 - **What it cannot check for you.** A role with `SUPERUSER` or `BYPASSRLS` skips row-level security outright, so the
   role your server connects as must have neither: the `db-role-not-superuser` row of your cutover checklist. `SssbApp`
