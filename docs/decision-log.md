@@ -7624,6 +7624,7 @@ Notification`, self-only), the preferences (`read NotificationPref`, self-only) 
 - **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
   who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
   of this fix.
+
 ## The Clerk adapter: one read per render, the keyless fallback closed, a client sign-out (2026-11-27, `fix/clerk-adapter`)
 
 safeinsights/sssb#200, #193 and #180, together because all three are SSSB's real Clerk adapter.
