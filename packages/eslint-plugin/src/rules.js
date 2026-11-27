@@ -21,6 +21,8 @@ import {
 } from './import-ban.js'
 import {
     a11yLiteralSelector,
+    PROXY_FILE,
+    proxyRequestOriginSelector,
     requestOriginSelector,
     visitorHeaderSelector,
     appCodePatterns,
@@ -130,10 +132,23 @@ const runModeEnv = syntaxBan({
     description: "An app's real adapter never reads the run mode itself.",
     selectors: { member: runModeEnvSelector, destructure: runModeEnvDestructureSelector },
 })
-const rawRequestOrigin = syntaxBan({
-    description: "The visitor's origin and address come from @sssb/kit/adapters/edge-headers, never the raw request.",
+const RAW_REQUEST_ORIGIN =
+    "The visitor's origin and address come from @sssb/kit/adapters/edge-headers, never the raw request."
+const rawRequestOriginOutsideProxy = syntaxBan({
+    description: RAW_REQUEST_ORIGIN,
     selectors: { header: visitorHeaderSelector, origin: requestOriginSelector },
 })
+const rawRequestOriginInProxy = syntaxBan({
+    description: RAW_REQUEST_ORIGIN,
+    selectors: { header: visitorHeaderSelector, origin: proxyRequestOriginSelector },
+})
+// One rule, two selector sets: only in the app's proxy may a URL on the request go straight to a redirect or rewrite
+// (./patterns.js says why).
+const rawRequestOrigin = {
+    meta: rawRequestOriginOutsideProxy.meta,
+    create: (context) =>
+        (PROXY_FILE.test(context.filename) ? rawRequestOriginInProxy : rawRequestOriginOutsideProxy).create(context),
+}
 const a11yLiteral = syntaxBan({
     description: 'Accessible names, placeholders, titles and alt text come from the catalog, never a literal.',
     selectors: { literal: a11yLiteralSelector },

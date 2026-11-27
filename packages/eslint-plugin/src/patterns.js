@@ -312,8 +312,10 @@ export const a11yLiteralSelector = {
 //   (next/headers), or on a variable whose name says header; or a computed key on `<x>.headers` (Node's
 //   `req.headers[...]`). A `searchParams.get('host')` or `process.env['HOST']` is not a request's header;
 // - the `origin`, `host`, `hostname` or `href` of `new URL(<x>.url)` or of `<x>.nextUrl`, by member or destructuring;
-// - `new URL(path, <x>.url)` (or `<x>.nextUrl`), an absolute URL on the server's own host, but where it is handed
-//   straight to a `redirect` or `rewrite`: Next relativizes a same-origin redirect a proxy answers;
+// - `new URL(path, <x>.url)` (or `<x>.nextUrl`), an absolute URL on the server's own host; in the app's proxy alone
+//   (`proxy.*`, `middleware.*`) it may be handed straight to a `redirect` or `rewrite`, because Next relativizes a
+//   same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`): a route handler's
+//   `NextResponse.redirect(new URL('/en', request.url))` sends the visitor to `https://localhost:3000/en`;
 // - `baseUrl: <x>.url`, the argument SSSB's own `sendOrgInvite` and `applyDemoPreset` take.
 // Path and search parameters of the same URLs are right and stay allowed.
 const VISITOR_HEADER =
@@ -338,17 +340,29 @@ const REQUEST_URL = (at) =>
     `:matches([${at}.type="NewExpression"][${at}.callee.name="URL"][${at}.arguments.length=1]` +
     `[${at}.arguments.0.property.name="url"], [${at}.property.name="nextUrl"])`
 const ORIGIN_PART = '/^(origin|host|hostname|href)$/'
+const URL_ON_REQUEST =
+    'NewExpression[callee.name="URL"][arguments.length=2][arguments.1.property.name=/^(url|nextUrl)$/]'
+const requestOriginSelectorWith = (urlOnRequest) =>
+    `:matches(MemberExpression[property.name=${ORIGIN_PART}]${REQUEST_URL('object')}, ` +
+    `VariableDeclarator${REQUEST_URL('init')} > ObjectPattern > Property[key.name=${ORIGIN_PART}], ` +
+    `${urlOnRequest}, ` +
+    'Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"])'
+/** The file Next runs as the app's proxy, where a same-origin redirect or rewrite is relativized. */
+export const PROXY_FILE = /(^|[\\/])(proxy|middleware)\.[cm]?[jt]sx?$/
+const REQUEST_ORIGIN_MESSAGE =
+    'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
+    "request's own URL names the server's bind address (https://localhost:3000), not the app's. Its path and " +
+    'search parameters are right as they are.'
 export const requestOriginSelector = {
-    selector:
-        `:matches(MemberExpression[property.name=${ORIGIN_PART}]${REQUEST_URL('object')}, ` +
-        `VariableDeclarator${REQUEST_URL('init')} > ObjectPattern > Property[key.name=${ORIGIN_PART}], ` +
-        'NewExpression[callee.name="URL"][arguments.length=2][arguments.1.property.name=/^(url|nextUrl)$/]' +
-        ':not(CallExpression[callee.property.name=/^(redirect|rewrite)$/] > NewExpression), ' +
-        'Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"])',
-    message:
-        'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
-        "request's own URL names the server's bind address (https://localhost:3000), not the app's. Its path and " +
-        'search parameters are right as they are.',
+    selector: requestOriginSelectorWith(URL_ON_REQUEST),
+    message: REQUEST_ORIGIN_MESSAGE,
+}
+/** The same, in the app's proxy, where a URL on the request handed straight to a redirect or rewrite is right. */
+export const proxyRequestOriginSelector = {
+    selector: requestOriginSelectorWith(
+        `${URL_ON_REQUEST}:not(CallExpression[callee.property.name=/^(redirect|rewrite)$/] > NewExpression)`,
+    ),
+    message: REQUEST_ORIGIN_MESSAGE,
 }
 
 // Every pattern frozen, its lists included: the rules read them when they run, and an app's config is code that could
@@ -374,6 +388,7 @@ for (const pattern of [
     a11yLiteralSelector,
     visitorHeaderSelector,
     requestOriginSelector,
+    proxyRequestOriginSelector,
 ]) {
     if (pattern.group) Object.freeze(pattern.group)
     Object.freeze(pattern)

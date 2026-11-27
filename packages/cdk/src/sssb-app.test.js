@@ -534,6 +534,46 @@ describe('the synth assertions fail', () => {
                 cfn.addPropertyDeletionOverride('DistributionConfig.DefaultCacheBehavior.FunctionAssociations')
             }),
         ).toThrow(/the default behavior reaches the server without sssbApp.forwardedHost/)
+        // A viewer-request function of the adopter's own does not overwrite the headers the server believes.
+        expect(
+            withServer((app) => {
+                const own = new cdk.aws_cloudfront.Function(app, 'OwnViewerRequest', {
+                    code: cdk.aws_cloudfront.FunctionCode.fromInline(
+                        'function handler(event) { return event.request }',
+                    ),
+                    runtime: cdk.aws_cloudfront.FunctionRuntime.JS_2_0,
+                })
+                app.distribution.addBehavior('/api/extra/*', serverOrigin(app), {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    functionAssociations: [
+                        { function: own, eventType: cdk.aws_cloudfront.FunctionEventType.VIEWER_REQUEST },
+                    ],
+                })
+            }),
+        ).toThrow(/\/api\/extra\/\* reaches the server without sssbApp.forwardedHost/)
+        // Through an origin group whose member is the Function URL.
+        expect(
+            withServer((app) => {
+                const group = new cdk.aws_cloudfront_origins.OriginGroup({
+                    primaryOrigin: serverOrigin(app),
+                    fallbackOrigin: cdk.aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(app.assetsBucket),
+                })
+                app.distribution.addBehavior('/grouped/*', group, {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                })
+            }),
+        ).toThrow(/\/grouped\/\* reaches the server without sssbApp.forwardedHost/)
+        // On a second distribution of the stack's that is given the Function URL.
+        expect(
+            withServer((app) => {
+                new cdk.aws_cloudfront.Distribution(app, 'Second', {
+                    defaultBehavior: {
+                        origin: serverOrigin(app),
+                        viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    },
+                })
+            }),
+        ).toThrow(/the default behavior \(on .*Second.*\) reaches the server without sssbApp.forwardedHost/)
         // With the function, a behavior of the adopter's own is fine.
         expect(
             withServer((app) => {

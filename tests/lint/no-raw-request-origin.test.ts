@@ -20,10 +20,10 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
         { code: "const p = new URL(request.url).searchParams.get('status')" },
         { code: 'const path = request.nextUrl.pathname' },
         { code: 'const path = new URL(request.url).pathname' },
-        // A redirect or rewrite built against the request's URL: Next relativizes a same-origin Location.
-        { code: "NextResponse.redirect(new URL('/en', request.url))" },
-        { code: "NextResponse.rewrite(new URL('/en/x', request.nextUrl))" },
-        { code: "Response.redirect(new URL('/en', request.url), 307)" },
+        // In the app's proxy, a redirect or rewrite built against the request's URL: Next relativizes a same-origin
+        // Location the proxy answers with.
+        { code: "NextResponse.redirect(new URL('/en', request.url))", filename: 'apps/any-app/src/proxy.ts' },
+        { code: "NextResponse.rewrite(new URL('/en/x', request.nextUrl))", filename: 'src/middleware.js' },
         // Not a request's headers: search parameters, the environment, a map, a parsed DSN.
         { code: "u.searchParams.get('host')" },
         { code: "process.env['HOST']" },
@@ -82,6 +82,28 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
         },
         { code: "const link = new URL('/en', request.nextUrl)", errors: [{ messageId: 'origin' }] },
         { code: 'sendOrgInvite({ baseUrl: request.url })', errors: [{ messageId: 'origin' }] },
+        // Outside the proxy, Next does not relativize a redirect: a route handler's would send the visitor to the
+        // server's bind address.
+        ...[
+            "NextResponse.redirect(new URL('/en/dashboard', request.url))",
+            "Response.redirect(new URL('/en', request.url), 307)",
+            "NextResponse.rewrite(new URL('/en/x', request.nextUrl))",
+        ].map((code) => ({
+            code,
+            filename: 'apps/any-app/src/app/api/callback/route.ts',
+            errors: [{ messageId: 'origin' }],
+        })),
+        // The proxy keeps every other form.
+        {
+            code: "const link = new URL('/en', request.url).toString()",
+            filename: 'apps/any-app/src/proxy.ts',
+            errors: [{ messageId: 'origin' }],
+        },
+        {
+            code: "request.headers.get('x-forwarded-for')",
+            filename: 'apps/any-app/src/proxy.ts',
+            errors: [{ messageId: 'header' }],
+        },
     ],
 })
 

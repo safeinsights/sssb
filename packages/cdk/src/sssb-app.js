@@ -201,18 +201,27 @@ function resolveMigrator(appDir) {
  * @returns {{ Environment?: { Variables?: Record<string, unknown> }, Code?: { S3Bucket?: unknown, S3Key?: unknown } }}
  */
 function renderedProperties(fn) {
-    const cfn = /** @type {any} */ (fn.node.defaultChild)
+    return renderedCfnProperties(/** @type {any} */ (fn.node.defaultChild), fn.node.path)
+}
+
+/**
+ * @param {any} cfn an L1 resource
+ * @param {string} [path] what to name it by in an error
+ * @returns {Record<string, any>}
+ */
+function renderedCfnProperties(cfn, path = cfn?.node?.path) {
     if (typeof cfn?._toCloudFormation !== 'function') {
-        throw new Error(`SssbApp: cannot render ${fn.node.path}'s CloudFormation to check it`)
+        throw new Error(`SssbApp: cannot render ${path}'s CloudFormation to check it`)
     }
-    const rendered = cdk.Stack.of(fn).resolve(cfn._toCloudFormation())
+    const rendered = cdk.Stack.of(cfn).resolve(cfn._toCloudFormation())
     return Object.values(rendered.Resources ?? {})[0]?.Properties ?? {}
 }
 
 /**
  * The behaviors of a rendered distribution that reach the server without the forwarded-host function on the viewer
  * request: the server believes the headers that function writes (`SSSB_EDGE`), so a behavior without it lets a viewer
- * write the host and address it believes. A behavior reaches the server when its origin's domain is the Function URL's.
+ * write the host and address it believes. A behavior reaches the server when its origin's domain is the Function URL's,
+ * or it targets an origin group with such an origin among its members.
  * @param {any} config the rendered `DistributionConfig`
  * @param {string} functionUrlRef the Function URL's resolved reference, as JSON
  * @param {string} forwardedHostArn the function's resolved ARN, as JSON
@@ -224,6 +233,10 @@ export function unguardedServerBehaviors(config, functionUrlRef, forwardedHostAr
             .filter((/** @type {any} */ o) => JSON.stringify(o?.DomainName ?? null).includes(functionUrlRef))
             .map((/** @type {any} */ o) => o.Id),
     )
+    for (const group of config?.OriginGroups?.Items ?? []) {
+        const members = (group?.Members?.Items ?? []).map((/** @type {any} */ m) => m?.OriginId)
+        if (members.some((/** @type {any} */ id) => serverOrigins.has(id))) serverOrigins.add(group.Id)
+    }
     const behaviors = [config?.DefaultCacheBehavior, ...(config?.CacheBehaviors ?? [])]
     return behaviors
         .filter((b) => serverOrigins.has(b?.TargetOriginId))
@@ -860,21 +873,24 @@ export class SssbApp extends Construct {
                 for (const name of ['DEMO_MODE', 'E2E_BUILD']) {
                     if (name in migratorEnvironment) problems.push(`the migrator's environment sets ${name}`)
                 }
-                // A behavior of the adopter's own that reaches the server must run the forwarded-host function too.
-                const distributionConfig = renderedProperties(distribution).DistributionConfig
-                for (const path of unguardedServerBehaviors(
-                    distributionConfig,
-                    JSON.stringify(
-                        cdk.Stack.of(this).resolve(
-                            /** @type {cdk.CfnResource} */ (functionUrl.node.defaultChild).logicalId,
-                        ),
-                    ),
-                    JSON.stringify(cdk.Stack.of(this).resolve(forwardedHost.functionArn)),
-                )) {
-                    problems.push(
-                        `${path} reaches the server without sssbApp.forwardedHost on viewer-request: a viewer would ` +
-                            'write the host and address the server believes (SSSB_EDGE)',
-                    )
+                // A behavior of the adopter's own that reaches the server must run the forwarded-host function too, on
+                // this distribution or on another of the stack's that has been given the Function URL (an origin with
+                // access control of its own). One in another stack names it by an import, which this does not follow.
+                const thisStack = cdk.Stack.of(this)
+                const functionUrlRef = JSON.stringify(
+                    thisStack.resolve(/** @type {cdk.CfnResource} */ (functionUrl.node.defaultChild).logicalId),
+                )
+                const forwardedHostArn = JSON.stringify(thisStack.resolve(forwardedHost.functionArn))
+                for (const cfn of thisStack.node.findAll()) {
+                    if (!(cfn instanceof aws_cloudfront.CfnDistribution)) continue
+                    const config = renderedCfnProperties(cfn)['DistributionConfig']
+                    const which = cfn === distribution.node.defaultChild ? '' : ` (on ${cfn.node.path})`
+                    for (const path of unguardedServerBehaviors(config, functionUrlRef, forwardedHostArn)) {
+                        problems.push(
+                            `${path}${which} reaches the server without sssbApp.forwardedHost on viewer-request: a ` +
+                                'viewer would write the host and address the server believes (SSSB_EDGE)',
+                        )
+                    }
                 }
                 if (cdk.Stack.of(this).bundlingRequired) {
                     const bundle = stagedBundle(migrator)
