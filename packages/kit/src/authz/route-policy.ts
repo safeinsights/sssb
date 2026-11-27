@@ -153,6 +153,15 @@ export const FRAMEWORK_POLICY: ScanPolicy = {
 export function isGate(gate: unknown): gate is Gate {
     if (typeof gate !== 'object' || gate === null || !('kind' in gate)) return false
     if (gate.kind === 'opens-with-simulated-404') return true
+    if (gate.kind === 'reads-only') {
+        // Names, not dotted callees: an import's exported name or a declaration of the route's file.
+        return (
+            'names' in gate &&
+            Array.isArray(gate.names) &&
+            gate.names.length > 0 &&
+            gate.names.every((name) => typeof name === 'string' && /^[A-Za-z_$][\w$]*$/.test(name))
+        )
+    }
     if (gate.kind !== 'wrapped-by' && gate.kind !== 'calls') return false
     return (
         'callees' in gate &&

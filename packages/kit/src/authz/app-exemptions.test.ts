@@ -180,7 +180,7 @@ describe("an app's own exemptions", () => {
 
     it('fail an unknown key, a malformed path, and a default export that is not an object', async () => {
         expect(appExemptionsFrom({ file: {} }, 'x').problems).toEqual([
-            'x: unknown key `file` (only `files` and `prefixes`)',
+            'x: unknown key `file` (only `files`, `prefixes`, `outsideApi`)',
         ])
         expect(
             appExemptionsFrom(
@@ -204,6 +204,115 @@ describe("an app's own exemptions", () => {
         )
         expect(scan.exemptionProblems).toEqual([
             expect.stringMatching(/^acme\/authz-exemptions\.mjs: does not load: .*boom/),
+        ])
+    })
+})
+
+describe('reads-only entries: a way through for reads that touch no org data (safeinsights/sssb#220)', () => {
+    const readsOnly = (names: string[], reason = 'a public read of the listed values only') =>
+        `{ reason: '${reason}', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(names)} } }`
+    const FEED =
+        "import { publicPosts } from '../../../posts'\nexport async function GET() { return new Response(await publicPosts()) }\n"
+    const PREFLIGHT =
+        "import { corsHeaders } from '../../../cors'\nexport function OPTIONS() { return new Response(null, { status: 204, headers: corsHeaders }) }\n"
+    const HANDSHAKE =
+        "import { params } from '../../../../config/params'\n" +
+        'export function GET(request: Request) { const q = new URL(request.url).searchParams; ' +
+        "return q.get('hub.verify_token') === params.verifyToken ? new Response(q.get('hub.challenge')) : new Response(null, { status: 403 }) }\n"
+
+    it('pass a public read outside src/app/api under outsideApi, and only the read', async () => {
+        const exemptions = `export default { outsideApi: { files: { 'feed.xml/route.ts': ${readsOnly(['publicPosts'])} } } }\n`
+        const scan = await scanApp(
+            app({ 'api/dockets/route.ts': AUTHORIZED_POST, 'feed.xml/route.ts': FEED }, exemptions),
+        )
+        expect(scan.exemptionProblems).toEqual([])
+        expect(scan.failures).toEqual([])
+        // A mutation beside it can match no exemption outside src/app/api, as before.
+        const withPost = await scanApp(
+            app({ 'api/dockets/route.ts': AUTHORIZED_POST, 'feed.xml/route.ts': FEED + OPEN_POST }, exemptions),
+        )
+        expect(withPost.failures).toHaveLength(1)
+        expect(withPost.failures[0]).toMatch(/^acme: \.\.\/feed\.xml\/route\.ts POST exports a mutating handler/)
+    })
+
+    it('fail a read that names anything beyond the listed names, or a global off the inert list', async () => {
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders'])} } }\n`
+        const extra =
+            "import { corsHeaders, load } from '../../../cors'\nexport async function OPTIONS() { return new Response(await load(), { headers: corsHeaders }) }\n"
+        const fetching =
+            "import { corsHeaders } from '../../../cors'\nexport async function OPTIONS() { return fetch('http://x', { headers: corsHeaders }) }\n"
+        for (const src of [extra, fetching]) {
+            const scan = await scanApp(app({ 'api/cors/route.ts': src }, exemptions))
+            expect(scan.failures).toHaveLength(1)
+            expect(scan.failures[0]).toMatch(/sits under an exemption that holds only when the handler is a read/)
+        }
+        const ok = await scanApp(app({ 'api/cors/route.ts': PREFLIGHT }, exemptions))
+        expect(ok.failures).toEqual([])
+    })
+
+    it('pass a handshake GET under the framework webhooks/ prefix, while its POST keeps the framework gate', async () => {
+        const exemptions = `export default { files: { 'webhooks/meta/route.ts': ${readsOnly(['params'])} } }\n`
+        const wrapped =
+            "import { withWebhookSecret } from '../../respond'\nexport const POST = withWebhookSecret(async () => Response.json({}))\n"
+        const pass = await scanApp(app({ 'api/webhooks/meta/route.ts': HANDSHAKE + wrapped }, exemptions))
+        expect(pass.exemptionProblems).toEqual([])
+        expect(pass.failures).toEqual([])
+        const open = await scanApp(app({ 'api/webhooks/meta/route.ts': HANDSHAKE + OPEN_POST }, exemptions))
+        expect(open.failures).toHaveLength(1)
+        expect(open.failures[0]).toMatch(
+            /webhooks\/meta\/route\.ts POST sits under an exemption that holds only when the handler is itself a call to an imported withWebhookSecret/,
+        )
+    })
+
+    it('refuse every widening beyond those: another gate outside api, a prefix or another gate under a framework prefix, a framework file, a required gate', async () => {
+        const { problems, exemptions } = appExemptionsFrom(
+            {
+                outsideApi: {
+                    files: { 'feed/route.ts': { reason: 'r', mustMatch: { kind: 'calls', callees: ['publicPosts'] } } },
+                    prefixes: { 'api/': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } } },
+                },
+                files: {
+                    'webhooks/a/route.ts': { reason: 'r', mustMatch: { kind: 'calls', callees: ['x'] } },
+                    'profile/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } },
+                    'service/jobs/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } },
+                },
+                prefixes: { 'webhooks/meta/': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } } },
+            },
+            'x',
+        )
+        expect(exemptions).toEqual({ files: {}, prefixes: {} })
+        expect(problems).toEqual([
+            'x: outsideApi.files `feed/route.ts` must have a reads-only gate: a route outside src/app/api may be exempted only as a read that names nothing but its request, inert values and the names the gate lists',
+            'x: outsideApi.prefixes `api/` is under src/app/api: name it in `prefixes`, relative to src/app/api',
+            expect.stringMatching(/^x: files `webhooks\/a\/route\.ts` overlaps the framework's own entry `webhooks\/`/),
+            expect.stringMatching(
+                /^x: files `profile\/route\.ts` overlaps the framework's own entry `profile\/route\.ts`/,
+            ),
+            expect.stringMatching(
+                /^x: files `service\/jobs\/route\.ts` overlaps the framework's own entry `service\/`/,
+            ),
+            expect.stringMatching(/^x: prefixes `webhooks\/meta\/` overlaps the framework's own entry `webhooks\/`/),
+        ])
+    })
+
+    it('refuse a reads-only gate whose names are not names', () => {
+        for (const names of [[], ['a.b'], [''], [3]]) {
+            const { problems } = appExemptionsFrom(
+                { files: { 'a/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names } } } },
+                'x',
+            )
+            expect(problems, JSON.stringify(names)).toEqual([expect.stringMatching(/has no checkable mustMatch gate/)])
+        }
+    })
+
+    it('call a reads-only entry stale where no read handler is, and an outsideApi entry by its own key', async () => {
+        const exemptions =
+            `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders'])} }, ` +
+            `outsideApi: { files: { 'gone/route.ts': ${readsOnly(['publicPosts'])} } } }\n`
+        const scan = await scanApp(app({ 'api/cors/route.ts': AUTHORIZED_POST }, exemptions))
+        expect(scan.exemptionProblems).toEqual([
+            "acme/authz-exemptions.mjs: files `cors/route.ts` is stale — the app's src/app/api has no read handler there",
+            "acme/authz-exemptions.mjs: outsideApi.files `gone/route.ts` is stale — the app's src/app has no read handler there",
         ])
     })
 })

@@ -167,11 +167,20 @@ export interface ScanRoot {
  *   `@sssb/kit/ports/errors`, or a global `…Error`), no parameter runs code before it (a default), and the file
  *   assigns to none of the globals that branch builds (`Response`, `JSON`, an `…Error`), so the real-mode path
  *   does nothing.
+ * - `reads-only`: a READ handler (GET, HEAD, OPTIONS) that reads nothing (`readsNothing`) but the `names` listed:
+ *   imports by their exported name (a default import by its local one), or declarations of the route's own file
+ *   by their name (`corsHeaders`, `params`, `publicPosts`). Every other name it refers to from outside itself is an
+ *   inert value, and it names no global off the inert list (`fetch`, `process`). It never holds for a mutation, and an
+ *   entry whose gate it is applies to reads only, so a mutation at its path is judged by the exemption it would have
+ *   had without the entry. It is the one gate an app may put outside `src/app/api` or under one of the framework's
+ *   exempt prefixes (./app-exemptions.ts). What it proves: the read touches nothing but its request, inert values and
+ *   those names, so the entry's reason has to cover exactly those names (safeinsights/sssb#220).
  */
 export type Gate =
     | { kind: 'wrapped-by'; callees: readonly string[] }
     | { kind: 'calls'; callees: readonly string[] }
     | { kind: 'opens-with-simulated-404' }
+    | { kind: 'reads-only'; names: readonly string[] }
 
 /** What the analyser found on one handler's path. */
 export interface HandlerFacts {
@@ -183,6 +192,11 @@ export interface HandlerFacts {
     calls: ReadonlySet<string>
     /** The handler opens with the inert `if (!isSimulated)` gate and no parameter runs code (`opensWithSimulated404`). */
     opensWithSimulated404: boolean
+    /**
+     * Names from outside the handler that it refers to and that are not inert (`outsideNamesOf`), or null when it
+     * does something no name can excuse. Empty exactly when `readsNothing` holds. What a `reads-only` gate reads.
+     */
+    outsideNames: ReadonlySet<string> | null
     /**
      * The handler is a function (not a wrapper's result) whose code, read lexically, names nothing from outside it
      * but inert globals, a few named imports and literal constants (`readsNothing`), so the only data in its reach is
@@ -508,10 +522,19 @@ export interface ScanPolicy {
     hint?: string | undefined
 }
 
-export function exemptionFor(policy: ScanPolicy, rel: string): Exemption | undefined {
+/**
+ * The exemption for `rel`: its exact entry, else the first prefix it sits under. An exact entry wins over its prefix,
+ * with one exception: given a mutating `verb`, an entry whose gate is `reads-only` applies to reads only, so the lookup
+ * goes on past it (to the prefix an exact entry sits under, whose gate then judges the mutation).
+ */
+export function exemptionFor(policy: ScanPolicy, rel: string, verb?: string): Exemption | undefined {
+    const applies = (exemption: Exemption | undefined): exemption is Exemption =>
+        exemption !== undefined && (exemption.mustMatch.kind !== 'reads-only' || verb === undefined || isReadVerb(verb))
     const exact = policy.exemptFiles[rel]
-    if (exact) return exact
-    const prefix = Object.keys(policy.exemptPrefixes).find((p) => rel.startsWith(p))
+    if (applies(exact)) return exact
+    const prefix = Object.keys(policy.exemptPrefixes).find(
+        (p) => rel.startsWith(p) && applies(policy.exemptPrefixes[p]),
+    )
     return prefix === undefined ? undefined : policy.exemptPrefixes[prefix]
 }
 
@@ -520,8 +543,16 @@ function requiredFor(policy: ScanPolicy, rel: string): Exemption | undefined {
     return prefix === undefined ? undefined : policy.requiredAlongside[prefix]
 }
 
-export function gateHolds(gate: Gate, facts: HandlerFacts): boolean {
+/** Whether `facts` pass `gate`. A `reads-only` gate holds only for a read `verb`, so it needs one. */
+export function gateHolds(gate: Gate, facts: HandlerFacts, verb?: string): boolean {
     switch (gate.kind) {
+        case 'reads-only':
+            return (
+                verb !== undefined &&
+                isReadVerb(verb) &&
+                facts.outsideNames !== null &&
+                [...facts.outsideNames].every((name) => gate.names.includes(name))
+            )
         case 'wrapped-by':
             return facts.wrappedBy !== null && gate.callees.includes(facts.wrappedBy)
         case 'calls':
@@ -538,6 +569,12 @@ export function describeGate(gate: Gate): string {
             return `the handler is itself a call to an imported ${names(gate.callees)}, as in \`export const <VERB> = ${gate.callees[0]}(…)\``
         case 'calls':
             return `the handler reaches a call to an imported ${names(gate.callees)} on its own path`
+        case 'reads-only':
+            return (
+                `the handler is a read (GET, HEAD or OPTIONS) that names nothing from outside itself but inert values ` +
+                `and ${gate.names.map((name) => `\`${name}\``).join(', ')} (no other import or helper, and no global ` +
+                `off the inert list, such as fetch or process)`
+            )
         case 'opens-with-simulated-404':
             return (
                 'the handler takes no parameter that runs code (a default) and opens with ' +
@@ -558,10 +595,10 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
     }
     // An exemption is an alternative to authorize(...), never a ban on it: a handler under an exempted path that
     // does not pass the gate is judged like any other, so one that authorizes passes.
-    const exemption = exemptionFor(policy, route.rel)
-    if (exemption && gateHolds(exemption.mustMatch, handler.facts)) return undefined
+    const exemption = exemptionFor(policy, route.rel, handler.verb)
+    if (exemption && gateHolds(exemption.mustMatch, handler.facts, handler.verb)) return undefined
     const required = requiredFor(policy, route.rel)
-    if (required && !gateHolds(required.mustMatch, handler.facts)) {
+    if (required && !gateHolds(required.mustMatch, handler.facts, handler.verb)) {
         return `${where} must also satisfy: ${describeGate(required.mustMatch)}. ${required.reason}`
     }
     // A read that names nothing but inert values and its request reads no data, so it has nothing to authorize.
@@ -589,9 +626,11 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
             `does one whose denial cannot reach the handler. Call authorize(...) in this handler (a self-only read ` +
             `authorizes its self-only subject), or, only if it reads nothing org-scoped, ` +
             (route.rel.startsWith('../')
-                ? `move it under src/app/api, where an exemption in the app's authz-exemptions.mjs can name it: a ` +
-                  `route outside src/app/api can match none.`
-                : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs.`) +
+                ? `name it in the app's authz-exemptions.mjs under \`outsideApi\` (keys relative to src/app), with ` +
+                  `a \`reads-only\` gate listing the imports it reads, the only gate a route outside src/app/api can ` +
+                  `match.`
+                : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs (a ` +
+                  `\`reads-only\` gate lists the imports a read may name).`) +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -858,12 +897,14 @@ class RootScanner {
         const reach = new Reach(node.src, this.authorizeModules)
         if ('fn' in node) {
             reach.invoke(node.fn)
+            const outsideNames = outsideNamesOf(node.src, node.fn)
             return {
                 reachesAuthorize: reach.authorize,
                 wrappedBy: null,
                 calls: reach.calls,
                 opensWithSimulated404: opensWithSimulated404(node.src, node.fn),
-                readsNothing: readsNothing(node.src, node.fn),
+                outsideNames,
+                readsNothing: outsideNames?.size === 0,
             }
         }
         reach.wrapped(node.call)
@@ -873,6 +914,7 @@ class RootScanner {
             calls: reach.calls,
             opensWithSimulated404: false,
             // A wrapper is code the scan does not read, run on every request: what it reads is out of sight.
+            outsideNames: null,
             readsNothing: false,
         }
     }
@@ -1997,7 +2039,8 @@ const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
 const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__'])
 
 /**
- * Whether `fn` reads nothing it could have to authorize. Its whole text is read LEXICALLY, not along a path
+ * READS NOTHING (`HandlerFacts.readsNothing`): whether a handler reads nothing it could have to authorize, computed by
+ * `outsideNamesOf` below (it reads nothing when that set is empty). Its whole text is read LEXICALLY, not along a path
  * (parameters, nested functions and dead branches included), and every name it refers to that is declared outside it
  * must be one of:
  *
@@ -2016,8 +2059,15 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  * What it does not see: a member read through a computed key the scan cannot evaluate (`request[key]`). Like a gate,
  * it proves the KIND of handler, one that names nothing but inert values and its request, not that no data can reach
  * it (ADR-0012).
+ *
+ * The names from outside `fn` that it refers to and that are not inert (`readsNothing`'s allow-list), or null when it
+ * does something no name can excuse: names a global off the allow-list (`fetch`, `process`), names an import under
+ * another name than its exported one or a whole namespace, or uses a class, `import()`, `import.meta`, `using` or a
+ * `constructor`/`__proto__` member. An import counts by its exported name (a default import by its local one), a
+ * declaration of this file by its own name. What a `reads-only` gate (`Gate`) matches against: a read that names
+ * nothing outside it but inert values and the names the gate lists.
  */
-function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
+function outsideNamesOf(src: Source, fn: ts.FunctionLikeDeclaration): ReadonlySet<string> | null {
     const { checker, sf } = src
     // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
     const inside = (decl: ts.Declaration) => decl !== fn && decl.getStart(sf) >= fn.getStart(sf) && decl.end <= fn.end
@@ -2044,7 +2094,22 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
             isPrimitiveLiteral(src, decl.initializer)
         )
     }
-    const allowedReference = (id: ts.Identifier): boolean => {
+    /** The name a non-inert outside declaration counts under, or null when no name can stand for it. */
+    const nameOf = (decl: ts.Declaration): string | null => {
+        const imported = valueImportOf(decl)
+        if (imported !== undefined) {
+            if (imported.kind === 'namespace') return null
+            if (ts.isImportClause(decl)) return decl.name?.text ?? null
+            return ts.isImportSpecifier(decl) && decl.name.text === imported.name ? imported.name : null
+        }
+        if (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl)) return null
+        const name = (decl as ts.NamedDeclaration).name
+        return name !== undefined && ts.isIdentifier(name) ? name.text : null
+    }
+    const names = new Set<string>()
+    let excused = true
+    /** Records what `id` refers to; false when no name can excuse it. */
+    const reference = (id: ts.Identifier): boolean => {
         const parent = id.parent
         const symbol =
             ts.isShorthandPropertyAssignment(parent) && parent.name === id
@@ -2054,11 +2119,14 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
         if (decl === undefined) {
             return (INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)
         }
-        return inside(decl) || allowedOutside(decl)
+        if (inside(decl) || allowedOutside(decl)) return true
+        const name = nameOf(decl)
+        if (name === null) return false
+        names.add(name)
+        return true
     }
-    let reads = false
     const visit = (node: ts.Node): void => {
-        if (reads) return
+        if (!excused) return
         // A type runs nothing, and names nothing the handler reads.
         // An instantiation expression (`load<T>`) is an ExpressionWithTypeArguments, which is a type node holding a value.
         if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression)
@@ -2075,17 +2143,17 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
                 ts.isStringLiteralLike(node.argumentExpression) &&
                 ESCAPE_MEMBERS.has(node.argumentExpression.text))
         ) {
-            reads = true
+            excused = false
             return
         }
-        if (ts.isIdentifier(node) && isReference(node) && !allowedReference(node)) {
-            reads = true
+        if (ts.isIdentifier(node) && isReference(node) && !reference(node)) {
+            excused = false
             return
         }
         ts.forEachChild(node, visit)
     }
     visit(fn)
-    return !reads
+    return excused ? names : null
 }
 
 /**

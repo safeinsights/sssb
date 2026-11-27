@@ -2114,12 +2114,53 @@ describe('a read that reads nothing (safeinsights/sssb#103)', () => {
     })
 })
 
+describe('the names a read refers to from outside itself, for a reads-only gate (safeinsights/sssb#220)', () => {
+    const names = (src: string, verb = 'GET') => {
+        const facts = factsOf(src, verb)
+        return facts.outsideNames === null ? null : [...facts.outsideNames].sort()
+    }
+
+    it('lists an import by its exported name, a default import by its local one, and a declaration of the file', () => {
+        expect(
+            names(
+                "import { corsHeaders } from './cors'\nexport function GET() { return new Response(null, { headers: corsHeaders }) }",
+            ),
+        ).toEqual(['corsHeaders'])
+        expect(
+            names(
+                "import pkg from './package.json'\nexport function GET() { return Response.json({ v: pkg.version }) }",
+            ),
+        ).toEqual(['pkg'])
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\nfunction h() { return 1 }\nexport function GET() { return Response.json({ CORS, n: h() }) }",
+            ),
+        ).toEqual(['CORS', 'h'])
+        expect(names('export function GET() { return Response.json({ ok: true }) }')).toEqual([])
+    })
+
+    it('is null where no name can excuse what the handler does', () => {
+        for (const src of [
+            "import { corsHeaders as c } from './cors'\nexport function GET() { return Response.json(c) }",
+            "import * as cors from './cors'\nexport function GET() { return Response.json(cors.headers) }",
+            "export function GET() { return fetch('http://x') }",
+            'export function GET() { return Response.json(process.env.X) }',
+            "export async function GET() { return Response.json(await import('./x')) }",
+            'export function GET() { class A {}; return Response.json(A.name) }',
+            "import { wrap } from './wrap'\nexport const GET = wrap(() => Response.json({}))",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+    })
+})
+
 describe('judging a handler against a policy', () => {
     const facts = (over: Partial<HandlerFacts>): HandlerFacts => ({
         reachesAuthorize: false,
         wrappedBy: null,
         calls: new Set(),
         opensWithSimulated404: false,
+        outsideNames: null,
         readsNothing: false,
         ...over,
     })
@@ -2170,9 +2211,9 @@ describe('judging a handler against a policy', () => {
         }
     })
 
-    it('tells a read outside api/ that no exemption can name it', () => {
+    it('tells a read outside api/ where its exemption goes', () => {
         expect(judge(route('../feed/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
-            /move it under src\/app\/api, where an exemption .* can name it/,
+            /under `outsideApi` \(keys relative to src\/app\), with a `reads-only` gate/,
         )
         expect(judge(route('items/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
             /name a justified exemption, with the gate it passes, in the app's authz-exemptions\.mjs/,
@@ -2255,6 +2296,45 @@ describe('judging a handler against a policy', () => {
         expect(judge(svc, { verb: 'POST', facts: facts({ wrappedBy: 'withCaller' }) }, policy)).toMatch(
             /does not reach authorize/,
         )
+    })
+
+    it('a reads-only gate holds for a read that names only the listed names, and never for a mutation', () => {
+        const gate: Gate = { kind: 'reads-only', names: ['corsHeaders', 'params'] }
+        const listed = facts({ outsideNames: new Set(['corsHeaders']) })
+        expect(gateHolds(gate, listed, 'GET')).toBe(true)
+        expect(gateHolds(gate, listed, 'OPTIONS')).toBe(true)
+        expect(gateHolds(gate, facts({ outsideNames: new Set() }), 'HEAD')).toBe(true)
+        expect(gateHolds(gate, listed, 'POST')).toBe(false)
+        expect(gateHolds(gate, listed)).toBe(false)
+        expect(gateHolds(gate, facts({ outsideNames: new Set(['corsHeaders', 'load']) }), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts({ outsideNames: null }), 'GET')).toBe(false)
+        expect(describeGate(gate)).toMatch(
+            /a read \(GET, HEAD or OPTIONS\) that names nothing from outside itself but inert values and `corsHeaders`, `params`/,
+        )
+    })
+
+    it('a reads-only exact entry applies to reads; a mutation at its path falls to the prefix it sits under', () => {
+        const withEntry: ScanPolicy = {
+            ...policy,
+            exemptFiles: {
+                ...policy.exemptFiles,
+                'hooks/meta/route.ts': { reason: 'handshake', mustMatch: { kind: 'reads-only', names: ['params'] } },
+            },
+        }
+        expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'GET')?.reason).toBe('handshake')
+        expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'POST')?.reason).toBe('machine caller')
+        const read = facts({ outsideNames: new Set(['params']) })
+        expect(judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: read }, withEntry)).toBeUndefined()
+        expect(judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: read }, withEntry)).toMatch(
+            /holds only when the handler is itself a call to an imported withSecret/,
+        )
+        expect(
+            judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: facts({ wrappedBy: 'withSecret' }) }, withEntry),
+        ).toBeUndefined()
+        // A read the entry's gate refuses is judged under the entry, not passed on the prefix's gate.
+        expect(
+            judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, withEntry),
+        ).toMatch(/holds only when the handler is a read/)
     })
 
     it('a gate holds only on the facts it names', () => {
