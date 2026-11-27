@@ -412,8 +412,12 @@ describe('the optional ports follow their switches, and a port switched off is a
             const { assertRealEnv } = await import('./index')
             stubEnv(COMPATIBLE)
             expect(() => assertRealEnv()).not.toThrow()
+            for (const accepted of ['post', 'put', 'none']) {
+                stubEnv({ ...COMPATIBLE, STORAGE_UPLOAD_TARGET: accepted })
+                expect(() => assertRealEnv(), accepted).not.toThrow()
+            }
             for (const [name, value, message] of [
-                ['STORAGE_UPLOAD_TARGET', 'POST', /STORAGE_UPLOAD_TARGET must be post or none/],
+                ['STORAGE_UPLOAD_TARGET', 'POST', /STORAGE_UPLOAD_TARGET must be post, put or none/],
                 ['STORAGE_FORCE_PATH_STYLE', '1', /STORAGE_FORCE_PATH_STYLE must be true or false/],
                 ['STORAGE_ENDPOINT', 'acct.r2.example.com', /STORAGE_ENDPOINT must be an http\(s\) URL/],
             ] as const) {
