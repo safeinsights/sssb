@@ -271,19 +271,24 @@ function staleAppExemptions(
     const unused = (kind: string, rel: string, exemption: Exemption, matches: (r: string) => boolean): string[] => {
         const gate = exemption.mustMatch
         if (gate.kind !== 'reads-only') return []
+        const governs = (route: ScannedRoute, h: ScannedRoute['handlers'][number]) =>
+            isReadVerb(h.verb) && !h.facts?.reachesAuthorize && exemptionFor(policy, route.rel, h.verb) === exemption
+        // A governed read the gate refuses outright (it names something no name excuses) fails already; what it would
+        // have named is unknown, so no name is called unused beside that failure.
+        if (
+            judged.some(
+                (route) =>
+                    matches(route.rel) && route.handlers.some((h) => governs(route, h) && !h.facts?.outsideNames),
+            )
+        ) {
+            return []
+        }
         // Only the reads this entry governs (not one under its own exact entry), and that rest on it (not one that
         // authorizes anyway): a name only those use is in use.
         const read = new Set(
             judged
                 .filter((route) => matches(route.rel))
-                .flatMap((route) =>
-                    route.handlers.filter(
-                        (h) =>
-                            isReadVerb(h.verb) &&
-                            !h.facts?.reachesAuthorize &&
-                            exemptionFor(policy, route.rel, h.verb) === exemption,
-                    ),
-                )
+                .flatMap((route) => route.handlers.filter((h) => governs(route, h)))
                 .flatMap((h) => [...(h.facts?.outsideNames ?? [])]),
         )
         return gate.names

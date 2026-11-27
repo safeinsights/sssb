@@ -387,6 +387,16 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         ])
     })
 
+    it('call no name unused beside a read the gate refuses outright', async () => {
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders'])} } }\n`
+        const refused =
+            "import { corsHeaders } from '../../../cors'\nexport function OPTIONS() { return fetch('http://x', { headers: corsHeaders }) }\n"
+        const scan = await scanApp(app({ 'api/cors/route.ts': refused }, exemptions))
+        expect(scan.failures).toHaveLength(1)
+        expect(scan.failures[0]).toMatch(/It cannot pass one: `fetch` is a global off the inert list/)
+        expect(scan.exemptionProblems).toEqual([])
+    })
+
     it('call a listed name stale when no read handler it covers names it', async () => {
         const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders', 'db'])} } }\n`
         const scan = await scanApp(app({ 'api/cors/route.ts': PREFLIGHT }, exemptions))

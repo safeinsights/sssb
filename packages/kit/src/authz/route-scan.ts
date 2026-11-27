@@ -2146,15 +2146,9 @@ function outsideNamesOf(
     fn: ts.FunctionLikeDeclaration,
 ): { names: ReadonlySet<string>; refusal: null } | { names: null; refusal: string } {
     const { checker, sf } = src
-    /**
-     * What the walk reads: the handler, and every declaration of this file it names (followed below), so a listed
-     * name's own reads are counted too. A reference into any of them is a local one. The handler itself is not inside
-     * it: a property hung on it (`GET.load = load`) would be out of sight.
-     */
-    const roots: ts.Node[] = [fn]
-    const within = (decl: ts.Declaration, root: ts.Node) =>
-        decl.getStart(sf) >= root.getStart(sf) && decl.end <= root.end
-    const inside = (decl: ts.Declaration) => decl !== fn && roots.some((root) => within(decl, root))
+    // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
+    const within = (node: ts.Node, root: ts.Node) => node.getStart(sf) >= root.getStart(sf) && node.end <= root.end
+    const inside = (decl: ts.Declaration) => decl !== fn && within(decl, fn)
     const assigned = new Map<string, boolean>()
     const assignedGlobal = (name: string): boolean => {
         let known = assigned.get(name)
@@ -2179,6 +2173,8 @@ function outsideNamesOf(
         )
     }
     const names = new Set<string>()
+    /** The file's own `const`s counted by name, by symbol: each must be used by this handler alone (below). */
+    const local = new Map<ts.Symbol, string>()
     let refusal: string | null = null
     const refuse = (why: string): false => {
         refusal ??= why
@@ -2186,9 +2182,10 @@ function outsideNamesOf(
     }
     /**
      * Counts a non-inert declaration from outside the handler under its name, or refuses it. An import counts under its
-     * exported name (a default import under its local one). A declaration of this file counts only as a `const` or a
-     * function the file neither exports, declares ambiently nor reassigns, and what IT names is walked too, so a
-     * listed `const cors = db` or `function posts() { return db.all() }` also names `db`.
+     * exported name (a default import under its local one). A declaration of the route's own file counts only as a
+     * `const NAME = <literal value>` (an object or array of literals: a headers object) that the file does not export
+     * or declare ambiently; anything else of the file (a function, a destructured binding, a `let`, a class) is code or
+     * data the scan would have to follow, and is refused: put it in a module and list the import.
      */
     const count = (decl: ts.Declaration, id: ts.Identifier): boolean => {
         const imported = valueImportOf(decl)
@@ -2201,49 +2198,30 @@ function outsideNamesOf(
         if (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl)) {
             return refuse(`\`${id.text}\` is a type-only import`)
         }
-        if (ts.isImportEqualsDeclaration(decl))
+        if (ts.isImportEqualsDeclaration(decl)) {
             return refuse(`\`${id.text}\` is an \`import … = require(…)\`, a whole module`)
-        if (isAmbient(decl)) {
-            return refuse(`\`${id.text}\` is declared with \`declare\`, so its value is out of sight`)
         }
-        if ((ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Export) !== 0) {
-            return refuse(`\`${id.text}\` is exported, so another module can change it`)
+        if (isAmbient(decl)) return refuse(`\`${id.text}\` is declared with \`declare\`, so its value is out of sight`)
+        const literal =
+            ts.isVariableDeclaration(decl) &&
+            ts.isIdentifier(decl.name) &&
+            isConst(decl) &&
+            decl.initializer !== undefined &&
+            isLiteralValue(src, decl.initializer) &&
+            (ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Export) === 0
+        if (!literal) {
+            return refuse(
+                `\`${id.text}\` is a declaration of this file other than an unexported \`const\` bound to a literal ` +
+                    'value, so what it reads is out of sight; import it from a module and list the import',
+            )
         }
-        const variable = ts.isBindingElement(decl) ? ts.walkUpBindingElementsAndPatterns(decl) : decl
-        if (ts.isVariableDeclaration(variable)) {
-            if (!isConst(variable) || variable.initializer === undefined) {
-                return refuse(`\`${id.text}\` is not a \`const\` with a value, so it can change`)
-            }
-            if ((ts.getCombinedModifierFlags(variable) & ts.ModifierFlags.Export) !== 0) {
-                return refuse(`\`${id.text}\` is exported, so another module can change it`)
-            }
-            names.add(id.text)
-            followed(decl, id.text)
-            follow(variable)
-            return true
+        const symbol = checker.getSymbolAtLocation(decl.name)
+        if (symbol === undefined || (symbol.declarations?.length ?? 0) > 1) {
+            return refuse(`\`${id.text}\` has more than one declaration`)
         }
-        if (ts.isFunctionDeclaration(decl) && decl.body !== undefined) {
-            if (isReassigned(src, decl) || isRedeclared(decl))
-                return refuse(`\`${id.text}\` is reassigned or redeclared`)
-            names.add(id.text)
-            followed(decl, id.text)
-            follow(decl)
-            return true
-        }
-        return refuse(`\`${id.text}\` is a ${ts.SyntaxKind[decl.kind]}, which no name can stand for`)
-    }
-    const follow = (node: ts.Node): void => {
-        if (roots.includes(node)) return
-        roots.push(node)
-        visit(node)
-    }
-    /** Every declaration of the file a listed name stands for, by symbol: checked below for writes from elsewhere. */
-    const listed = new Map<ts.Symbol, string>()
-    const followed = (decl: ts.Declaration, name: string): void => {
-        const declName = (decl as ts.NamedDeclaration).name
-        const symbol = declName === undefined ? undefined : checker.getSymbolAtLocation(declName)
-        if (symbol !== undefined) listed.set(symbol, name)
-        else refuse(`\`${name}\` cannot be resolved`)
+        local.set(symbol, id.text)
+        names.add(id.text)
+        return true
     }
     /** The symbol an identifier refers to, through a shorthand property and an export specifier. */
     const symbolAt = (id: ts.Identifier): ts.Symbol | undefined => {
@@ -2255,26 +2233,23 @@ function outsideNamesOf(
         return checker.getSymbolAtLocation(id)
     }
     /**
-     * A listed declaration of the file is what the walk read only if nothing else in the file can change it: no
-     * reference to it outside the walked code (a top-level write `cache.db = db`, another handler's `cache.set(…)`, an
-     * `export { cache }` an importer could fill), and one declaration only (a function merged with a namespace).
+     * A listed `const` of the file holds what the handler reads only if nothing else can change it: no reference to it
+     * anywhere in the file but in the handler and its own declaration (a type position aside). So a top-level
+     * `cache.db = db`, another handler's `cache.set(…)` or an `export { cache }` refuses it, and so does a second
+     * handler sharing it: give each its own, or import it.
      */
-    const untouchedElsewhere = (): void => {
-        for (const [symbol, name] of listed) {
-            if ((symbol.declarations?.length ?? 0) > 1) return void refuse(`\`${name}\` has more than one declaration`)
-        }
+    const usedByHandlerAlone = (): void => {
+        const declarations = new Map([...local.keys()].map((symbol) => [symbol, symbol.declarations?.[0]]))
         const check = (node: ts.Node): void => {
-            if (refusal !== null) return
-            if (
-                ts.isIdentifier(node) &&
-                !roots.some((root) => node.getStart(sf) >= root.getStart(sf) && node.end <= root.end)
-            ) {
+            if (refusal !== null || ts.isTypeNode(node)) return
+            if (ts.isIdentifier(node) && !within(node, fn)) {
                 const symbol = symbolAt(node)
-                const name = symbol === undefined ? undefined : listed.get(symbol)
-                if (name !== undefined) {
+                const name = symbol === undefined ? undefined : local.get(symbol)
+                const decl = symbol === undefined ? undefined : declarations.get(symbol)
+                if (name !== undefined && !(decl !== undefined && within(node, decl))) {
                     const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1
                     return void refuse(
-                        `\`${name}\` is also used outside the read (line ${line}), where it can be changed`,
+                        `\`${name}\` is used outside the handler too (line ${line}), where it can be changed`,
                     )
                 }
             }
@@ -2284,11 +2259,7 @@ function outsideNamesOf(
     }
     /** Records what `id` refers to; false when no name can excuse it. */
     const reference = (id: ts.Identifier): boolean => {
-        const parent = id.parent
-        const symbol =
-            ts.isShorthandPropertyAssignment(parent) && parent.name === id
-                ? checker.getShorthandAssignmentValueSymbol(parent)
-                : checker.getSymbolAtLocation(id)
+        const symbol = symbolAt(id)
         const decl = symbol?.declarations?.[0]
         if (decl === undefined) {
             if ((INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)) return true
@@ -2330,7 +2301,7 @@ function outsideNamesOf(
         ts.forEachChild(node, visit)
     }
     visit(fn)
-    if (refusal === null && listed.size > 0) untouchedElsewhere()
+    if (refusal === null && local.size > 0) usedByHandlerAlone()
     return refusal === null ? { names, refusal: null } : { names: null, refusal }
 }
 

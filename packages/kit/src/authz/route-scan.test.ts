@@ -2134,34 +2134,26 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         ).toEqual(['pkg'])
         expect(
             names(
-                "const CORS = { allow: 'GET' }\nfunction h() { return 1 }\nexport function GET() { return Response.json({ CORS, n: h() }) }",
+                "const CORS = { allow: 'GET', methods: ['GET'] }\nexport function GET() { return Response.json({ CORS }) }",
             ),
-        ).toEqual(['CORS', 'h'])
+        ).toEqual(['CORS'])
         expect(names('export function GET() { return Response.json({ ok: true }) }')).toEqual([])
     })
 
-    it('follows a listed declaration of the file, so what it reads is named too', () => {
+    it('refuses a declaration of the file that is not an unexported const bound to a literal value', () => {
+        for (const src of [
+            "import { db } from './db'\nconst corsHeaders = db\nexport function GET() { return Response.json(corsHeaders) }",
+            "import { db } from './db'\nfunction publicPosts() { return db.all() }\nexport function GET() { return Response.json(publicPosts()) }",
+            "import { db } from './db'\nconst { posts } = db\nexport function GET() { return Response.json(posts) }",
+            'const CORS = { at: Date.now() }\nexport function GET() { return Response.json(CORS) }',
+            "const { get } = (() => { const m = new Map(); return { get: (k: string) => m.get(k) } })()\nexport function GET() { return Response.json(get('feed')) }",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
         expect(
-            names(
-                "import { db } from './db'\nconst corsHeaders = db\nexport function GET() { return Response.json(corsHeaders) }",
-            ),
-        ).toEqual(['corsHeaders', 'db'])
-        expect(
-            names(
-                "import { db } from './db'\nfunction publicPosts() { return db.all() }\nexport function GET() { return Response.json(publicPosts()) }",
-            ),
-        ).toEqual(['db', 'publicPosts'])
-        expect(
-            names(
-                "import { db } from './db'\nconst { posts } = db\nexport function GET() { return Response.json(posts) }",
-            ),
-        ).toEqual(['db', 'posts'])
-        expect(
-            names(
-                "const CORS = { allow: 'GET' }\nexport function OPTIONS() { return new Response(null, { headers: CORS }) }",
-                'OPTIONS',
-            ),
-        ).toEqual(['CORS'])
+            factsOf('function h() { return 1 }\nexport function GET() { return Response.json(h()) }', 'GET')
+                .outsideRefusal,
+        ).toMatch(/other than an unexported `const` bound to a literal value/)
     })
 
     it('is null for a declared ambient, an import-equals, an exported or mutable name, and the handler itself', () => {
@@ -2196,7 +2188,19 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
                 "import { db } from './db'\nconst box = {}\nObject.assign(box, { db })\nexport function GET() { return Response.json(box) }",
                 'GET',
             ).outsideRefusal,
-        ).toMatch(/`box` is also used outside the read \(line 3\)/)
+        ).toMatch(/`box` is used outside the handler too \(line 3\)/)
+        // Shared by two handlers: each may change it, so each is refused (give each its own, or import it).
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\nexport function GET() { return Response.json(CORS) }\nexport function OPTIONS() { return new Response(null, { headers: CORS }) }",
+            ),
+        ).toBeNull()
+        // A type position changes nothing.
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\ntype C = typeof CORS\nexport function GET() { return Response.json(CORS as C) }",
+            ),
+        ).toEqual(['CORS'])
     })
 
     it('is null for a handler exported by name that reads what is hung on it', () => {
