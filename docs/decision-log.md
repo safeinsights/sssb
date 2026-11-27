@@ -8156,6 +8156,7 @@ the destructive project's budgets were still the ones sized for `next dev` on a 
 - **Not done here:** the chromium project's budgets (60 s, 15 s) are still the dev ones on CI too; that is
   safeinsights/sssb#235. A per-spec world (#99, #161) is what would end the destructive suite's shared-state class of
   failure; the ten repeat runs above found none to file.
+
 ## A stream's failure after text is visible, and the replays can fail the same way (2026-11-27, `fix/stream-failure-visible`)
 
 `safeinsights/sssb#145`: when a stream fails after some of its text was delivered, the consumer must be able to tell.
