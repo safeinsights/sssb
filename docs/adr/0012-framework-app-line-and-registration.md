@@ -1075,14 +1075,15 @@ app entry could not replace.
 
 **One new gate kind, `reads-only`, with `names`.** It holds for a READ handler (GET, HEAD, OPTIONS) that reads nothing
 but the names it lists: every name it refers to from outside itself is an inert value (the reads-nothing allow-list)
-or one of `names`, an import by its exported name (a default import by its local one). No value of the route's own
-file can be listed (below). No global off the inert list counts (`fetch`, `process`), and no name can excuse an aliased or namespace import, a
+or one of `names`, an import by its exported name; a default import, whose local name the author chooses, cannot be
+listed, and the reads one entry covers must import each listed name from one module. No value of the route's own file
+can be listed (below). No global off the inert list counts (`fetch`, `process`), and no name can excuse an aliased or namespace import, a
 class, `import()`, `import.meta`, `using` or a `constructor` member. It never holds for a mutation, and an entry whose
 gate it is applies to reads only: at its path, a mutation is judged by the exemption it would have had without it.
 
 **Where it may sit, and nothing else may.** An app may put a `reads-only` entry (and only that kind) outside
 `src/app/api`, under a new key `outsideApi: { files, prefixes }` relative to `src/app`; and it may name ONE file
-(not a prefix) under the framework's `webhooks/` prefix, not under `simulator/` (whose guarantee, 404 in real mode, a
+(not a prefix) per entry under the framework's `webhooks/` prefix, not under `simulator/` (whose guarantee, 404 in real mode, a
 reads-only read does not keep), a framework exact entry or a required-alongside prefix (`service/`). Apart from keys now being matched by URL (below) and dynamic segments being allowed literally, everything else an
 app's file could say before is unchanged, and
 every other overlap with a framework entry still fails. A `reads-only` entry is stale unless its path has a read
@@ -1102,8 +1103,11 @@ a problem, so a list cannot pre-approve one. The handler naming itself (`GET.loa
 **What it does not see.** A listed import can be changed by any module, the route's own file included (a top-level
 `(feed as any).users = db`): the scan does not follow writes to an import. An inert global can be patched at load
 without an assignment to its name (`Object.defineProperty(JSON, 'x', …)`, `eval`), a gap older than this addendum that
-reading nothing has had since reads were judged. Both are evasions a reviewer sees in the file, where the scan's stance
-is to catch a route that lost its gate, not one written to fool it.
+reading nothing has had since reads were judged, and so is reaching `Function` through a property descriptor
+(`Object.getOwnPropertyDescriptor(…, 'constructor').value`). All are evasions a reviewer sees in the file, where the
+scan's stance is to catch a route that lost its gate, not one written to fool it. "By URL" means the path Next gives
+a route file, groups and slots dropped: a dynamic first segment that also answers `/api/…` (`src/app/[x]/service/y`
+when no static route is there), a rewrite and `basePath` are not seen, as before.
 
 **Route groups and slots.** The scan matches a route by its URL: a route group's `(name)` segment and a parallel
 route's `@slot` segment are dropped from a route's path, and from an app's exemption key, before either is matched, as

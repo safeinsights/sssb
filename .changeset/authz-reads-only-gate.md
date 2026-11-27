@@ -22,10 +22,16 @@ exemption key may now name a dynamic segment (`[locale]`) literally.
 against, and from an exemption key. Before, `src/app/api/(internal)/service/x/route.ts`, served at `/api/service/x`,
 escaped the `service/` gate, and a route under `src/app/(app)/api/` read as one outside `src/app/api`. A route under an
 intercepting segment (`(.)x`, `(..)x`, `(...)x`) now fails outright, since Next also serves it at the URL it intercepts.
-An app with such a route may now fail where it passed. Nothing else that passed before fails.
+An app with such a route may now fail where it passed, and so may an exemption keyed by its written path: a key is
+matched by URL too, so `'(public)/'` (only a group) is refused, and `'(g)/webhooks/partner/route.ts'` now overlaps the
+framework's `webhooks/` entry. In the other direction, a framework exemption and an app key now reach a route in a
+group or slot at the same URL, and a key may name a dynamic segment (`items/[id]/route.ts`) for every gate kind. A
+listed name is an import by its exported name: a default import cannot be listed, and the reads one entry covers must
+import each listed name from one module.
 
-**To adopt.** Run the conformance suite (`pnpm test:unit`): a route in a route group under `src/app/api` that it now
-names is judged as its URL is (a `service/` route must be wrapped by `withServiceCaller`, as at any other path there).
+**To adopt.** Run the conformance suite (`pnpm test:unit`): a route in a route group or slot under `src/app/api` that
+it now names is judged as its URL is (a `service/` route must be wrapped by `withServiceCaller`, as at any other path
+there), and an exemption key written with a group is matched without it (name the URL path).
 For a read that the check refuses and that reads no org-scoped data, name what it reads:
 
 ```js

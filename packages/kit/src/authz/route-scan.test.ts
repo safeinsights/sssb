@@ -2121,7 +2121,7 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         return facts.outsideNames === null ? null : [...facts.outsideNames].sort()
     }
 
-    it('lists an import by its exported name and a default import by its local one, never a value of the file', () => {
+    it('lists an import by its exported name, never a default import or a value of the file', () => {
         expect(
             names(
                 "import { corsHeaders } from './cors'\nexport function GET() { return new Response(null, { headers: corsHeaders }) }",
@@ -2131,7 +2131,7 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
             names(
                 "import pkg from './package.json'\nexport function GET() { return Response.json({ v: pkg.version }) }",
             ),
-        ).toEqual(['pkg'])
+        ).toBeNull()
         expect(
             names(
                 "const CORS = { allow: 'GET', methods: ['GET'] }\nexport function GET() { return Response.json({ CORS }) }",
@@ -2203,6 +2203,17 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         ).toBeNull()
     })
 
+    it('records the module each listed import comes from, and refuses a computed constructor key', () => {
+        const facts = factsOf(
+            "import { corsHeaders } from './cors'\nexport function GET() { return Response.json(corsHeaders) }",
+            'GET',
+        )
+        expect([...(facts.outsideSources ?? [])]).toEqual([['corsHeaders', './cors']])
+        expect(
+            names("export function GET() { const { ['constructor']: F } = () => 1; return Response.json(F) }"),
+        ).toBeNull()
+    })
+
     it('is null for a handler exported by name that reads what is hung on it', () => {
         const self =
             "import { load } from './db'\n" +
@@ -2235,6 +2246,7 @@ describe('judging a handler against a policy', () => {
         opensWithSimulated404: false,
         outsideNames: null,
         outsideRefusal: null,
+        outsideSources: null,
         readsNothing: false,
         ...over,
     })

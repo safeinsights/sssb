@@ -8133,7 +8133,7 @@ settle:
 - **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
   prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
   a prefix's gate override every exact entry beneath it (an existing test caught it in the first draft).
-- **`names` are identifiers**, not dotted names: an import's exported name (a default import's local name), never a
+- **`names` are identifiers**, not dotted names: an import's exported name (never a default import, whose local name the author picks), never a
   value of the route's own file (below). A namespace import is refused outright, since it names the whole module, and so is
   an aliased one (`import { headers as cors }`), as for every gate.
 - **Narrowed in review.** The first draft let a listed declaration of the file excuse whatever it held (an alias of an

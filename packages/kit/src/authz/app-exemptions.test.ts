@@ -332,6 +332,16 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         ])
     })
 
+    it('refuse a key that is only route groups or slots, with a reason that says so', () => {
+        const { problems } = appExemptionsFrom(
+            { prefixes: { '(public)/': { reason: 'r', mustMatch: { kind: 'calls', callees: ['x'] } } } },
+            'x',
+        )
+        expect(problems).toEqual([
+            'x: prefixes `(public)/` is only route groups or slots, which are not part of a URL: name the path the route is served at',
+        ])
+    })
+
     it('take a dynamic segment literally in a key, so a public read under [locale] can be named', async () => {
         const exemptions = `export default { outsideApi: { files: { '(site)/[locale]/feed.xml/route.ts': ${readsOnly(['publicPosts'])} } } }\n`
         const scan = await scanApp(
@@ -395,6 +405,30 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         expect(scan.failures).toHaveLength(1)
         expect(scan.failures[0]).toMatch(/It cannot pass one: `fetch` is a global off the inert list/)
         expect(scan.exemptionProblems).toEqual([])
+    })
+
+    it('refuse a listed name the reads under one entry import from two modules', async () => {
+        const exemptions = `export default { prefixes: { 'public/': ${readsOnly(['getPosts'])} } }\n`
+        const feed =
+            "import { getPosts } from '../../../../lib/public-feed'\nexport async function GET() { return Response.json(await getPosts()) }\n"
+        const leak =
+            "import { getPosts } from '../../../../db/posts'\nexport async function GET() { return Response.json(await getPosts()) }\n"
+        const scan = await scanApp(
+            app({ 'api/public/feed/route.ts': feed, 'api/public/export/route.ts': leak }, exemptions),
+        )
+        expect(scan.failures).toEqual([])
+        expect(scan.exemptionProblems).toEqual([
+            expect.stringMatching(
+                /prefixes `public\/` lists `getPosts`, which the reads it covers import from more than one module \(posts, public-feed\); each listed name must come from one/,
+            ),
+        ])
+        const one = await scanApp(
+            app(
+                { 'api/public/feed/route.ts': feed, 'api/public/other/route.ts': feed.replace('feed/route', 'x') },
+                exemptions,
+            ),
+        )
+        expect(one.exemptionProblems).toEqual([])
     })
 
     it('call a listed name stale when no read handler it covers names it', async () => {

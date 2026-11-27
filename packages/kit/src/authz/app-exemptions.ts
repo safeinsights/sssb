@@ -110,9 +110,14 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
                 .split('/')
                 .filter((segment) => !isUnroutedSegment(segment))
                 .join('/')
+            if (rel === '' || rel === '/') {
+                problems.push(
+                    `${where} is only route groups or slots, which are not part of a URL: name the path the route is ` +
+                        'served at',
+                )
+                continue
+            }
             if (
-                rel === '' ||
-                rel === '/' ||
                 rel.startsWith('/') ||
                 rel.includes('\\') ||
                 rel.split('/').includes('..') ||
@@ -297,13 +302,32 @@ function staleAppExemptions(
                 .flatMap((route) => route.handlers.filter((h) => governs(route, h)))
                 .flatMap((h) => [...(h.facts?.outsideNames ?? [])]),
         )
-        return gate.names
-            .filter((n) => !read.has(n))
+        // One name, one module: a listed name the governed reads import from two modules would let the second module
+        // inherit an entry whose reason was written for the first.
+        const from = new Map<string, Set<string>>()
+        for (const route of judged.filter((r) => matches(r.rel))) {
+            for (const h of route.handlers.filter((h) => governs(route, h))) {
+                for (const [n, source] of h.facts?.outsideSources ?? [])
+                    from.set(n, (from.get(n) ?? new Set()).add(source))
+            }
+        }
+        const split = [...from]
+            .filter(([n, sources]) => gate.names.includes(n) && sources.size > 1)
             .map(
-                (n) =>
-                    `${label}: ${key(kind, rel)} lists \`${n}\`, which no read handler it covers names; ` +
-                    'list only what the read uses',
+                ([n, sources]) =>
+                    `${label}: ${key(kind, rel)} lists \`${n}\`, which the reads it covers import from more than one ` +
+                    `module (${[...sources].map((f) => path.basename(f)).join(', ')}); each listed name must come from one`,
             )
+        return [
+            ...split,
+            ...gate.names
+                .filter((n) => !read.has(n))
+                .map(
+                    (n) =>
+                        `${label}: ${key(kind, rel)} lists \`${n}\`, which no read handler it covers names; ` +
+                        'list only what the read uses',
+                ),
+        ]
     }
     return [
         ...Object.entries(app.files).flatMap(([rel, exemption]) =>

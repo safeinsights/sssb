@@ -165,7 +165,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   written inline. Any other read that is genuinely not org-scoped (a public one, a preflight whose headers object comes from a module,
   a provider's verification handshake) names an exemption with a `reads-only` gate,
   `{ kind: 'reads-only', names: ['corsHeaders'] }`: the read may then name, besides those inert values, only the
-  listed imports (by exported name), so the reason covers exactly what it reads; every name listed must be in use. A
+  listed imports (by exported name; not a default import), each from one module, so the reason covers exactly what
+  it reads; every name listed must be in use. The gate holds for a handler that is a function: one exported as a
+  wrapper's result (`export const GET = withPortErrors(…)`) cannot use it. A
   value of the route's own file (a headers object, a helper) cannot be listed, since code of the file can change it:
   put it in a module and list the import. Such an
   entry applies to reads only (a mutation at its path keeps the gate it had), and it is the one kind that may sit

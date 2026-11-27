@@ -171,7 +171,7 @@ export interface ScanRoot {
  *   assigns to none of the globals that branch builds (`Response`, `JSON`, an `…Error`), so the real-mode path
  *   does nothing.
  * - `reads-only`: a READ handler (GET, HEAD, OPTIONS) that reads nothing (`readsNothing`) but the `names` listed:
- *   imports, by their exported name (a default import by its local one: `corsHeaders`, `params`, `publicPosts`). No
+ *   named imports, by their exported name (`corsHeaders`, `params`, `publicPosts`), each from one module. No
  *   value of the route's own file can be listed, since code of the file can change it. Every other name it refers to from outside itself is an
  *   inert value, and it names no global off the inert list (`fetch`, `process`). It never holds for a mutation, and an
  *   entry whose gate it is applies to reads only, so a mutation at its path is judged by the exemption it would have
@@ -202,6 +202,8 @@ export interface HandlerFacts {
     outsideNames: ReadonlySet<string> | null
     /** Why `outsideNames` is null (the first thing no name can excuse), or null when it is not. */
     outsideRefusal: string | null
+    /** The module each of `outsideNames` is imported from (resolved where it resolves), or null with them. */
+    outsideSources: ReadonlyMap<string, string> | null
     /**
      * The handler is a function (not a wrapper's result) whose code, read lexically, names nothing from outside it
      * but inert globals, a few named imports and literal constants (`readsNothing`), so the only data in its reach is
@@ -972,13 +974,25 @@ class RootScanner {
         const reach = new Reach(node.src, this.authorizeModules)
         if ('fn' in node) {
             reach.invoke(node.fn)
-            const { names: outsideNames, refusal: outsideRefusal } = outsideNamesOf(node.src, node.fn)
+            const { names: outsideNames, sources, refusal: outsideRefusal } = outsideNamesOf(node.src, node.fn)
+            // Each listed import's module, resolved, so two routes importing one name from two modules can be told apart.
+            const outsideSources =
+                sources === null
+                    ? null
+                    : new Map(
+                          [...sources].map(([name, specifier]) => [
+                              name,
+                              ts.resolveModuleName(specifier, node.src.fileName, this.resolution, ts.sys).resolvedModule
+                                  ?.resolvedFileName ?? specifier,
+                          ]),
+                      )
             return {
                 reachesAuthorize: reach.authorize,
                 wrappedBy: null,
                 calls: reach.calls,
                 opensWithSimulated404: opensWithSimulated404(node.src, node.fn),
                 outsideNames,
+                outsideSources,
                 outsideRefusal,
                 readsNothing: outsideNames?.size === 0,
             }
@@ -991,6 +1005,7 @@ class RootScanner {
             opensWithSimulated404: false,
             // A wrapper is code the scan does not read, run on every request: what it reads is out of sight.
             outsideNames: null,
+            outsideSources: null,
             outsideRefusal: 'the handler is a call to a wrapper, whose code runs on every request out of sight',
             readsNothing: false,
         }
@@ -2141,13 +2156,15 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  * does something no name can excuse: names a global off the allow-list (`fetch`, `process`), names an import under
  * another name than its exported one or a whole namespace, or uses a class, `import()`, `import.meta`, `using` or a
  * `constructor`/`__proto__` member, or names a value of the route's own file (other than a primitive const). An import
- * counts by its exported name (a default import by its local one). What a `reads-only` gate (`Gate`) matches against: a read that names
+ * counts by its exported name (a default import cannot). What a `reads-only` gate (`Gate`) matches against: a read that names
  * nothing outside it but inert values and the names the gate lists.
  */
 function outsideNamesOf(
     src: Source,
     fn: ts.FunctionLikeDeclaration,
-): { names: ReadonlySet<string>; refusal: null } | { names: null; refusal: string } {
+):
+    | { names: ReadonlySet<string>; sources: ReadonlyMap<string, string>; refusal: null }
+    | { names: null; sources: null; refusal: string } {
     const { checker, sf } = src
     // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
     const within = (node: ts.Node, root: ts.Node) => node.getStart(sf) >= root.getStart(sf) && node.end <= root.end
@@ -2176,6 +2193,8 @@ function outsideNamesOf(
         )
     }
     const names = new Set<string>()
+    /** The module specifier each listed name is imported from, as the file writes it. */
+    const sources = new Map<string, string>()
     let refusal: string | null = null
     const refuse = (why: string): false => {
         refusal ??= why
@@ -2192,8 +2211,13 @@ function outsideNamesOf(
         const imported = valueImportOf(decl)
         if (imported !== undefined) {
             if (imported.kind === 'namespace') return refuse(`\`${id.text}\` is a namespace import, the whole module`)
-            if (ts.isImportClause(decl)) return decl.name ? (names.add(decl.name.text), true) : refuse('an import')
-            if (ts.isImportSpecifier(decl) && decl.name.text === imported.name) return (names.add(imported.name), true)
+            // A default import has no exported name to hold it to, only the local one the author chose.
+            if (ts.isImportClause(decl)) return refuse(`\`${id.text}\` is a default import, which has no exported name`)
+            if (ts.isImportSpecifier(decl) && decl.name.text === imported.name) {
+                names.add(imported.name)
+                sources.set(imported.name, imported.module)
+                return true
+            }
             return refuse(`\`${id.text}\` is an import under another name than its exported \`${imported.name}\``)
         }
         if (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl)) {
@@ -2249,8 +2273,7 @@ function outsideNamesOf(
         }
         if (
             (ts.isPropertyAccessExpression(node) && ESCAPE_MEMBERS.has(node.name.text)) ||
-            (ts.isBindingElement(node) &&
-                ESCAPE_MEMBERS.has((node.propertyName ?? node.name).getText(sf).replace(/^['"]|['"]$/g, ''))) ||
+            (ts.isBindingElement(node) && ESCAPE_MEMBERS.has(bindingKey(node, sf))) ||
             (ts.isElementAccessExpression(node) &&
                 ts.isStringLiteralLike(node.argumentExpression) &&
                 ESCAPE_MEMBERS.has(node.argumentExpression.text))
@@ -2261,7 +2284,14 @@ function outsideNamesOf(
         ts.forEachChild(node, visit)
     }
     visit(fn)
-    return refusal === null ? { names, refusal: null } : { names: null, refusal }
+    return refusal === null ? { names, sources, refusal: null } : { names: null, sources: null, refusal }
+}
+
+/** A binding element's key as written: its property name (a string or computed string literal key unquoted) or name. */
+function bindingKey(node: ts.BindingElement, sf: ts.SourceFile): string {
+    const key = node.propertyName ?? node.name
+    if (ts.isComputedPropertyName(key) && ts.isStringLiteralLike(key.expression)) return key.expression.text
+    return key.getText(sf).replace(/^['"]|['"]$/g, '')
 }
 
 /** Whether a declaration is ambient: `declare`d itself, or inside a `declare global` or `declare module` block. */

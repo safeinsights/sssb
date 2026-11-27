@@ -192,8 +192,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   file under the framework's `webhooks/` prefix, which applies to reads only. **Every exemption's `mustMatch`** is
   checked on each verb (the handler IS the guard's call, reaches a port call, opens with the simulated-mode 404, or
   is a read that names nothing but inert values and the gate's names), every name in it a value import kept under its
-  exported name (a `reads-only` gate's may also be a default import's local name), so a local look-alike or an
-  alias is not the gate —
+  exported name, so a local look-alike or an alias is not the gate —
   entries are matched by relative path in every root (by URL: route groups and slots dropped), so a gateless one would exempt an adopter's same-named route from
   authorization entirely. It proves the route is the KIND the reason describes, never the reason's whole claim;
   ADR-0012 states the limit.
