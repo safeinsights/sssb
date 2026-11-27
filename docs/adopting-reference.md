@@ -752,6 +752,38 @@ the showcase carries the same route over the same function.
     already queued and the schedule has moved on, so the in-process runner's sweep fails that job after five minutes,
     and with another runner it stays queued.
 
+## Webhooks your app receives
+
+A route under `apps/<app>/src/app/api/webhooks/` is called by a machine, not a person, so the authorization scan exempts
+it from `authorize(...)` only when its handler IS a call to one of the signature wrappers the exemption names,
+imported under that name: `export const POST = withWebhookSecret(…)`, `withStandardWebhookSignature(…)`, or a
+`withMailgunSignature(…)` your app defines (SSSB's showcase has one). Each answers an opaque 401 before your handler
+runs.
+
+- **A shared secret** (`withWebhookSecret`, `@sssb/kit/service-auth/webhook`): the caller sends the secret in
+  `x-sssb-webhook-secret`. Real mode reads it from `WEBHOOK_SECRET`, which every deployment sets (the cron route and the
+  jobs webhook use it). A sender that already holds a secret deployed under another name keeps it:
+  `withWebhookSecret(handler, { secretEnv: 'PARTNER_HOOK_SECRET' })`. That name is yours to set on the server and to
+  list in your cutover checklist; `sssb check-real-env` and the server's startup check know only `WEBHOOK_SECRET`, so
+  an unset name of your own is not reported, and the route refuses every request until it is set.
+- **A signed sender** that follows [Standard Webhooks](https://www.standardwebhooks.com) (Svix and the services that
+  send through it sign this way): `withStandardWebhookSignature(handler, { secretEnv: 'PARTNER_WEBHOOK_SECRET' })`
+  (`@sssb/kit/service-auth/standard-webhooks`). The variable holds the `whsec_…` secret the sender gives you (a key
+  shorter than 16 bytes never verifies). The
+  wrapper checks the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers (or Svix's `svix-*` names) over
+  the exact body: a timestamp within five minutes either way (`toleranceMs` changes it), a signature that matches in
+  constant time, and a message not seen before. Your handler gets `{ request, webhook: { id, timestamp, body } }`.
+  To rotate, put the new secret beside the old one, space-separated in the same variable or in a second one
+  (`secretEnv: ['PARTNER_WEBHOOK_SECRET', 'PARTNER_WEBHOOK_SECRET_NEXT']`); either verifies until you remove the old.
+  A sender retries a delivery with a new timestamp, so a retry reaches your handler: treat `webhook.id` as the
+  idempotency key and answer 2xx for one you have already processed. Make the handler idempotent even so: the guard
+  against the same signed message sent twice is in memory, per server instance, and `SssbApp` runs your server on
+  Lambda, where every concurrent execution environment is an instance of its own; and when your handler throws or
+  answers 5xx the message is released, so a copy of it can run the handler again. `replayStore` (a `claim` and a
+  `release` over a table of your own) makes the guard hold across instances; SSSB does not ship one yet
+  (safeinsights/sssb#205). In `pnpm dev` both wrappers verify against the per-checkout dev secret instead of the
+  variable.
+
 ## Cutover — from hermetic to real
 
 Everything needing credentials, accounts or money is a row in your workspace's `docs/cutover-checklist.md` —

@@ -190,7 +190,7 @@ const eslintConfig = [
         rules: { 'sssb/no-raw-db-handle': 'error' },
     },
     // PARAMS CENTRALIZATION: process.env is read only inside SSSB's adapters (and an app's own real adapters). Exempt
-    // besides: the two secret readers, by exact file, and tests. The fixture is on the app side of that line, and has
+    // besides: the three secret readers, by exact file, and tests. The fixture is on the app side of that line, and has
     // no tests of its own to exempt.
     {
         files: [FRAMEWORK_FILES_GLOB],
@@ -198,6 +198,7 @@ const eslintConfig = [
             KIT_ADAPTERS_GLOB,
             'packages/kit/src/service-auth/webhook.ts',
             'packages/kit/src/service-auth/mailgun.ts',
+            'packages/kit/src/service-auth/standard-webhooks.ts',
             TEST_FILES,
         ],
         plugins: { sssb },
