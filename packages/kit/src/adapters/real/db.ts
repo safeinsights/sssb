@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs'
+import type { ConnectionOptions } from 'node:tls'
 import { Kysely, PostgresDialect } from 'kysely'
 import { Pool, types, type CustomTypesConfig } from 'pg'
 import type { DB } from '../../db/schema'
 import type { DbPort } from '../../ports/db'
+import { refuseTlsInUrl, type DatabaseSsl } from './database-transport'
 import { dbPortFor } from './db-port'
 
 /**
@@ -31,13 +34,19 @@ const pgTypes: CustomTypesConfig = {
 }
 
 /**
- * AUTHORED — CUTOVER (`cloud-accounts`): typechecked, never run against Aurora. The migrator
- * Lambda and the app share this adapter; connection details come from DATABASE_URL (Secrets
- * Manager-injected in deployed environments). This is the default transport (`DATABASE_TRANSPORT=pg`),
- * for a Lambda inside the database's VPC; the RDS Data API one is ./db-data-api.ts.
+ * AUTHORED — CUTOVER (`cloud-accounts`, `db-tls`): typechecked, never run against Aurora. The migrator
+ * Lambda and the app share this adapter. The server's connection details come from DATABASE_URL (Secrets
+ * Manager-injected in deployed environments); the migrator builds its URL from the secret (./migrate-handler.ts).
+ * This is the default transport (`DATABASE_TRANSPORT=pg`), for a Lambda inside the database's VPC; the RDS Data API
+ * one is ./db-data-api.ts.
+ *
+ * `ssl` is the connection's TLS, always given, never left to the URL or to `pg`'s own defaults (which, with no
+ * `sslmode` in the URL and no PGSSLMODE, are no TLS at all): the deployment's `databaseSsl()`
+ * (./database-transport.ts), or `{ mode: 'disable' }` for a server that has none, as a contract run's.
  */
-export function createRealDb(databaseUrl: string): DbPort {
-    const pool = new Pool({ connectionString: databaseUrl, max: 5, types: pgTypes })
+export function createRealDb(databaseUrl: string, ssl: DatabaseSsl): DbPort {
+    refuseTlsInUrl(databaseUrl)
+    const pool = new Pool({ connectionString: databaseUrl, ssl: pgSslOptions(ssl), max: 5, types: pgTypes })
     // Every client gets its own listener as it connects, for its whole life, idle or checked out.
     pool.on('connect', (client) => client.on('error', logConnectionError))
     // pg-pool re-emits an IDLE client's error on the pool. The client's listener above has logged it, and
@@ -66,4 +75,27 @@ export function createRealDb(databaseUrl: string): DbPort {
  */
 function logConnectionError(error: Error & { code?: string }): void {
     console.warn(`SSSB db: a pooled database connection ended (${error.code ?? 'no code'}: ${error.message})`)
+}
+
+/**
+ * What `pg` hands `tls.connect` for a mode. `verify-full` is `rejectUnauthorized`, which checks the chain, and Node's
+ * default `checkServerIdentity`, which checks the certificate names the host: `pg` sets `servername` to the URL's host
+ * when it is a name, so a name in the URL is matched against the certificate's names, and an IP address only against
+ * its IP addresses. With a root file, its certificates are the only roots this connection trusts.
+ */
+export function pgSslOptions(ssl: DatabaseSsl): false | ConnectionOptions {
+    if (ssl.mode === 'disable') return false
+    if (ssl.rootCert === undefined) return { rejectUnauthorized: true }
+    let ca: string
+    try {
+        ca = readFileSync(ssl.rootCert, 'utf8')
+    } catch (error) {
+        throw new Error(`SSSB db: cannot read the database's root certificates at ${ssl.rootCert}`, { cause: error })
+    }
+    // Node takes an empty `ca` as no `ca`, and trusts its own roots instead: an empty or truncated file would quietly
+    // widen what this connection trusts. A file with no certificate in it is refused.
+    if (!ca.includes('-----BEGIN CERTIFICATE-----')) {
+        throw new Error(`SSSB db: the database's root certificate file at ${ssl.rootCert} holds no PEM certificate`)
+    }
+    return { rejectUnauthorized: true, ca }
 }
