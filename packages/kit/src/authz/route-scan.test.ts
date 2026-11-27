@@ -11,6 +11,7 @@ import {
     type ScanRoot,
     type ScannedRoute,
     describeGate,
+    exemptRel,
     exemptionFor,
     gateHolds,
     judge,
@@ -2114,12 +2115,138 @@ describe('a read that reads nothing (safeinsights/sssb#103)', () => {
     })
 })
 
+describe('the names a read refers to from outside itself, for a reads-only gate (safeinsights/sssb#220)', () => {
+    const names = (src: string, verb = 'GET') => {
+        const facts = factsOf(src, verb)
+        return facts.outsideNames === null ? null : [...facts.outsideNames].sort()
+    }
+
+    it('lists an import by its exported name, never a default import or a value of the file', () => {
+        expect(
+            names(
+                "import { corsHeaders } from './cors'\nexport function GET() { return new Response(null, { headers: corsHeaders }) }",
+            ),
+        ).toEqual(['corsHeaders'])
+        expect(
+            names(
+                "import pkg from './package.json'\nexport function GET() { return Response.json({ v: pkg.version }) }",
+            ),
+        ).toBeNull()
+        expect(
+            names(
+                "const CORS = { allow: 'GET', methods: ['GET'] }\nexport function GET() { return Response.json({ CORS }) }",
+            ),
+        ).toBeNull()
+        expect(names('export function GET() { return Response.json({ ok: true }) }')).toEqual([])
+    })
+
+    it("refuses every value of the route's own file but a primitive const", () => {
+        for (const src of [
+            "import { db } from './db'\nconst corsHeaders = db\nexport function GET() { return Response.json(corsHeaders) }",
+            "import { db } from './db'\nfunction publicPosts() { return db.all() }\nexport function GET() { return Response.json(publicPosts()) }",
+            "import { db } from './db'\nconst { posts } = db\nexport function GET() { return Response.json(posts) }",
+            'const CORS = { at: Date.now() }\nexport function GET() { return Response.json(CORS) }',
+            "const { get } = (() => { const m = new Map(); return { get: (k: string) => m.get(k) } })()\nexport function GET() { return Response.json(get('feed')) }",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf('function h() { return 1 }\nexport function GET() { return Response.json(h()) }', 'GET')
+                .outsideRefusal,
+        ).toMatch(/a declaration of the route's own file, which code of the file can change; put it in a module/)
+    })
+
+    it('is null for a declared ambient, an import-equals, an exported or mutable name, and the handler itself', () => {
+        for (const src of [
+            "declare const fetch: (u: string) => Promise<Response>\nexport function GET() { return fetch('http://x') }",
+            "declare function fetch(u: string): Promise<Response>\nexport function GET() { return fetch('http://x') }",
+            'declare global { var process: { env: Record<string, string> } }\nexport function GET() { return Response.json(process.env) }',
+            "import db = require('./db')\nexport function GET() { return Response.json(db) }",
+            "export const cors = { allow: 'GET' }\nexport function GET() { return Response.json(cors) }",
+            "let cors = { allow: 'GET' }\nexport function GET() { return Response.json(cors) }",
+            "import { load } from './db'\nexport async function GET() { return Response.json(await (GET as never as { load: () => unknown }).load()) }\n;(GET as never as { load: unknown }).load = load",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf('declare const fetch: () => Response\nexport function GET() { return fetch() }', 'GET')
+                .outsideRefusal,
+        ).toMatch(/declared with `declare`/)
+    })
+
+    it('is null for a listed declaration the file changes or shares outside the read', () => {
+        for (const src of [
+            "import { db } from './db'\nconst cache: Record<string, unknown> = {}\n;(cache as never as { db: unknown }).db = db\nexport function GET() { return Response.json(cache) }",
+            "import { db } from './db'\nconst cache = new Map<string, unknown>()\nexport async function POST() { cache.set('k', await db.secret()); return Response.json({}) }\nexport function GET() { return Response.json([...cache]) }",
+            'const cache = { a: 1 }\nexport { cache }\nexport function GET() { return Response.json(cache) }',
+            "import { db } from './db'\nfunction f() { return 1 }\nnamespace f { export const d = db }\nexport function GET() { return Response.json(f.d) }",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf(
+                "import { db } from './db'\nconst box = {}\nObject.assign(box, { db })\nexport function GET() { return Response.json(box) }",
+                'GET',
+            ).outsideRefusal,
+        ).toMatch(/`box` is a declaration of the route's own file/)
+        // Shared by two handlers: each may change it, so each is refused (give each its own, or import it).
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\nexport function GET() { return Response.json(CORS) }\nexport function OPTIONS() { return new Response(null, { headers: CORS }) }",
+            ),
+        ).toBeNull()
+        // A type position changes nothing.
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\nexport function GET(r?: Request) { if (!r) return CORS as never; return Response.json(CORS) }\n;(GET() as never as { db: unknown }).db = 1",
+            ),
+        ).toBeNull()
+    })
+
+    it('records the module each listed import comes from, and refuses a computed constructor key', () => {
+        const facts = factsOf(
+            "import { corsHeaders } from './cors'\nexport function GET() { return Response.json(corsHeaders) }",
+            'GET',
+        )
+        expect([...(facts.outsideSources ?? [])]).toEqual([['corsHeaders', './cors']])
+        expect(
+            names("export function GET() { const { ['constructor']: F } = () => 1; return Response.json(F) }"),
+        ).toBeNull()
+    })
+
+    it('is null for a handler exported by name that reads what is hung on it', () => {
+        const self =
+            "import { load } from './db'\n" +
+            'async function handler() { return Response.json(await (handler as never as { load: () => unknown }).load()) }\n' +
+            ';(handler as never as { load: unknown }).load = load\nexport { handler as GET }'
+        expect(names(self)).toBeNull()
+        expect(factsOf(self, 'GET').outsideRefusal).toMatch(/refers to itself/)
+    })
+
+    it('is null where no name can excuse what the handler does', () => {
+        for (const src of [
+            "import { corsHeaders as c } from './cors'\nexport function GET() { return Response.json(c) }",
+            "import * as cors from './cors'\nexport function GET() { return Response.json(cors.headers) }",
+            "export function GET() { return fetch('http://x') }",
+            'export function GET() { return Response.json(process.env.X) }',
+            "export async function GET() { return Response.json(await import('./x')) }",
+            'export function GET() { class A {}; return Response.json(A.name) }',
+            "import { wrap } from './wrap'\nexport const GET = wrap(() => Response.json({}))",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+    })
+})
+
 describe('judging a handler against a policy', () => {
     const facts = (over: Partial<HandlerFacts>): HandlerFacts => ({
         reachesAuthorize: false,
         wrappedBy: null,
         calls: new Set(),
         opensWithSimulated404: false,
+        outsideNames: null,
+        outsideRefusal: null,
+        outsideSources: null,
         readsNothing: false,
         ...over,
     })
@@ -2170,9 +2297,9 @@ describe('judging a handler against a policy', () => {
         }
     })
 
-    it('tells a read outside api/ that no exemption can name it', () => {
+    it('tells a read outside api/ where its exemption goes', () => {
         expect(judge(route('../feed/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
-            /move it under src\/app\/api, where an exemption .* can name it/,
+            /under `outsideApi` \(keys relative to src\/app\), with a `reads-only` gate/,
         )
         expect(judge(route('items/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
             /name a justified exemption, with the gate it passes, in the app's authz-exemptions\.mjs/,
@@ -2257,6 +2384,82 @@ describe('judging a handler against a policy', () => {
         )
     })
 
+    it('a reads-only gate holds for a read that names only the listed names, and never for a mutation', () => {
+        const gate: Gate = { kind: 'reads-only', names: ['corsHeaders', 'params'] }
+        const listed = facts({ outsideNames: new Set(['corsHeaders']) })
+        expect(gateHolds(gate, listed, 'GET')).toBe(true)
+        expect(gateHolds(gate, listed, 'OPTIONS')).toBe(true)
+        expect(gateHolds(gate, facts({ outsideNames: new Set() }), 'HEAD')).toBe(true)
+        expect(gateHolds(gate, listed, 'POST')).toBe(false)
+        expect(gateHolds(gate, listed)).toBe(false)
+        expect(gateHolds(gate, facts({ outsideNames: new Set(['corsHeaders', 'load']) }), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts({ outsideNames: null }), 'GET')).toBe(false)
+        expect(describeGate(gate)).toMatch(
+            /a read \(GET, HEAD or OPTIONS\) that names nothing from outside itself but inert values and `corsHeaders`, `params`/,
+        )
+    })
+
+    it('a reads-only exact entry applies to reads; a mutation at its path falls to the prefix it sits under', () => {
+        const withEntry: ScanPolicy = {
+            ...policy,
+            exemptFiles: {
+                ...policy.exemptFiles,
+                'hooks/meta/route.ts': { reason: 'handshake', mustMatch: { kind: 'reads-only', names: ['params'] } },
+            },
+        }
+        expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'GET')?.reason).toBe('handshake')
+        expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'POST')?.reason).toBe('machine caller')
+        const read = facts({ outsideNames: new Set(['params']) })
+        expect(judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: read }, withEntry)).toBeUndefined()
+        expect(judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: read }, withEntry)).toMatch(
+            /holds only when the handler is itself a call to an imported withSecret/,
+        )
+        expect(
+            judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: facts({ wrappedBy: 'withSecret' }) }, withEntry),
+        ).toBeUndefined()
+        // A read the entry's gate refuses is judged under the entry, not passed on the prefix's gate.
+        expect(
+            judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, withEntry),
+        ).toMatch(/holds only when the handler is a read/)
+    })
+
+    it('names, in the failure, what a reads-only read named or did that its gate does not allow', () => {
+        const withEntry: ScanPolicy = {
+            ...policy,
+            exemptFiles: { 'feed/route.ts': { reason: 'feed', mustMatch: { kind: 'reads-only', names: ['posts'] } } },
+        }
+        expect(
+            judge(
+                route('feed/route.ts'),
+                { verb: 'GET', facts: facts({ outsideNames: new Set(['posts', 'db']) }) },
+                withEntry,
+            ),
+        ).toMatch(/It names `db`, which the gate does not list\./)
+        expect(
+            judge(
+                route('feed/route.ts'),
+                { verb: 'GET', facts: facts({ outsideRefusal: '`fetch` is a global off the inert list' }) },
+                withEntry,
+            ),
+        ).toMatch(/It cannot pass one: `fetch` is a global off the inert list\./)
+        // The handshake hint: only under webhooks/, the one framework prefix an app's reads-only file entry may sit under.
+        const webhooks: ScanPolicy = {
+            ...policy,
+            exemptPrefixes: {
+                'webhooks/': { reason: 'machine', mustMatch: { kind: 'wrapped-by', callees: ['withSecret'] } },
+            },
+        }
+        expect(judge(route('webhooks/meta/route.ts'), { verb: 'GET', facts: facts({}) }, webhooks)).toMatch(
+            /A read here that reads nothing org-scoped \(a provider's verification handshake\) can instead have a reads-only entry/,
+        )
+        expect(judge(route('webhooks/meta/route.ts'), { verb: 'POST', facts: facts({}) }, webhooks)).not.toMatch(
+            /reads-only entry/,
+        )
+        expect(judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).not.toMatch(
+            /reads-only entry/,
+        )
+    })
+
     it('a gate holds only on the facts it names', () => {
         const wrapped: Gate = { kind: 'wrapped-by', callees: ['withA', 'withB'] }
         expect(gateHolds(wrapped, facts({ wrappedBy: 'withB' }))).toBe(true)
@@ -2282,6 +2485,58 @@ describe('judging a handler against a policy', () => {
         expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(
             /opens with `if \(!isSimulated\) return new Response\(null, \{ status: 404 \}\)` \(an imported `isSimulated`/,
         )
+    })
+})
+
+describe('a route group is not part of the path an exemption is matched against', () => {
+    it("drops a parallel route's @slot segment too, and keeps an interception marker", () => {
+        const root = { exemptDir: '/app/src/app/api' }
+        expect(exemptRel(root, '/app/src/app/api/@s/service/y/route.ts')).toBe('service/y/route.ts')
+        expect(exemptRel(root, '/app/src/app/api/(.)service/z/route.ts')).toBe('(.)service/z/route.ts')
+    })
+
+    it('refuses a route under an intercepting segment, which Next also serves at the URL it intercepts', () => {
+        for (const rel of ['(.)service/z/route.ts', 'a/(..)b/route.ts', '(...)x/route.ts', '(..)(..)x/route.ts']) {
+            const [route] = scanTree({ [rel]: 'export async function GET() { return Response.json({}) }' })
+            expect(route?.handlers, rel).toEqual([
+                { verb: '*', refusal: expect.stringMatching(/under an intercepting segment/) },
+            ])
+        }
+    })
+
+    it('names the path as written in a failure when a group or slot is dropped from it', () => {
+        const [route] = scanTree({
+            '(internal)/x/route.ts': 'export async function POST() { return Response.json({}) }',
+        })
+        const policy: ScanPolicy = { exemptPrefixes: {}, exemptFiles: {}, requiredAlongside: {} }
+        expect(judge(route!, route!.handlers[0]!, policy)).toMatch(
+            /^case: x\/route\.ts \(at \(internal\)\/x\/route\.ts\) POST /,
+        )
+    })
+
+    it('drops (name) segments inside and above the exempt directory', () => {
+        const root = { exemptDir: '/app/src/app/api' }
+        expect(exemptRel(root, '/app/src/app/api/(internal)/service/x/route.ts')).toBe('service/x/route.ts')
+        expect(exemptRel(root, '/app/src/app/(app)/api/webhooks/a/route.ts')).toBe('webhooks/a/route.ts')
+        expect(exemptRel(root, '/app/src/app/(marketing)/feed.xml/route.ts')).toBe('../feed.xml/route.ts')
+        expect(exemptRel(root, '/app/src/app/api-docs/route.ts')).toBe('../api-docs/route.ts')
+        expect(exemptRel(root, '/app/src/app/api/items/route.ts')).toBe('items/route.ts')
+    })
+
+    it('so a service route in a group still needs its required gate', () => {
+        const routes = scanTree({
+            '(internal)/service/x/route.ts': `${AUTHORIZE}${DECLS}export async function GET() { ${CALL} }`,
+        })
+        const required: ScanPolicy = {
+            exemptPrefixes: {},
+            exemptFiles: {},
+            requiredAlongside: {
+                'service/': { reason: 'caller', mustMatch: { kind: 'wrapped-by', callees: ['withCaller'] } },
+            },
+        }
+        const [route] = routes
+        expect(route?.rel).toBe('service/x/route.ts')
+        expect(judge(route!, route!.handlers[0]!, required)).toMatch(/must also satisfy/)
     })
 })
 

@@ -149,8 +149,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
   `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
-  `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names, each judged on
-  its own. A route outside `src/app/api` can match no exemption.
+  `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names (a `reads-only`
+  entry, reads only), each judged on
+  its own. A mutating route outside `src/app/api` can match no exemption.
 - A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
   (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
   The role `none` (a fixed org source gives it to every signed-in user by default: `params.auth`) is placed in the home
@@ -162,8 +163,20 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
   array), `NextResponse`, `redirect`, `permanentRedirect` and `notFound` from `next/navigation`, and SSSB's `appMode`
   and `isSimulated`, so it works only on its request, as a liveness probe does, or a CORS preflight whose headers are
-  written inline. Any other read that is genuinely not org-scoped (a public one)
-  names an exemption.
+  written inline. Any other read that is genuinely not org-scoped (a public one, a preflight whose headers object comes from a module,
+  a provider's verification handshake) names an exemption with a `reads-only` gate,
+  `{ kind: 'reads-only', names: ['corsHeaders'] }`: the read may then name, besides those inert values, only the
+  listed imports (by exported name; not a default import), each from one module, so the reason covers exactly what
+  it reads; every name listed must be in use. The gate holds for a handler that is a function: one exported as a
+  wrapper's result (`export const GET = withPortErrors(…)`) cannot use it. A
+  value of the route's own file (a headers object, a helper) cannot be listed, since code of the file can change it:
+  put it in a module and list the import. Such an
+  entry applies to reads only (a mutation at its path keeps the gate it had), and it is the one kind that may sit
+  outside `src/app/api`, under `outsideApi: { files, prefixes }` with keys relative to `src/app`, or name one file
+  under SSSB's `webhooks/` prefix (a provider's verification handshake). A key names a dynamic segment literally
+  (`[locale]/feed.xml/route.ts`), and a route group's `(name)` or a slot's `@name` is not part of it, as it is not
+  part of the URL. A route under an
+  intercepting segment (`(.)x`, `(..)x`) fails the check: serve the handler from a route that does not intercept.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.

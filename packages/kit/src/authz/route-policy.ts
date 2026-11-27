@@ -28,7 +28,7 @@ import type { Exemption, Gate, ScanPolicy } from './route-scan'
  * `auth.updateProfile(` — a port call that takes no user id and so cannot express "update someone else" — to inherit
  * the exemption.
  *
- * A gate is one of three kinds (./route-scan.ts, `Gate`), and the kind is the entry's statement of what "guarded"
+ * A framework gate is one of three kinds (./route-scan.ts, `Gate`; a fourth, `reads-only`, is for an app's entries), and the kind is the entry's statement of what "guarded"
  * means for its reason:
  *
  * - `wrapped-by`: the guard WRAPS the handler, so the handler must BE the call (`export const POST =
@@ -153,6 +153,15 @@ export const FRAMEWORK_POLICY: ScanPolicy = {
 export function isGate(gate: unknown): gate is Gate {
     if (typeof gate !== 'object' || gate === null || !('kind' in gate)) return false
     if (gate.kind === 'opens-with-simulated-404') return true
+    if (gate.kind === 'reads-only') {
+        // Names, not dotted callees: an import's exported name.
+        return (
+            'names' in gate &&
+            Array.isArray(gate.names) &&
+            gate.names.length > 0 &&
+            gate.names.every((name) => typeof name === 'string' && /^[A-Za-z_$][\w$]*$/.test(name))
+        )
+    }
     if (gate.kind !== 'wrapped-by' && gate.kind !== 'calls') return false
     return (
         'callees' in gate &&

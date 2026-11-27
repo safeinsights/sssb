@@ -1063,3 +1063,61 @@ authorized read, a machine read, a Simulator read, that download, and a probe th
 **Limits.** A screen (a server component) that reads org-scoped data is not judged, nor is a metadata route
 (`opengraph-image`, `icon`, `sitemap`, `robots`, `manifest`), which Next serves without a `route.ts`: the scan reads
 route handlers and Server Actions only (safeinsights/sssb#221). The conformance check keeps its id, `authz-mutations`, since an app's `optOut` names it.
+
+## Addendum (2026-11-27, later): a reads-only gate
+
+safeinsights/sssb#220. Since reads are judged (the addendum above), three kinds of read that touch no org-scoped data
+had no clean way through: a public read outside `src/app/api` (a feed), which no app exemption could name; a read that
+names an inert value no gate describes (a preflight's headers object from a module, a probe reporting a deployment
+parameter);
+and a provider's verification handshake GET under `webhooks/`, which the framework's `wrapped-by` gate refused and an
+app entry could not replace.
+
+**One new gate kind, `reads-only`, with `names`.** It holds for a READ handler (GET, HEAD, OPTIONS) that reads nothing
+but the names it lists: every name it refers to from outside itself is an inert value (the reads-nothing allow-list)
+or one of `names`, an import by its exported name; a default import, whose local name the author chooses, cannot be
+listed, and the reads one entry covers must import each listed name from one module. No value of the route's own file
+can be listed (below). No global off the inert list counts (`fetch`, `process`), and no name can excuse an aliased or namespace import, a
+class, `import()`, `import.meta`, `using` or a `constructor` member. It never holds for a mutation, and an entry whose
+gate it is applies to reads only: at its path, a mutation is judged by the exemption it would have had without it.
+
+**Where it may sit, and nothing else may.** An app may put a `reads-only` entry (and only that kind) outside
+`src/app/api`, under a new key `outsideApi: { files, prefixes }` relative to `src/app`; and it may name ONE file
+(not a prefix) per entry under the framework's `webhooks/` prefix, not under `simulator/` (whose guarantee, 404 in real mode, a
+reads-only read does not keep), a framework exact entry or a required-alongside prefix (`service/`). Apart from keys now being matched by URL (below) and dynamic segments being allowed literally, everything else an
+app's file could say before is unchanged, and
+every other overlap with a framework entry still fails. A `reads-only` entry is stale unless its path has a read
+handler.
+
+**What it proves.** That the read touches nothing but its request, inert values and the listed names: the entry's
+reason has to answer for exactly those names. Only imports can be listed. A value of the route's own file (a
+headers object, a helper function, a destructured binding, a `declare`d ambient, an `import … = require(…)`) is
+refused whatever is listed, since code of the file the scan does not walk can fill or change it: a top-level
+`cache.db = db`, another handler's `cache.set(…)`, an `export { cache }`, a sibling binding of a destructuring, or a
+caller of the handler itself that gets the object back. Four review rounds found each in turn while the rule let a
+file's own values through; put such a value in a module and list the import. A listed import is not read (a helper in another
+module is out of the scan's sight, as always), so listing a function that reads org data is a claim the reason makes,
+which review judges, as it judges a `calls` gate's port call. A listed name no read handler the entry governs uses is
+a problem, so a list cannot pre-approve one. The handler naming itself (`GET.load`) is refused whatever is listed.
+
+**What it does not see.** A listed import can be changed by any module, the route's own file included (a top-level
+`(feed as any).users = db`): the scan does not follow writes to an import. An inert global can be patched at load
+without an assignment to its name (`Object.defineProperty(JSON, 'x', …)`, `eval`), a gap older than this addendum that
+reading nothing has had since reads were judged, and so is reaching `Function` through a property descriptor
+(`Object.getOwnPropertyDescriptor(…, 'constructor').value`). All are evasions a reviewer sees in the file, where the
+scan's stance is to catch a route that lost its gate, not one written to fool it. "By URL" means the path Next gives
+a route file, groups and slots dropped: a dynamic first segment that also answers `/api/…` (`src/app/[x]/service/y`
+when no static route is there), a rewrite and `basePath` are not seen, as before.
+
+**Route groups and slots.** The scan matches a route by its URL: a route group's `(name)` segment and a parallel
+route's `@slot` segment are dropped from a route's path, and from an app's exemption key, before either is matched, as
+Next drops them; two keys that name one route are both refused. Before this addendum, `api/(internal)/service/x` and
+`api/@slot/service/x`, served at `/api/service/x`, escaped the `service/` required gate, a hole older than reads being
+judged, which a reads-only entry would have widened. A route under an intercepting segment (`(.)x`, `(..)x`, `(...)x`),
+which Next also serves at the URL it intercepts on a header the client sends, is refused outright: no path-keyed rule
+can tell which URL it answers.
+
+**Rejected:** treating `process.env` as inert (the app's lint, `sssb/no-process-env`, keeps it out of routes; a value
+from the environment arrives through `config/params.ts`, an import a `reads-only` gate can name); letting any value
+of the route's own file be listed (above); letting a `reads-only` entry under a
+framework prefix fall back to the prefix's gate for a read it refuses (an exact entry wins, as before).
