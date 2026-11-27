@@ -2,7 +2,7 @@ import type { DbPort } from '../ports/db'
 
 /**
  * Resolves an org slug (what sessions carry) to its uuid, scoped to the tenant it belongs to. Reads
- * the `organizations` infra table, readable across tenants, — the same legitimate raw read as tenant-lookup. Org slugs
+ * the `organizations` infra table, readable across tenants: the same legitimate raw read as tenant-lookup. Org slugs
  * are unique per tenant, so the tenant scope keeps the lookup unambiguous even if two tenants ever
  * reuse a slug.
  */
