@@ -637,7 +637,7 @@ describe('a finalize that fails after the code was accepted', () => {
         expect(assign).not.toHaveBeenCalled()
     })
 
-    // Going back otherwise signs the session out and reloads this page; here the client no longer holds it.
+    // Going back otherwise signs the session out; here the client no longer holds it, so it is only forgotten.
     it('is forgotten on the way back: the next step verifies its own code', async () => {
         signIn.finalize.mockResolvedValueOnce(refused)
         await reachStep([TOTP])

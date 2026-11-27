@@ -42,8 +42,10 @@ type SignIn = ReturnType<typeof useSignIn>['signIn']
  *   though `finalize` may then fail. The form keeps that session's id from the moment it sees it (`held`), since a
  *   `finalize` that fails half-way can empty the attempt. While it is held, going back from the step, or the sign-out
  *   button the password form then shows, signs it out through Clerk's client (by id, and only while the client still
- *   holds it), which brings the browser back to this page signed out. A reset alone is local, and would leave the next
- *   page load signed in for someone who believes they are not. A sign-out Clerk refuses says so, and can be tried again.
+ *   holds it signed in), and the form is then ready to sign in again: Clerk's redirect to this page is a soft
+ *   navigation, which keeps the form. A reset alone is local, and would leave the next page load signed in for someone
+ *   who believes they are not. A sign-out that fails, or leaves the session on the client, says so and can be tried
+ *   again. While a session is held the password cannot be submitted: Clerk would refuse it beside the session.
  */
 export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; returnTo: string }) {
     const { signIn } = useSignIn()
@@ -182,7 +184,7 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
                 }}
                 onBack={() => {
                     leaveStep(null)
-                    // A session Clerk created for this attempt is signed out (above), back to this page.
+                    // A session Clerk created for this attempt is signed out (above).
                     if (held) {
                         void endHeld(held)
                         return

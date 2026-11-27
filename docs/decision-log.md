@@ -7665,19 +7665,25 @@ One branch's secret-like string failed the scan on every other open pull request
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
 
-## Two edges of real sign-in: before Clerk loads, and back after an accepted code (2026-11-27, `fix/sign-in-edges`)
+## Two edges of real sign-in: before Clerk loads, and a session a failed finalize left (2026-11-27, `fix/sign-in-edges`)
 
 safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
 
 - **The password waits for `useClerk().loaded`**, and the button shows `loading` until then. `loaded` reads clerk-js
   itself (`IsomorphicClerk`), and Clerk's provider re-memoizes its context on every status change, so the form
   re-renders when clerk-js loads (@clerk/react 6.18.8, @clerk/shared 4.45.1). Rejected: **`useAuth().isLoaded`**,
-  which reads the auth state and can be true from a signed-out initial state before clerk-js has loaded; and
-  **re-reading the attempt after load**, which depends on what `GET /client` returns after a reload, the issue's open
-  question. A clerk-js that never loads leaves the button busy: there is nothing to sign in with then.
-- **Back from the step signs out `attempt.createdSessionId` when the attempt has one**, through Clerk's client by
-  session id with the sign-in page as `redirectUrl`, as `RealAccountRefused` does; with none, the attempt is only reset,
-  as before. The condition is the session, not the form's own "code accepted" flag: an attempt has a session only once
-  Clerk accepted a code, and any session it created is one the person going back does not expect to keep. A refused
-  sign-out shows the framework's existing `refusedSignOutError` copy. Rejected: **retrying `finalize` instead**, which
-  leaves the person no way to abandon a sign-in they started on a shared computer.
+  which reads Clerk's auth state rather than clerk-js itself; and **re-reading the attempt after load**, which depends
+  on what `GET /client` returns after a reload, the issue's open question. A clerk-js that never loads leaves the
+  button busy: there is nothing to sign in with then.
+- **The form holds the session from the moment an attempt is complete** (`held`, `attempt.createdSessionId`, read
+  before `finalize`, since a `finalize` that fails half-way can empty the attempt). That covers both routes to a
+  complete attempt: the password alone and an accepted code. While a session is held, Back from the step, or a
+  "Sign out" button on the password form (the existing `auth.signOut` copy), signs it out through Clerk's client by id,
+  and only while `client.signedInSessions` still has it; one the client no longer holds is only forgotten. The
+  password cannot be submitted while a session is held. Clerk's `redirectUrl` to this page is a soft navigation under
+  the app router, which keeps the form, so the form resets itself once the sign-out answers and the client no longer
+  holds the session; a sign-out that fails, or answers but leaves the session, shows the existing
+  `refusedSignOutError` copy with the button still there. A finished sign-in clears `held` and keeps the form busy
+  while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
+  nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
+  **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
