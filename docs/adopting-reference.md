@@ -136,7 +136,7 @@ ends as the signal asked.
   `minimumReleaseAge` with `@sssb/*` exempt), the Vitest configs on `@sssb/tools/vitest` (`vitest.config.ts` and
   `vitest.contract.config.ts`, a project for each app `sssb.apps` names), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
   gitleaks, git-ignore and Prettier-ignore configs, and lint-staged's. `.editorconfig`, `.nvmrc`,
-  `.prettierrc.json`, the two husky hooks and `commitlint.config.mjs` are copied from SSSB's root as they are.
+  `.prettierrc.json`, the two husky hooks, `commitlint.config.mjs` and `.github/scripts/secret-scan-range.sh` are copied from SSSB's root as they are.
 - **CI**: `.github/workflows/checks.yml`, on pushes to `main` and on pull requests, with three jobs. `sssb` calls
   SSSB's reusable workflow (`.github/workflows/app-checks.yml` in SSSB's repository) pinned to a commit, with
   `contents: read`, no secrets and `synth: ./apps/<slug>/infra`, so its checks are named `sssb / <job>` and
@@ -144,7 +144,8 @@ ends as the signal asked.
   you have judged can affect none of the contract tests, e2e, static demos and synth: those jobs then report success
   without running their work, so compute it from what your own pull request changed, as SSSB's own `checks.yml` does
   (`.github/scripts/docs-only.sh` in SSSB's repository). `workspace-checks` runs knip and jscpd, which SSSB's workflow does not;
-  `secret-scan` runs gitleaks over the whole history with your `.gitleaks.toml`.
+  `secret-scan` runs gitleaks with your `.gitleaks.toml` over a pull request's own commits, and over a push to `main`'s whole
+  history, never every branch (`.github/scripts/secret-scan-range.sh` picks the range).
 - **The owner files**, from `--repo` and `--owner`: `CODEOWNERS`, `SECURITY.md` (your own short policy, which
   points at SSSB only for a root cause in a shape SSSB gave the app), `CODE_OF_CONDUCT.md`, and under
   `.github/ISSUE_TEMPLATE/` a two-field bug form and a `config.yml` linking the security advisory form.
