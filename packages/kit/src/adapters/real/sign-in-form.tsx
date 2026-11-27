@@ -1,6 +1,6 @@
 'use client'
 
-import { useSignIn } from '@clerk/nextjs'
+import { useClerk, useSignIn } from '@clerk/nextjs'
 import { Button, PasswordInput, Stack, Text, TextInput } from '@mantine/core'
 import { useForm } from '@mantine/form'
 import { useTranslations } from 'next-intl'
@@ -32,9 +32,20 @@ type SignIn = ReturnType<typeof useSignIn>['signIn']
  * `returnTo` usually comes from the URL, so the form goes there only when `sameOriginPath` accepts it, and to `/`
  * otherwise: a page that forgot to check it must not turn sign-in into an open redirect (`/\evil.example` and
  * `/<tab>/evil.example` pass a `startsWith('/')` check and leave the origin).
+ *
+ * Two edges (safeinsights/sssb#198):
+ * - The password waits for clerk-js to load (`useClerk().loaded`; the button shows it is busy until then). Before
+ *   load, `useSignIn` answers a placeholder that follows the hook's current attempt and reads every value as a
+ *   default, so the form could not tell a dropped request from a taken one, and could act on an attempt the client
+ *   already held: send its account a code, or finalize it.
+ * - Once Clerk has accepted the step's code, the session exists on the browser's client, though `finalize` may then
+ *   fail. Going back from the step then signs that session out through Clerk's client (`createdSessionId`, this one
+ *   session only), which brings the browser back to this page signed out, so the next page load cannot come up signed
+ *   in for someone who believes they are not. A reset alone is local.
  */
 export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; returnTo: string }) {
     const { signIn } = useSignIn()
+    const clerk = useClerk()
     const t = useTranslations('auth')
     const [formError, setFormError] = useState<string | null>(null)
     // Not the hook's `fetchStatus`, which a code still being sent holds after the person has gone back from the step.
@@ -93,6 +104,8 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
     }
 
     const submit = form.onSubmit(async (values) => {
+        // Held until clerk-js has loaded (above); the button cannot be pressed before then, and nor can this run.
+        if (!clerk.loaded) return
         setFormError(null)
         setBusy(true)
         // A Clerk call that throws (the network, not a refused password) is shown as the same generic error, never left
@@ -132,6 +145,15 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
                 }}
                 onBack={() => {
                     leaveStep(null)
+                    // After an accepted code the session is already on the browser's client: sign it out (above), back
+                    // to this page. Should Clerk refuse, the person is told they are still signed in.
+                    const sessionId = accepted ? attempt.createdSessionId : null
+                    if (sessionId) {
+                        void Promise.resolve()
+                            .then(() => clerk.signOut({ sessionId, redirectUrl: window.location.href }))
+                            .catch(() => setFormError(t('refusedSignOutError')))
+                        return
+                    }
                     // Clerk's attempt is dropped too (local state only, no request). The next password starts a new one
                     // either way, so a reset that fails changes nothing.
                     void Promise.resolve()
@@ -147,7 +169,7 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
             <Stack>
                 <TextInput label={labels.email} type="email" required {...form.getInputProps('email')} />
                 <PasswordInput label={labels.password} required ref={password} {...form.getInputProps('password')} />
-                <Button type="submit" loading={busy}>
+                <Button type="submit" loading={busy || !clerk.loaded}>
                     {labels.submit}
                 </Button>
                 {formError ? (
@@ -165,8 +187,8 @@ interface Step {
     /**
      * The attempt the password opened, which every call of the step is made on, rather than the hook's current `signIn`,
      * which a client update can replace: another tab's attempt, a code sent before the person went back, or the empty
-     * attempt `finalize` can leave when it fails half-way. (A password submitted before clerk-js has loaded is the
-     * exception: what the hook answers then is a placeholder that follows its current attempt.)
+     * attempt `finalize` can leave when it fails half-way. (No password is submitted before clerk-js has loaded, when
+     * what the hook answers is a placeholder that follows its current attempt.)
      */
     attempt: SignIn
     status: 'needs_second_factor' | 'needs_client_trust'
@@ -179,8 +201,7 @@ interface Step {
  * left. So a call is taken when it answers no error and anything about the attempt has changed. A password moves its
  * status or, posted to Clerk's collection of attempts, is answered with another id, so no password depends on the
  * verification alone; a sent code moves neither, and there the verification says (clerk-js rebuilds it from every
- * success). Before clerk-js has loaded, every read is a default, so a call made then counts as taken whenever it answers
- * no error (safeinsights/sssb#198).
+ * success). The form makes no call before clerk-js has loaded, when every read is a default (safeinsights/sssb#198).
  */
 async function succeeds(attempt: SignIn, call: () => Promise<{ error: unknown }>): Promise<boolean> {
     const before = fingerprint(attempt)
