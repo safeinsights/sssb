@@ -1,3 +1,4 @@
+import { sql } from 'kysely'
 import type { DbPort } from '../ports/db'
 
 /**
@@ -8,7 +9,8 @@ import type { DbPort } from '../ports/db'
  * tenants whose hint has come (or that have none).
  *
  * The hint is never later than the truth: database triggers lower it on every write that can make work due (the
- * migration lists them), and the drain raises it only by compare-and-set, after listing a tenant that had nothing
+ * migration lists them; one that must create the row writes "unknown", the epoch), and the drain raises it only by
+ * compare-and-set, after listing a tenant that had nothing
  * due, to that tenant's next due time; a write that lowered it meanwhile bumped its version, so the raise does not
  * land. A hint more than `MAX_SKIP_MS` away is read as come, so no tenant goes unlisted for longer than that, and a
  * simulated world whose clock was moved back cannot strand one.
@@ -22,6 +24,9 @@ export type DueDrain = 'schedules' | 'retries' | 'deliveries'
 
 /** The longest a hint lets a drain leave a tenant unlisted: a day, so every tenant is listed at least once a day. */
 export const MAX_SKIP_MS = 24 * 60 * 60_000
+
+/** How long a raise waits for a hint row another transaction holds before it gives up (and the tenant is relisted). */
+const RAISE_LOCK_TIMEOUT_MS = 100
 
 /** A tenant a drain lists, with the version of its hint as read (null when it has none). */
 export interface HintedTenant {
@@ -75,23 +80,30 @@ export async function raiseHint(
     if (tenant.unhinted) return
     const cap = new Date(now.getTime() + MAX_SKIP_MS)
     const listAfter = nextDue !== null && nextDue.getTime() < cap.getTime() ? nextDue : cap
-    const raw = db.getDb()
     try {
-        if (tenant.hintVersion === null) {
-            await raw
-                .insertInto('due_hints')
-                .values({ tenant_id: tenant.id, drain, list_after: listAfter })
-                .onConflict((oc) => oc.columns(['tenant_id', 'drain']).doNothing())
-                .execute()
-        } else {
-            await raw
-                .updateTable('due_hints')
-                .set({ list_after: listAfter })
-                .where('tenant_id', '=', tenant.id)
-                .where('drain', '=', drain)
-                .where('version', '=', tenant.hintVersion)
-                .execute()
-        }
+        // Under a short lock timeout: the row a tenant's own open transaction has just lowered is locked until it
+        // commits, and a drain must not wait on it (a raise that does not land only means the tenant is listed again).
+        await db
+            .getDb()
+            .transaction()
+            .execute(async (trx) => {
+                await sql`SET LOCAL lock_timeout = '${sql.raw(String(RAISE_LOCK_TIMEOUT_MS))}ms'`.execute(trx)
+                if (tenant.hintVersion === null) {
+                    await trx
+                        .insertInto('due_hints')
+                        .values({ tenant_id: tenant.id, drain, list_after: listAfter })
+                        .onConflict((oc) => oc.columns(['tenant_id', 'drain']).doNothing())
+                        .execute()
+                } else {
+                    await trx
+                        .updateTable('due_hints')
+                        .set({ list_after: listAfter })
+                        .where('tenant_id', '=', tenant.id)
+                        .where('drain', '=', drain)
+                        .where('version', '=', tenant.hintVersion)
+                        .execute()
+                }
+            })
     } catch (error) {
         console.warn(`SSSB tick: could not raise tenant ${tenant.id}'s ${drain} hint: ${messageOf(error)}`)
     }

@@ -518,6 +518,21 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
         noteDueRefused = /permission denied|trigger functions can only be called as triggers/.test(String(error))
     }
     expect(noteDueRefused).toBe(true)
+    // From the catalog, so each property can fail on its own: no privilege of app_user's on the table, no EXECUTE on
+    // the function, the function SECURITY DEFINER, and its search_path exactly the pinned one.
+    const tablePrivileges = await sql<{ privilege: string; held: boolean }>`
+        SELECT p AS privilege, has_table_privilege('app_user', 'public.due_hints', p) AS held
+        FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p
+    `.execute(db)
+    expect(JSON.stringify(tablePrivileges.rows.filter((r) => r.held))).toBe('[]')
+    const noteDue = await sql<{ executable: boolean; definer: boolean; config: string[] | null }>`
+        SELECT has_function_privilege('app_user', 'public.sssb_note_due()', 'EXECUTE') AS executable,
+               prosecdef AS definer, proconfig AS config
+        FROM pg_proc WHERE oid = 'public.sssb_note_due()'::regprocedure
+    `.execute(db)
+    expect(noteDue.rows[0]?.executable).toBe(false)
+    expect(noteDue.rows[0]?.definer).toBe(true)
+    expect(JSON.stringify(noteDue.rows[0]?.config)).toBe(JSON.stringify(['search_path=pg_catalog, public, pg_temp']))
     // app_user moving its own schedule earlier lowers its tenant's hint, through the definer trigger.
     const earlier = new Date('2026-08-01T00:00:00.000Z')
     await runWithTenant(appDb, alphaTenantId, (trx) =>
