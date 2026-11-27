@@ -481,7 +481,8 @@ jobs:
             - run: pnpm knip
             - run: pnpm jscpd
 
-    # Secret scanning over the whole history, with this repository's own .gitleaks.toml.
+    # Secret scanning with this repository's own .gitleaks.toml: a pull request's own commits, and a push to main's whole
+    # history, never every branch on the remote (.github/scripts/secret-scan-range.sh picks the range).
     secret-scan:
         runs-on: ubuntu-latest
         permissions:
@@ -489,15 +490,22 @@ jobs:
         steps:
             - uses: ${c.meta.actions['actions/checkout']}
               with:
-                  fetch-depth: 0 # full history: a secret committed then deleted is still leaked
+                  fetch-depth: 0 # every commit of the range: a secret committed then deleted is still leaked
                   persist-credentials: false # gitleaks reads the local history; nothing here needs the token
             - name: gitleaks (pinned binary; gitleaks-action requires a license key for organization repositories)
+              # The range is captured on its own line, so a failure of the script stops the step: inside the gitleaks
+              # command's arguments it would not, and gitleaks would run with no range, which is \`--all\`.
               # The digest is the one gitleaks publishes for this asset; the binary runs only if the download matches it.
+              env:
+                  EVENT_NAME: \${{ github.event_name }}
+                  BASE_SHA: \${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: \${{ github.event.pull_request.head.sha }}
               run: |
                   curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v${c.meta.gitleaksVersion}/gitleaks_${c.meta.gitleaksVersion}_linux_x64.tar.gz
                   echo "${c.meta.gitleaksSha256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
                   tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" gitleaks
-                  ./gitleaks git --redact --config .gitleaks.toml
+                  range=$(bash .github/scripts/secret-scan-range.sh)
+                  ./gitleaks git --redact --config .gitleaks.toml --log-opts="\${range:?}"
 `
 }
 
