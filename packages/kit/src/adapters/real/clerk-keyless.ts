@@ -13,8 +13,14 @@
  * disabled. That is stricter than Clerk's own condition on purpose (it ignores the CI exemption and holds under
  * `NODE_ENV=test` too), so it does not depend on Clerk's list of CI variables. `dev:real` sets the variable.
  *
- * Clerk reads `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` with its own `isTruthy` ('true' in any case, or a positive number);
- * this accepts only `1` and `true`, which Clerk reads as set too, so a value this accepts is one Clerk honours.
+ * Clerk reads `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` with its own `isTruthy` (`true` in any case, untrimmed, or a positive
+ * number); this accepts exactly `1` and `true`, which Clerk reads as set too, so a value this accepts is one Clerk
+ * honours (a padded ` true ` is not).
+ *
+ * Clerk is bundled into the app, where Next inlines `process.env.NODE_ENV` (as `development` under `next dev`, whatever
+ * the process was started with), so `assertClerkKeylessClosed` reads it in the same literal form, which Next inlines
+ * alike. `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` is read at run time: under `next dev` the server compiles and runs in one
+ * process, with one value.
  */
 export function clerkKeylessProblem(env: Readonly<Record<string, string | undefined>> = process.env): string | null {
     if (env['NODE_ENV'] === 'production') return null
@@ -24,7 +30,7 @@ export function clerkKeylessProblem(env: Readonly<Record<string, string | undefi
             'key, so a forged x-clerk-auth header could sign anyone in. Set CLERK_SECRET_KEY'
         )
     }
-    const disabled = env['NEXT_PUBLIC_CLERK_KEYLESS_DISABLED']?.trim().toLowerCase()
+    const disabled = env['NEXT_PUBLIC_CLERK_KEYLESS_DISABLED']
     if (disabled !== '1' && disabled !== 'true') {
         return (
             "Clerk's keyless mode is enabled outside a production build: on a path the proxy skips, a forged " +
@@ -35,8 +41,12 @@ export function clerkKeylessProblem(env: Readonly<Record<string, string | undefi
     return null
 }
 
-/** Throws `clerkKeylessProblem`'s answer, if there is one. */
+/** Throws `clerkKeylessProblem`'s answer for this process, if there is one. */
 export function assertClerkKeylessClosed(): void {
-    const problem = clerkKeylessProblem()
+    const problem = clerkKeylessProblem({
+        ...process.env,
+        // The literal form, which Next inlines in this module as it does in Clerk's (above).
+        NODE_ENV: process.env.NODE_ENV,
+    })
     if (problem) throw new Error(problem)
 }

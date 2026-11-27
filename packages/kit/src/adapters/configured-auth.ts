@@ -109,8 +109,8 @@ export function configuredAuth(
                 }
             }
             // Single tenancy over the provider's organizations: the adapter's user, in the configured tenant. The
-            // adapter reads the signed-in account again; Clerk's adapter shares that read with the identity source's
-            // within a request, so it costs no second call.
+            // adapter reads the signed-in account again; within a server render Clerk's adapter shares that read with
+            // the identity source's, so it costs no second call there (a route handler still makes both).
             const user = await base.getCurrentUser()
             if (!user || user.id !== identity.id) return null
             return tenancy.kind === 'single' ? { ...user, tenantSlug: tenancy.tenantSlug } : user

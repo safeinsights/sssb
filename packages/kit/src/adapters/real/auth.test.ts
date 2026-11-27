@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
     // Every Backend API call, by name (`auth()` is local, and counted apart), and a read that fails once when set.
     calls: [] as string[],
     authCalls: 0,
+    clientCalls: 0,
     failNextUserRead: false,
 }))
 
@@ -63,33 +64,37 @@ vi.mock('@clerk/nextjs/server', () => {
             }
             return h.user
         },
-        clerkClient: async () => ({
-            organizations: {
-                getOrganization: async ({ slug }: { slug: string }) => ({ id: `org_${slug}` }),
-                createOrganizationInvitation: async (params: Record<string, unknown>) => {
-                    h.created.push(params)
-                    return { id: 'orginv_1', emailAddress: params['emailAddress'], url: h.url }
+        clerkClient: async () => {
+            h.clientCalls += 1
+            return {
+                organizations: {
+                    getOrganization: async ({ slug }: { slug: string }) => ({ id: `org_${slug}` }),
+                    createOrganizationInvitation: async (params: Record<string, unknown>) => {
+                        h.created.push(params)
+                        return { id: 'orginv_1', emailAddress: params['emailAddress'], url: h.url }
+                    },
+                    getOrganizationMembershipList: async (params: { limit?: number; offset?: number }) =>
+                        paged(h.orgMembers, params),
+                    getOrganizationInvitationList: async (params: { limit?: number; offset?: number }) =>
+                        paged(h.invitations, params),
                 },
-                getOrganizationMembershipList: async (params: { limit?: number; offset?: number }) =>
-                    paged(h.orgMembers, params),
-                getOrganizationInvitationList: async (params: { limit?: number; offset?: number }) =>
-                    paged(h.invitations, params),
-            },
-            users: {
-                getOrganizationMembershipList: async (params: { limit?: number; offset?: number }) => {
-                    h.calls.push('users.getOrganizationMembershipList')
-                    return paged(h.myMemberships, params)
+                users: {
+                    getOrganizationMembershipList: async (params: { limit?: number; offset?: number }) => {
+                        h.calls.push('users.getOrganizationMembershipList')
+                        return paged(h.myMemberships, params)
+                    },
+                    updateUser: async (_userId: string, update: { firstName: string; lastName: string }) => {
+                        h.writes.push('name')
+                        if (h.user) h.user = { ...h.user, fullName: `${update.firstName} ${update.lastName}`.trim() }
+                    },
+                    updateUserMetadata: async (_userId: string, update: { unsafeMetadata?: unknown }) => {
+                        h.writes.push('metadata')
+                        if (h.user && update.unsafeMetadata)
+                            h.user = { ...h.user, unsafeMetadata: update.unsafeMetadata }
+                    },
                 },
-                updateUser: async (_userId: string, update: { firstName: string; lastName: string }) => {
-                    h.writes.push('name')
-                    if (h.user) h.user = { ...h.user, fullName: `${update.firstName} ${update.lastName}`.trim() }
-                },
-                updateUserMetadata: async (_userId: string, update: { unsafeMetadata?: unknown }) => {
-                    h.writes.push('metadata')
-                    if (h.user && update.unsafeMetadata) h.user = { ...h.user, unsafeMetadata: update.unsafeMetadata }
-                },
-            },
-        }),
+            }
+        },
     }
 })
 vi.mock('@clerk/nextjs/errors', () => ({ isClerkAPIResponseError: () => false }))
@@ -107,6 +112,7 @@ beforeEach(() => {
     h.endless = false
     h.calls = []
     h.authCalls = 0
+    h.clientCalls = 0
     h.failNextUserRead = false
     render.scope = null
     // What the adapter requires before it reads a session outside a production build (./clerk-keyless.ts).
@@ -299,10 +305,13 @@ describe('the Clerk adapter, reading the person once per server render', () => {
         expect((await realAuth.getCurrentUser())?.role).toBe('admin')
         render.scope = new Map()
         expect(await realAuth.getCurrentUser()).toMatchObject({ orgSlug: 'org-2', role: 'member' })
-        // Banned: Clerk ends the session, so the next request's `auth()` has no user, and nothing cached answers.
-        h.user = null
+        // Banned: Clerk ends the session, but a session token already issued still verifies until it lapses, and Clerk
+        // still answers the account, marked banned. The next request reads no one.
+        h.user = { ...PAT, banned: true }
         render.scope = new Map()
         expect(await realAuth.getCurrentUser()).toBeNull()
+        const { clerkIdentitySource } = await import('./auth')
+        expect(await clerkIdentitySource.current()).toBeNull()
     })
 
     it("sees the render's own writes: switching org, then reading, answers the new org", async () => {
@@ -329,12 +338,21 @@ describe('the Clerk adapter, reading the person once per server render', () => {
         expect((await realAuth.getCurrentUser())?.name).toBe('Pat')
     })
 
-    it('reads no session, and calls Clerk for nothing, while keyless mode is on outside a production build', async () => {
+    it.each<[string, (auth: typeof import('./auth')) => Promise<unknown>]>([
+        ['getCurrentUser', ({ realAuth }) => realAuth.getCurrentUser()],
+        ['requireUser', ({ realAuth }) => realAuth.requireUser()],
+        ['signOut', ({ realAuth }) => realAuth.signOut()],
+        ['updateProfile', ({ realAuth }) => realAuth.updateProfile({ name: 'Pat Lane' })],
+        ['getMember', ({ realAuth }) => realAuth.getMember('depot', 'user_1')],
+        ['listMembers', ({ realAuth }) => realAuth.listMembers('depot')],
+        ['createInvite', ({ realAuth }) => realAuth.createInvite(INVITE)],
+        ['listMyOrgs', ({ realAuth }) => realAuth.listMyOrgs()],
+        ['setActiveOrg', ({ realAuth }) => realAuth.setActiveOrg('org-2')],
+        ['the identity source, current', ({ clerkIdentitySource }) => clerkIdentitySource.current()],
+        ['the identity source, account', ({ clerkIdentitySource }) => clerkIdentitySource.account('user_1')],
+    ])('%s calls Clerk for nothing while keyless mode is on outside a production build', async (_, call) => {
         vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '')
-        const { realAuth } = await import('./auth')
-        await expect(realAuth.getCurrentUser()).rejects.toThrow(/NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/)
-        await expect(realAuth.signOut()).rejects.toThrow(/NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/)
-        expect(h.authCalls).toBe(0)
-        expect(h.calls).toEqual([])
+        await expect(call(await import('./auth'))).rejects.toThrow(/NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/)
+        expect([h.authCalls, h.clientCalls, h.calls]).toEqual([0, 0, []])
     })
 })

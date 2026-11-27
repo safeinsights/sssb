@@ -13,23 +13,21 @@ describe('clerkKeylessProblem', () => {
         expect(clerkKeylessProblem({ NODE_ENV: 'production' })).toBeNull()
     })
 
-    it.each(['1', 'true', 'TRUE', ' 1 '])(
-        'finds none outside one with a secret key and keyless disabled by %j',
-        (v) => {
-            expect(clerkKeylessProblem({ ...READY, NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: v })).toBeNull()
-            expect(
-                clerkKeylessProblem({
-                    ...READY,
-                    CLERK_SECRET_KEY: undefined,
-                    CLERK_ENCRYPTION_KEY: 'enc_1',
-                    NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: v,
-                }),
-            ).toBeNull()
-        },
-    )
+    it.each(['1', 'true'])('finds none outside one with a secret key and keyless disabled by %j', (v) => {
+        expect(clerkKeylessProblem({ ...READY, NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: v })).toBeNull()
+        expect(
+            clerkKeylessProblem({
+                ...READY,
+                CLERK_SECRET_KEY: undefined,
+                CLERK_ENCRYPTION_KEY: 'enc_1',
+                NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: v,
+            }),
+        ).toBeNull()
+    })
 
-    it.each([undefined, '', '0', 'false', 'off', 'no', 'yes'])(
-        'refuses keyless mode left on (%j), under next dev and under a test run alike',
+    // Clerk reads `TRUE` and ` 1 ` as set too, but a padded ` true ` as unset: only the two plain forms are taken.
+    it.each([undefined, '', '0', 'false', 'off', 'no', 'yes', ' true ', 'TRUE', ' 1 '])(
+        'refuses any other value (%j), under next dev and under a test run alike',
         (value) => {
             for (const NODE_ENV of ['development', 'test', undefined]) {
                 expect(clerkKeylessProblem({ ...READY, NODE_ENV, NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: value })).toMatch(

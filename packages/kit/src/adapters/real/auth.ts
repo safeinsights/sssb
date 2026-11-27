@@ -37,7 +37,8 @@ import { assertClerkKeylessClosed } from './clerk-keyless'
  * (`users.getOrganizationMembershipList`, a page per 100 orgs) are Backend API calls. Each is read at most once per
  * server render (`requestReads`), however many layouts, pages and components ask, so a render makes at most two calls
  * (more only for a person in over 100 orgs) and `listMyOrgs` adds none. Nothing outlives the request: a role change, a
- * removal from an org or a ban shows on the next one. A route handler is not a render, and reads once per call.
+ * removal from an org or a ban shows on the next one (a banned account is read as no one, though its session token
+ * still verifies until it lapses). A route handler is not a render, and reads on each call.
  */
 
 interface AppPublicMetadata {
@@ -114,11 +115,22 @@ function isProfileName(name: unknown): name is string {
 
 /**
  * The session Clerk's middleware verified, read only once ./clerk-keyless.ts has said that Clerk's keyless fallback,
- * which would let a forged header stand in for the middleware, cannot be reached.
+ * which would let a forged header stand in for the middleware, cannot be reached. Every other read of the person
+ * (`currentUser()`) follows one of these.
  */
 async function sessionAuth() {
     assertClerkKeylessClosed()
     return auth()
+}
+
+/**
+ * Clerk's Backend API client, on the same condition: `clerkClient()` decrypts the request data too, and builds its
+ * client from what it finds there (the API's URL included), so a forged header could send the secret key, and the
+ * question, to a server of the caller's choosing.
+ */
+async function guardedClient() {
+    assertClerkKeylessClosed()
+    return clerkClient()
 }
 
 type ClerkUser = Awaited<ReturnType<typeof currentUser>>
@@ -174,7 +186,7 @@ function signedInAccount(userId: string): Promise<ClerkUser> {
 /** Every org membership of the signed-in person, once per request. */
 function myMemberships(userId: string): Promise<UserMembership[]> {
     return once(userId, 'memberships', async () => {
-        const client = await clerkClient()
+        const client = await guardedClient()
         return allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
     })
 }
@@ -185,7 +197,7 @@ function forgetReads(userId: string): void {
 }
 
 async function organizationIdForSlug(slug: string): Promise<string> {
-    const client = await clerkClient()
+    const client = await guardedClient()
     const org = await client.organizations.getOrganization({ slug })
     return org.id
 }
@@ -196,7 +208,9 @@ export const realAuth: AuthPort = {
         if (!userId) return null
         // Both reads at once, each shared with the rest of the request.
         const [user, memberships] = await Promise.all([signedInAccount(userId), myMemberships(userId)])
-        if (!user) return null
+        // A banned account is signed out from the next request on: banning ends its sessions, but a session token
+        // already issued verifies until it lapses.
+        if (!user || user.banned) return null
         const metadata = (user.publicMetadata ?? {}) as AppPublicMetadata
         const locale = localeFrom(metadata)
 
@@ -241,7 +255,7 @@ export const realAuth: AuthPort = {
         // show the person signed out at once also signs out through Clerk's client (./account-refused-form.tsx does).
         const { sessionId } = await sessionAuth()
         if (!sessionId) return
-        const client = await clerkClient()
+        const client = await guardedClient()
         await client.sessions.revokeSession(sessionId)
     },
 
@@ -251,7 +265,7 @@ export const realAuth: AuthPort = {
         // Same guards the fake adapter enforces, and as early: before any write, so a refused update changes nothing.
         if (update.name !== undefined && !isProfileName(update.name)) throw new ForbiddenError('invalid name')
         if (update.locale !== undefined && !LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
-        const client = await clerkClient()
+        const client = await guardedClient()
         // Forgotten even when a write fails part way: the first may have landed.
         try {
             if (update.name !== undefined) {
@@ -275,7 +289,7 @@ export const realAuth: AuthPort = {
         // membership is looked up on the ORG, filtered to this user, so a person in many orgs is never cut
         // off by a page size. No such org, or no membership, means no standing: null, as the port says,
         // never a 404 thrown through to the caller.
-        const client = await clerkClient()
+        const client = await guardedClient()
         let memberships
         try {
             const organizationId = await organizationIdForSlug(orgSlug)
@@ -305,7 +319,7 @@ export const realAuth: AuthPort = {
     },
 
     async listMembers(orgSlug: string): Promise<Membership[]> {
-        const client = await clerkClient()
+        const client = await guardedClient()
         const organizationId = await organizationIdForSlug(orgSlug)
         const [members, invitations] = await Promise.all([
             allPages((page) => client.organizations.getOrganizationMembershipList({ organizationId, ...page })),
@@ -350,7 +364,7 @@ export const realAuth: AuthPort = {
     async createInvite(invite: InviteInput): Promise<CreatedInvite> {
         const { userId } = await sessionAuth()
         if (!userId) throw new AuthRequiredError()
-        const client = await clerkClient()
+        const client = await guardedClient()
         const organizationId = await organizationIdForSlug(invite.orgSlug)
         const created = await client.organizations.createOrganizationInvitation({
             organizationId,
@@ -386,7 +400,7 @@ export const realAuth: AuthPort = {
         if (!userId) throw new AuthRequiredError()
         const mine = await this.listMyOrgs()
         if (!mine.some((o) => o.slug === orgSlug)) throw new ForbiddenError(`no membership in org: ${orgSlug}`)
-        const client = await clerkClient()
+        const client = await guardedClient()
         try {
             await client.users.updateUserMetadata(userId, { unsafeMetadata: { currentOrgSlug: orgSlug } })
         } finally {
@@ -405,7 +419,7 @@ export const clerkIdentitySource: ProviderIdentitySource = {
         const { userId } = await sessionAuth()
         if (!userId) return null
         const user = await signedInAccount(userId)
-        if (!user) return null
+        if (!user || user.banned) return null
         return {
             id: userId,
             name: user.fullName ?? user.primaryEmailAddress?.emailAddress ?? userId,
@@ -415,7 +429,7 @@ export const clerkIdentitySource: ProviderIdentitySource = {
         }
     },
     async account(userId) {
-        const client = await clerkClient()
+        const client = await guardedClient()
         let user
         try {
             user = await client.users.getUser(userId)
