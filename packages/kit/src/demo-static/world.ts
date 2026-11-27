@@ -859,12 +859,14 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
     function runDueSchedules(worldNowMs: number): number {
         const fired: ScheduleRowLike[] = []
         const advanced = schedules.map((schedule) => {
-            if (!schedule.enabled || new Date(schedule.nextRunAt).getTime() > worldNowMs) return schedule
+            const spec = schedule.spec
+            // A row with no spec (the server's view of one that does not parse) never fires, as the server turns it off.
+            if (!schedule.enabled || spec === null || new Date(schedule.nextRunAt).getTime() > worldNowMs)
+                return schedule
             fired.push(schedule)
-            let next = computeNextRunAt(schedule.spec, new Date(schedule.nextRunAt))
-            for (let i = 0; next.getTime() <= worldNowMs && i < 100_000; i++)
-                next = computeNextRunAt(schedule.spec, next)
-            if (next.getTime() <= worldNowMs) next = computeNextRunAt(schedule.spec, new Date(worldNowMs))
+            let next = computeNextRunAt(spec, new Date(schedule.nextRunAt))
+            for (let i = 0; next.getTime() <= worldNowMs && i < 100_000; i++) next = computeNextRunAt(spec, next)
+            if (next.getTime() <= worldNowMs) next = computeNextRunAt(spec, new Date(worldNowMs))
             return { ...schedule, nextRunAt: next.toISOString() }
         })
         if (fired.length === 0) return 0

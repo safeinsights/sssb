@@ -24,8 +24,7 @@ takes `maxRetries` and `retriesWindowMs`. The job views carry `attempt` and `ret
 **To adopt.** For a kind whose handler is idempotent, add to `src/app-config/jobs.ts`:
 `export const jobRetry: Partial<Record<AppJobKind, JobRetry>> = { 'sweep-items': { attempts: 3, delaysMs: [60_000, 600_000] } }`,
 with `JobRetry` from `@sssb/kit/core/jobs`. Key the handler's side effects on `ctx.firstJobId`. If the static demo
-starts the kind, pass the same map as `useDemoWorld`'s `jobRetry`. A build the CodeBuild runner loses without posting its
-webhook is never retried.
+starts the kind, pass the same map as `useDemoWorld`'s `jobRetry`.
 
 **Now deletable.** A kind's own resume-at-the-next-scheduled-run discipline, kept only so that a failed or cut-off run
 was picked up an hour later.

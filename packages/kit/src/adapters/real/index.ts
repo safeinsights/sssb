@@ -5,6 +5,7 @@ import type { DbPort } from '../../ports/db'
 import type { EmailPort } from '../../ports/email'
 import { CutoverPendingError } from '../../ports/errors'
 import type { JobsPort } from '../../ports/jobs'
+import type { FailLostJob } from './jobs'
 import type { LlmPort } from '../../ports/llm'
 import type { StoragePort } from '../../ports/storage'
 import { absentEmail, absentJobs, absentLlm, absentStorage } from './absent'
@@ -117,6 +118,38 @@ export function assertRealEnv(): void {
 }
 
 /**
+ * What `sssb check-real-env` says after a passing check, on settings that are optional and still worth a look: advisory
+ * lines, never a failure, since each is a supported way to run (`assertRealEnv` is what refuses). Not read at boot.
+ *
+ * - `CLERK_AUTHORIZED_PARTIES` unset: Clerk's middleware then accepts a session token minted for any origin, as before
+ *   the setting existed (./clerk-authorized-parties.ts), and nothing else tells an operator the check is off. It is
+ *   read from the environment this command runs in, so it speaks for the server only when that is the server's.
+ * - A variable spelled like it and not it (`CLERK_AUTHORISED_PARTIES`): it does nothing, though a value looks set (on
+ *   Windows, where the environment ignores case, the same name in another case is the variable itself, so not this).
+ *
+ * safeinsights/sssb#192. The environment is a parameter for the test's sake.
+ */
+export function realEnvNotices(env: Readonly<Record<string, string | undefined>> = process.env): string[] {
+    const notices: string[] = []
+    const NAME = 'CLERK_AUTHORIZED_PARTIES'
+    if (env[NAME] === undefined) {
+        notices.push(
+            `${NAME} is unset: this server accepts a Clerk session token minted for any origin, not only its own ` +
+                '(cutover row auth-dev). Set it on the server to the origins it is served from.',
+        )
+    }
+    // `CLERK_AUTHORISED_PARTIES` and its like: every variable that starts the way the name does and is not it.
+    for (const name of Object.keys(env).sort()) {
+        // On Windows the environment ignores case: `Clerk_Authorized_Parties` is the variable, not a misspelling of it.
+        const sameName = process.platform === 'win32' && name.toUpperCase() === NAME
+        if (name !== NAME && !sameName && /^CLERK_AUTHORI/i.test(name) && env[name] !== undefined) {
+            notices.push(`${name} is set, but the setting is read as ${NAME} only: ${name} does nothing.`)
+        }
+    }
+    return notices
+}
+
+/**
  * What the adapter registry hands the real ports: how to build the in-process job runner (`JOBS_RUNNER=in-process`).
  * The runner runs the app's registered job handlers, so it reaches the app's seam, and through it whatever the app's
  * handlers import, the registry included. This module must reach none of that: the registry loads it while being
@@ -128,6 +161,12 @@ export function assertRealEnv(): void {
  * selects the in-process runner without handing one in.
  */
 interface RealPortsHooks {
+    /**
+     * How the CodeBuild runner's sweep fails a job whose build was lost (safeinsights/sssb#231): handed in for the same
+     * reason as `inProcessJobs` (failing a job reaches the job modules and the app's seam). Without it the runner has
+     * no sweep, as before.
+     */
+    failLostJob?: FailLostJob
     inProcessJobs?: (ports: {
         db: DbPort
         storage: StoragePort
@@ -194,7 +233,12 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
     const runner = portChoice('jobs')
     const jobs =
         runner === 'codebuild'
-            ? (await import('./jobs')).createRealJobs(need('JOBS_CODEBUILD_PROJECT'), need('AWS_REGION'))
+            ? (await import('./jobs')).createRealJobs(
+                  need('JOBS_CODEBUILD_PROJECT'),
+                  need('AWS_REGION'),
+                  db,
+                  hooks.failLostJob,
+              )
             : runner === 'in-process'
               ? await inProcessJobs(hooks, { db, storage, email, llm, auth })
               : absentJobs

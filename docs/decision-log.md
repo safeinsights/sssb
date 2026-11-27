@@ -8117,6 +8117,136 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
 
+## Lost CodeBuild builds, and schedules that keep failing (2026-11-27, `fix/lost-builds-and-failing-schedules`)
+
+Two fixes in one change. safeinsights/sssb#231: a CodeBuild job whose build died without posting its webhook stayed
+queued for ever, and since #135 a kind that retries never retried it. safeinsights/sssb#215: a schedule whose spawn
+failed inside its transaction stayed due and took a turn every tick.
+
+- **The CodeBuild runner records each build, and judges a job by its build's state, not its age.** Migration
+  `0020_job_runner_ref` adds `jobs.runner_ref`. `start` writes `starting` before it calls StartBuild, and the build's
+  id once StartBuild returns. The sweep the tick already calls (`JobsPort.sweep`) asks BatchGetBuilds, at most 100 ids a
+  call, about every job of the runner's still queued or running whose last status change is more than five minutes
+  old (`CODEBUILD_LOST_AFTER_MS`, the tick's default period, so a webhook in flight is not taken for lost). Lost means:
+    - **its build ended that long ago** with any status but IN_PROGRESS, the job still open. That includes SUCCEEDED:
+      the job's result was never recorded, so a kind that retries runs again;
+    - **CodeBuild has no record of the build** (`buildsNotFound`);
+    - **CodeBuild refused its StartBuild** (a client fault: no permission, no such project, a limit), marked `refused`;
+    - **it was left `starting` for an hour** (`CODEBUILD_STARTING_LOST_AFTER_MS`): StartBuild never returned, failed in
+      a way that may have started a build, or the build id was never written. An hour, not five minutes, because with
+      no id the sweep cannot ask CodeBuild, and a build that did start should get to report its own end first.
+
+    A build still IN_PROGRESS is never judged, however long it runs: CodeBuild's own timeout ends it, and a later sweep
+    sees the result. A lost job is failed through `recordJobStatus`, which arms a retry, and its end notifies as the jobs
+    webhook route's does. A job whose webhook lands between the sweep's read and its write is already terminal, and the
+    state machine refuses the failure.
+
+    Rejected:
+    - **An age limit alone**, as the in-process sweep uses. A CodeBuild build may wait in CodeBuild's own queue and run
+      up to the project's timeout, so no one limit fits.
+    - **An EventBridge rule on the build's state change.** It is the faster signal, but it needs infrastructure
+      (`@sssb/cdk`) and a new route, where a sweep reuses the tick and needs one IAM action.
+
+- **Failing the job is the registry's, handed in.** `createRealJobs(project, region, db, failLost)` imports no job
+  module: the real ports load it while the adapter registry is still being evaluated, and `sssb check-real-env`
+  bundles it as CommonJS, which the seam's handlers (reached through `recordJobStatus`) cannot be part of. The registry
+  supplies `failLostJobFromRegistry`, built from lazy imports as the in-process runner's notifier is. A caller that
+  builds the real ports itself without the hook gets a runner with no sweep, as before.
+- **Jobs written before 0020 are never judged.** They have no `runner_ref`. Builds in flight at the deploy that brings
+  this would otherwise be failed as never started.
+- **What only a deployment can show.** The tests drive the runner against a fake CodeBuild client
+  (`adapters/real/jobs.test.ts`), so these stay a cutover proof (row `job-runner`):
+    - that the server's role may call `codebuild:BatchGetBuilds` (without it, each tick logs that the sweep could not
+      read builds, and fails nothing);
+    - the statuses and end times CodeBuild really reports;
+    - how long a real webhook takes after its build ends.
+- **A schedule's spawn failure is counted, and either backs the schedule off or turns it off.** Migration
+  `0021_schedule_failures` adds `job_schedules.failure_count` and `last_error`. On a failure inside the spawn
+  transaction, a transaction of its own (under the row lock, and only while the schedule is still enabled and due)
+  counts it and keeps the message.
+    - **A spec that does not parse can never spawn, so the schedule is DISABLED,** with a `schedule.disabled` audit event
+      whose detail is the reason alone. The error, which echoes whatever the stored spec holds (an address or a token
+      the audit log refuses), is the schedule's `last_error`, kept to 500 code points, never half a surrogate pair.
+      Someone must fix the spec and enable it again. The Simulator's schedule view lists such a row with `spec: null`
+      rather than failing on it.
+    - **Any other failure may be passing (an insert the database refused for a moment), so the schedule BACKS OFF:**
+      `next_run_at` moves to the failure plus the webhook deliveries' backoff for that many failures in a row (one
+      minute, five, thirty, two hours, then six hours on). A schedule that fails every time therefore takes a bounded,
+      shrinking share of its tenant's turns. It stops holding the oldest due slot, so the per-tenant listing (#97) reaches
+      the healthy schedules behind it however many such rows the tenant holds.
+    - **The next spawn that commits resets both columns.** A failure after the spawn committed (the audit write, the
+      runner's start) is not a spawn failure, and is counted nowhere new.
+
+    Rejected:
+    - **Disabling after N failures of any kind**, which would turn off a schedule over an outage it would have outlived.
+    - **A notification to the org's admins.** A schedule belongs to no person, and the audit event and the Simulator's
+      schedule view (`failureCount`, `lastError`) are where an operator looks. Left open for an app that wants more.
+    - **Leaving a backed-off schedule's phase unchanged.** A weekly or daily spec finds its next slot from the time it
+      fired, so it keeps its phase. An interval spec counts from the backed-off time, a shift of at most the backoff,
+      which is accepted.
+
+- **Proofs.**
+    - `adapters/real/jobs.test.ts` covers: a build that ended unreported, for each ended status; one still running; one
+      that ended within the grace; one CodeBuild no longer knows; a start that never recorded a build, judged only after
+      the hour; a StartBuild refused (judged after five minutes) beside one that may have started a build (left for the
+      hour); a job a service caller or webhook moved to running; a job too recent to judge, one without a ref, and one
+      already reported; a webhook racing the sweep; a sweep that cannot read builds; batches of 100; and a lost build of
+      a kind that retries whose next attempt starts a new build and completes.
+    - `real/index.test.ts` pins the registry handing the runner its database and handler; `adapters/fail-lost-job.test.ts`
+      drives the registry's handler itself (fails, arms the retry, notifies; leaves a job that ended meanwhile).
+    - `db/schedules.test.ts` covers: an unparseable spec turned off with its audit event; a failing insert backed off for
+      one minute, then five, then cleared by a spawn that commits; a healthy schedule spawning beside more stuck ones than
+      the listing takes, both disabled and backed off; a failure after the commit left uncounted; a long, many-byte error
+      clipped with the audit still written and the world view listing the row; and an address-shaped spec whose audit
+      carries the reason alone.
+    - Removing the IN_PROGRESS skip, the webhook grace, the not-found or `starting` rules, the quiet filter, the batching,
+      the build id's recording, the `running` status, the hour's grace, the `refused` marker, or the handler's notify or
+      race check turns them red. So does removing the disabling, the backoff, its escalation, the reset on success, the
+      failure policy itself, the clipping, the world view's null spec, or the audit's reason-only detail.
+    - The failure recorder's re-check under the lock (a schedule another tick fired or turned off meanwhile) is argued
+      here, not tested.
+- **What review changed** (two review rounds on Opus, then a check of the second round's fixes as a diff).
+    - **The Simulator's schedule list no longer throws** on a schedule whose spec does not parse: the very rows this
+      change turns off. It shows them with `spec: null`.
+    - **A job left `starting` gets an hour**, so a build whose id went unrecorded is not failed while it runs.
+    - **A StartBuild CodeBuild refused is marked `refused`** and failed after five minutes, not the hour, since no build
+      started.
+    - **The `schedule.disabled` audit carries the reason alone**, so a spec holding an address or a token cannot get it
+      refused.
+    - **The registry's lost-job handler is its own module** (`adapters/fail-lost-job.ts`, lazy imports), tested as the
+      runner calls it.
+- **Limitations accepted.**
+    - **If the `starting` write itself fails,** `submitJob` rejects before StartBuild and the job stays queued with no
+      ref, never judged. That is the state a failed start left before this change, and the caller is told.
+    - **The sweep has no bound of its own.** It runs at the tick's start, so a mass loss spends part of the drains'
+      windows; the next tick carries on.
+
+## `check-real-env` notices, and a bound on the feature-flag read (2026-11-27, `fix/real-env-notices`)
+
+safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
+
+- **#192: `realEnvNotices(env)` beside `assertRealEnv`, printed by `sssb check-real-env` after a pass.** Advisory lines
+  returned by the framework, so the command's one reader of a deployment's environment stays the framework's, with
+  `@sssb/tools` only printing them (a `notice:` each, to stdout, exit code unchanged). The framework's list holds two
+  cases: `CLERK_AUTHORIZED_PARTIES` unset, and any variable that starts `CLERK_AUTHORI` (any case) and is not that name,
+  the issue's second comment: such a variable looks like the setting and does nothing. Not in the list: `CLERK_JWT_KEY`,
+  the issue's open question. Unset it costs Clerk API calls rather than leaves a check off, and what it costs is a
+  measurement (cutover row `auth-dev`); it is one line to add if wanted. A notice is not printed after a failure, which
+  is the whole answer then. `@sssb/tools` finds `realEnvNotices` by looking through the framework's exports by name at
+  run time, and offers none for a framework without it: esbuild warns about any static mention of a missing export,
+  `in` guard included (a test pins that no warning is printed). A notices function that throws prints a notice saying
+  so and never fails the check. Rejected: **a `--strict` flag that fails on a notice**, which nobody asked for and
+  which would make unset look unsupported; and **warning at boot**, where the server's log is nobody's checklist.
+- **#104: `FLAG_TIMEOUT_MS` = one second, no retries.** Chosen against what a page can afford: the protected layout
+  awaits a flag read before it renders, so a slow PostHog costs every authenticated page the bound, once. One second
+  rather than the capture bound (two): a capture is awaited only to get the event out of a frozen Lambda, a flag read
+  is on the way to the person's page. The client is given `featureFlagsRequestTimeoutMs` and
+  `featureFlagsRequestMaxRetries: 0` (posthog-node 5.73 builds on @posthog/core 1.67's stateless client: three
+  seconds and one retry after a delay, so six seconds and more per page in an outage; the issue's "ten seconds" is the
+  stateful client's default, which this is not), so the request is aborted, and the adapter races
+  the read against the same bound, so the page is held to it whatever the client does. Late answers and failures are
+  dropped. Not measured against a live PostHog (cutover row `analytics`).
+
 ## The starter's e2e on a production build, and the destructive suite's budgets from CI's numbers (2026-11-27, `fix/e2e-prod-build`)
 
 `safeinsights/sssb#109` and `safeinsights/sssb#100`. SSSB's reusable workflow sets `E2E_BUILD=1` on every e2e shard, and
@@ -8241,3 +8371,39 @@ spec or helper that reads or writes its world on disk).
 - **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
   ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
   changes but a comment in `serve-standalone.js` (an empty changeset).
+## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
+
+`safeinsights/sssb#230` and `safeinsights/sssb#241`, two leftovers of the `#98` and `#145` work.
+
+- **`#230`: what the SDK 1.8.0 gives for a connection that drops** (probed against its real classes, with a stubbed
+  `fetch` and no network): a streamed body that dies while it is read is a plain `AnthropicError('terminated')`, whose
+  `cause` is undici's `TypeError('terminated')`, whose `cause` has `code: 'UND_ERR_SOCKET'`; a non-streaming body that
+  dies reaches the caller as that bare `TypeError('terminated')`; `fetch` itself rejecting is an `APIConnectionError`
+  (the one the adapter already repeated, and then passed on unmapped). `adapters/real/llm.test.ts` pins the first shape
+  by asserting the thrown error's own classes and cause chain, so an SDK that changes it fails a test by name.
+- **It is `LlmUnavailableError('connection-lost')`, and repeated before any text.** The provider is not answering, and may
+  be soon: the same shape as a rate limit or an overload, so a route answers the 503 it already answers and a job
+  fails with a typed cause. A new reason, not `timed-out` (the deadline did not pass, and a caller that tells the two
+  apart may wait for one and not the other) and not `overloaded` (the provider said nothing). The reason union grows by
+  one, so an exhaustive `switch` on `reason` in an app needs a case (a type error, never a runtime one): the changeset
+  says so. `retryAfterSeconds` is the default 10.
+- **Detection is by what the error carries, not by its class:** `isConnectionDrop` (`adapters/real/llm.ts`) is an
+  `APIConnectionError`, or anything in a five-deep cause chain that is a `TypeError('terminated')` or has a code that
+  is undici's (`UND_ERR_*`) or a transport's (`ECONNRESET`, `ECONNREFUSED`, `ECONNABORTED`, `EPIPE`, `ENOTFOUND`,
+  `EAI_AGAIN`, `ENETUNREACH`, `EHOSTUNREACH`). Matching `AnthropicError` alone was rejected: the SDK also throws it for a
+  request it refuses to send, which no retry mends. An error with no transport cause passes through as before.
+  The check runs over what the provider's calls throw, never over what the app's tool throws: a tool loop's `execute`
+  failures are tagged on the way out (`ToolFailure`) and unwrapped by the adapter's error mapping, because a database
+  reset or a tool's own `fetch` that dropped carries the same codes and would otherwise be reported as the provider's
+  outage (found in review; a test per shape). The demo replay's failing entry still fails when it has no answer to give.
+- **The same rule retries and maps.** A call whose connection dropped is repeated once, as every other retryable failure,
+  inside the deadline and only when the wait fits; a stream only when it had delivered no text (the consumer has the rest
+  otherwise, so it ends in `connection-lost` after that text). A non-streaming call is repeated though its body had begun,
+  as the SDK's own policy repeated a failed connection: it may be billed twice.
+- **`#241`: the demo's `replayAssistant` chooses its answering entry as the fake's `lookupToolLoop` does:** the entry
+  recorded for the question, else the default entry, whose `conversation` is replayed with its tools, or, with none, its
+  `response` as a one-turn answer. Before, a default entry's conversation was answered by its `response` alone, so the
+  demo ran none of the tools the server's replay runs. Answered, from the open question: an unrecorded question's tools
+  do run live in the demo, as on the server, because a demo that skipped them would show a different world from the one
+  the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
+  (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.
