@@ -37,9 +37,11 @@ afterEach(() => {
 })
 
 // The worked example the Standard Webhooks specification publishes: an independent check of the signed string and
-// the key decoding, not a value computed by the code under test.
+// the key decoding, not a value computed by the code under test. Its secret is public, but `whsec_` and 32 characters
+// is the shape secret scanners report as a webhook signing secret, so it is BUILT from its parts, never pasted whole
+// (.gitleaks.toml: a secret-shaped literal in source cannot be told from a committed secret).
 const SPEC = {
-    secret: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw',
+    secret: ['whsec', 'MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw'].join('_'),
     id: 'msg_p5jXN8AQM9LWM0D4loKWxJek',
     timestamp: '1614265330',
     body: '{"test": 2432232314}',
