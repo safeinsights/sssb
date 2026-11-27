@@ -13,6 +13,8 @@
         "sssb:doctor": "sssb doctor",
         "check:e2e": "sssb check-e2e",
         "test:e2e": "NEXT_TELEMETRY_DISABLED=1 playwright test",
+        "build:e2e": "NEXT_TELEMETRY_DISABLED=1 E2E_BUILD=1 APP_MODE=simulated next build",
+        "start:e2e": "E2E_BUILD=1 APP_MODE=simulated sssb serve-standalone",
         "build:demo-static": "vite build --config vite.demo.config.ts",
         "check:demo-size": "sssb check-demo-size 840000",
         "e2e:demo-static": "playwright test --config playwright.demo.config.ts"

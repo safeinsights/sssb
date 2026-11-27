@@ -76,8 +76,6 @@ async function deliveryIdOf(row: Locator): Promise<string> {
 }
 
 test('register endpoints, deliver + sign, then fail → retry → recover', async ({ page }) => {
-    test.setTimeout(120_000)
-
     // Dana is admin of the frontline team (tenant northwind) — her active org on sign-in.
     await signInAs(page, 'person-admin')
 

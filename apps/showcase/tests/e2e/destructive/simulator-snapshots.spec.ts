@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { openSimulatorPanel } from '../support/simulator'
+import { slowerOnDev } from '../support/budgets'
 
 /**
  * Destructive: this spec exercises reset/save/restore, which wipe and rewrite
@@ -33,11 +34,6 @@ async function openAllMail(page: Page) {
 }
 
 test('snapshots: save, mutate, restore, then reset returns to the seed baseline', async ({ page }) => {
-    // Three world resets/restores in one test, each closing and lazily re-migrating + re-seeding
-    // pglite (first-hit cold compiles of the Snapshots routes too, in a fresh dev server) — generous
-    // room over the default 30s (house pattern: e2e against `next dev` needs generous timeouts).
-    test.setTimeout(120_000)
-
     const firstInvite = `snapshot-first-${Date.now()}@example.test`
     const secondInvite = `snapshot-second-${Date.now()}@example.test`
 
@@ -106,8 +102,9 @@ test('presets: loading one replays it on the server, signs this browser in, and 
     page,
 }) => {
     // Three world resets (each lazily re-migrates + re-seeds pglite) plus the replays, and the actor frames'
-    // first tick after the last one — more room than the test above.
-    test.setTimeout(180_000)
+    // first tick after the last one: more room than the project's on `next dev`, where every route of it compiles
+    // first. On a production build the project's own budget holds (support/budgets.ts).
+    slowerOnDev(180_000)
 
     // Start signed in as someone ELSE: the preset's viewpoint, not the previous session, decides who
     // this browser is afterwards.
