@@ -7643,6 +7643,7 @@ a team failed with `permission denied`, and the coverage check could only hold a
 - **A `DELETE` succeeds only for a team nothing references**: every framework table that names an org holds a plain
   foreign key with no cascade, and the audit trail is append-only, so a request cannot delete a team with history.
   That is the intended posture, not a gap: an app that retires teams records that in a table of its own.
+
 ## The upload target's PUT form (2026-11-27, `feat/storage-put-upload`, `safeinsights/sssb#134`)
 
 `UploadTarget` becomes `PostUploadTarget | PutUploadTarget`, `STORAGE_UPLOAD_TARGET` gains `put`, and the showcase
