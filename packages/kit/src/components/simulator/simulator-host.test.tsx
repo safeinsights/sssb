@@ -89,23 +89,29 @@ async function settle() {
     for (let i = 0; i < 5; i++) await act(async () => await new Promise((resolve) => setTimeout(resolve, 0)))
 }
 
+let rerender: (extraTabs?: SimulatorExtraTab[]) => Promise<void> = async () => {}
+
 async function renderHost(extraTabs?: SimulatorExtraTab[]): Promise<HTMLElement> {
     const messages = mergeMessages(enFramework, await loadAppMessages('en'))
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
-    await act(async () => {
+    const draw = (tabs?: SimulatorExtraTab[]) =>
         root.render(
             <NextIntlClientProvider locale="en" messages={messages} onError={() => {}}>
                 <MantineProvider>
-                    <SimulatorHost locale="en" extraTabs={extraTabs}>
+                    <SimulatorHost locale="en" extraTabs={tabs}>
                         <main />
                     </SimulatorHost>
                 </MantineProvider>
             </NextIntlClientProvider>,
         )
-    })
+    await act(async () => draw(extraTabs))
+    rerender = async (tabs) => {
+        await act(async () => draw(tabs))
+        await settle()
+    }
     unmounts.push(() => {
         root.unmount()
         container.remove()
@@ -387,7 +393,10 @@ describe('SimulatorHost: what the app hands in', () => {
     it('shows no ticker where the app has no ticker route, and asks once', async () => {
         const container = await renderHost()
         expect(container.querySelector('[data-testid="simulator-ticker"]')).toBeNull()
-        await click(container, 'simulator-clock-run-due')
+        // Leave the Jobs tab and come back: opening it refreshes it, but the ticker is not asked again.
+        await click(container, 'simulator-tab-people')
+        await click(container, 'simulator-tab-jobs')
+        expect(gets.filter((path) => path === 'jobs').length).toBeGreaterThan(1)
         expect(gets.filter((path) => path === 'ticker')).toHaveLength(1)
     })
 
@@ -411,5 +420,21 @@ describe('SimulatorHost: what the app hands in', () => {
         expect(byTestId(container, 'simulator-tab-probe')).toBeTruthy()
         expect(byTestId(container, 'probe').textContent).toBe('held')
         expect(gets).toContain('jobs')
+
+        // An app that builds the array afresh on every render must not restart the polling.
+        const before = gets.length
+        for (let i = 0; i < 3; i++) await rerender([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(gets.length).toBe(before)
+    })
+
+    it("keeps an app's tab's jobs fresh when the schedules cannot answer", async () => {
+        function WorldProbe() {
+            const { jobs } = useSimulatorWorld()
+            return <p data-testid="probe">{jobs.held ? 'held' : 'running'}</p>
+        }
+        answers['GET schedules'] = { status: 500, body: { error: 'boom' } }
+        window.localStorage.setItem('app-simulator-tab', 'probe')
+        const container = await renderHost([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(byTestId(container, 'probe').textContent).toBe('held')
     })
 })

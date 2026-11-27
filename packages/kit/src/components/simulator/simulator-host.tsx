@@ -210,6 +210,7 @@ export function SimulatorHost({
     const summaryTickets = useTickets()
     const mailTickets = useTickets()
     const jobsTickets = useTickets()
+    const schedulesTickets = useTickets()
     const inboundTickets = useTickets()
     const messagesTickets = useTickets()
     const eventsTickets = useTickets()
@@ -266,16 +267,20 @@ export function SimulatorHost({
         if (next && mailQuery === shownMailQuery.current && mailTickets.fresh(ticket)) setMail(next)
     }, [mailQuery, mailTickets])
 
+    // Jobs and the schedules beside them, each landing on its own: an app's tab that reads the jobs keeps them fresh
+    // even when the schedules cannot answer.
     const refreshJobs = useCallback(async () => {
-        const ticket = jobsTickets.take()
-        const [nextJobs, nextSchedules] = await Promise.all([
-            getJson<SimulatorJobs>('jobs'),
-            getJson<SimulatorSchedules>('schedules'),
+        const jobsTicket = jobsTickets.take()
+        const schedulesTicket = schedulesTickets.take()
+        await Promise.all([
+            getJson<SimulatorJobs>('jobs').then((next) => {
+                if (next && jobsTickets.fresh(jobsTicket)) setJobsData(next)
+            }),
+            getJson<SimulatorSchedules>('schedules').then((next) => {
+                if (next && schedulesTickets.fresh(schedulesTicket)) setSchedulesData(next)
+            }),
         ])
-        if (!nextJobs || !nextSchedules || !jobsTickets.fresh(ticket)) return
-        setJobsData(nextJobs)
-        setSchedulesData(nextSchedules)
-    }, [jobsTickets])
+    }, [jobsTickets, schedulesTickets])
 
     // The Snapshots tab is fetched when it opens and after each of its own actions, never polled: its own actions
     // refetch or reload, and a change made elsewhere (an agreement edited on an app page) shows when it next opens.
@@ -338,6 +343,9 @@ export function SimulatorHost({
         if (next && hooksTickets.fresh(ticket)) setHooksData(next)
     }, [hooksTickets])
 
+    // A boolean, not the array: an app that builds `extraTabs` afresh on each render must not restart the poll.
+    const appTabOpen = extraTabs?.some((tab) => tab.id === activeTab) ?? false
+
     /** The open tab's own data, when the panel is expanded. */
     const refreshOpenTab = useCallback(() => {
         if (!expanded) return
@@ -353,12 +361,12 @@ export function SimulatorHost({
             void refreshTicker()
         }
         // An app's own tab reads the world's jobs (`useSimulatorWorld`), so they are polled while it is open too.
-        if (extraTabs?.some((tab) => tab.id === activeTab)) void refreshJobs()
+        if (appTabOpen) void refreshJobs()
         if (activeTab === 'hooks') void refreshHooks()
     }, [
         expanded,
         activeTab,
-        extraTabs,
+        appTabOpen,
         refreshMail,
         refreshInbound,
         refreshMessages,
