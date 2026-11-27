@@ -8392,3 +8392,47 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   do run live in the demo, as on the server, because a demo that skipped them would show a different world from the one
   the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
   (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.
+
+## A reused pid does not keep a stale ticker marker alive, and the vendor ban reads one list one way (2026-11-27, `fix/ticker-marker-and-vendor-ban`)
+
+`safeinsights/sssb#146` and `safeinsights/sssb#155`, two tooling leftovers.
+
+- **`#146`: a marker is stale when the process now at its pid is not the one that wrote it, told by a start token.** A
+  wrapper killed with SIGKILL leaves `dev-ticker.json`, and once the OS gives its pid to an unrelated process
+  `process.kill(pid, 0)` says "alive", so both Playwright configs refused to load until the file was deleted by hand.
+  The marker now carries `startToken`, the writer's own start as the kernel records it (`processStartToken`): on Linux the
+  boot id and the start time in ticks since boot (`/proc/<pid>/stat`, field 22), elsewhere `ps -o lstart=` (macOS keeps it
+  fixed per process), run with `TZ=UTC0` so two processes with other time zones read one string. A reader compares tokens
+  for equality: another token at the pid is another process, and the marker is ignored and cleared. **First written as a
+  date comparison** (`startedAt` against the start `ps` gives, plus a tolerance), and **dropped after review**: on Linux
+  `ps` computes `lstart` from the kernel's boot time plus ticks, so a wall clock stepped forward after the process began
+  (a paused guest resuming, an NTP step) moves every process's start later, past the marker's `startedAt`, and a LIVE
+  ticker's marker was judged stale and deleted, the failure the marker exists to stop; and a `TZ` that libc and V8 read
+  differently shifted it by hours. A token compared for equality has neither. Rejected: the issue's "did not start at
+  `startedAt`", for the same clock reason and because a dev server writes its marker minutes after it began.
+- **What cannot be judged is live, as before:** a marker with no token (written by an older version), a token that cannot
+  be read now (no `/proc` and no `ps`, as on Windows, an unreadable pid, `ps` timing out), tokens of different kinds
+  (another machine's, through a shared directory). A false "stale" would let an e2e run adopt a ticking dev server. A
+  process never judges its own marker, so the Simulator's status poll in a dev server spawns no `ps`. **Only a marker
+  proved stale by a token is cleared**; one whose process is gone is ignored and left, as before (a container's marker read
+  from a host shows a gone or foreign pid, and deleting it would take its ticker's protection away). The clearing re-reads
+  the file and removes it only if it is still the one judged, so a wrapper that wrote its own in between keeps it; one
+  that writes between that re-read and the removal still loses it, microseconds wide, and its ticker restores it on its
+  next start.
+- **`#155`: the vendor ban's two halves read one list through one matcher.** The static half matched the list with the
+  `ignore` package (gitignore semantics, case-insensitive), the declarationless half (`import()`, `require()`, a
+  type-position `import('…')`) with a hand-written `isVendorSpecifier`, so a bare `pg` banned a local `./pg` and
+  `some/dir/pg` in one half only, and `@CLERK/nextjs` was a vendor in one half only. The bare names in
+  `vendorSdkPattern` are anchored (`/pg`, `/posthog-js`, `/posthog-node`, `/mailgun.js`: in gitignore a leading `/`
+  anchors to the start, and `/pg` still bans what is under it, `pg/lib/x`), and the declarationless half is
+  `matchesPatterns` over the same group, as the framework/app fence's already was. An app's own bare `sssb.vendors`
+  entries are anchored in the rules (`anchorBare`) the same way, so `stripe` bans the package, not `./stripe`. Both
+  halves are now case-insensitive. Seen in the tests: `posthog-node/lib` is a vendor in both halves (a name bans what is
+  under it; the old declarationless reading agreed), a thing the issue's table did not list.
+- **What a change of fence needs:** the preset is the rules' own list, `packages/eslint-plugin/src/probes.js` probes an
+  app's vendors by naming the package itself (`stripe`), which the anchored entry still matches, so the probes needed no
+  change and `sssb check-fences` passes (`tests/lint/check-fences.test.ts`, both apps and the scratch apps that weaken a
+  fence). A negation entry (`!pg`) was already refused by the loader; anchoring would have turned one into a literal name
+  had it got through. The parity table (`tests/lint/framework-fence.test.ts`) now has a vendor block: 27 specifiers,
+  three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
+  (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
