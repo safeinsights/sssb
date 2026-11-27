@@ -38,9 +38,9 @@ export const analytics: Pick<AnalyticsPort, 'capture'> = { capture: async () => 
 export const storage: Pick<StoragePort, 'get'> = { get: async () => null }
 
 /**
- * A read of org-scoped rows, as an app's domain module offers one (the fixture's dockets, by org). The read routes
- * call it so that each one READS something: a read handler that names only inert globals passes the scan without
- * `authorize(...)`, which would make a fixture read prove nothing.
+ * A read of org-scoped rows, as an app's domain module offers one (the fixture's dockets, by org). The fixture's
+ * authorized read (./dockets/route.ts) calls it so that it READS something: a read handler that reads nothing passes
+ * the scan without `authorize(...)`, which would make that read prove nothing.
  */
 export const listDockets = async (orgId: string): Promise<Array<{ id: string; orgId: string }>> => [
     { id: 'docket-1', orgId },

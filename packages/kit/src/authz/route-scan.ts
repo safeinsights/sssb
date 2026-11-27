@@ -10,10 +10,10 @@ import ts from 'typescript'
  * exported handler on its own, whatever its verb: a string, a comment, a call in another handler or a call in
  * statically dead code proves nothing about the handler in front of it. A read handler (GET, HEAD, OPTIONS) is held
  * to the same rule as a mutation, because a read of org-scoped data authorizes the read, and may pass in one more way:
- * by reading nothing, naming no data but inert globals, literals and its request (`readsNothing`), as a liveness
- * probe or a preflight does.
+ * by reading nothing (`readsNothing`): naming nothing from outside itself but inert globals, primitive consts, a few
+ * named imports and its request, as a liveness probe, or a preflight whose headers are written inline, does.
  * Which reads touch org-scoped data is not guessed from what a handler calls, since a helper in another module that
- * resolves the org would hide it: a read that calls anything else authorizes, or names an exemption whose gate it
+ * resolves the org would hide it: a read that names anything else authorizes, or names an exemption whose gate it
  * passes, as a mutation does (safeinsights/sssb#103). Server Actions (`scanServerActions`) are
  * judged by the same rules as a POST, each export of a `'use server'` file and each function whose body opens with
  * `'use server'`; no exemption applies to one. The walks follow a symbolic link to a directory, as Next does.
@@ -106,7 +106,7 @@ const MUTATING_VERBS: readonly string[] = ['POST', 'PUT', 'PATCH', 'DELETE']
 
 /**
  * The verbs that read. A read handler is judged as a mutation is, with one more way to pass: it reads nothing
- * (`HandlerFacts.readsNothing`), as a liveness probe or a CORS preflight does. A read of org-scoped data
+ * (`HandlerFacts.readsNothing`), as a liveness probe, or a CORS preflight whose headers are written inline, does. A read of org-scoped data
  * authorizes the read, since the session's org says where a person is placed, not that they may read there.
  */
 const READ_VERBS: readonly string[] = ['GET', 'HEAD', 'OPTIONS']
@@ -535,7 +535,7 @@ export function describeGate(gate: Gate): string {
     const names = (callees: readonly string[]) => callees.map((c) => `${c}(…)`).join(' or ')
     switch (gate.kind) {
         case 'wrapped-by':
-            return `the handler is itself a call to an imported ${names(gate.callees)}, as in \`export const POST = ${gate.callees[0]}(…)\``
+            return `the handler is itself a call to an imported ${names(gate.callees)}, as in \`export const <VERB> = ${gate.callees[0]}(…)\``
         case 'calls':
             return `the handler reaches a call to an imported ${names(gate.callees)} on its own path`
         case 'opens-with-simulated-404':
@@ -582,8 +582,9 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
             `with no standing). Only authorize(...) counts: a non-throwing check such as canInActiveOrg does not. A ` +
             `read handler passes without it only when it reads nothing: it names nothing from outside itself but inert ` +
             `globals (Response, Date, URL, JSON), a const holding a primitive (write an object's values inline), ` +
-            `NextResponse, redirect and notFound from next/navigation, and appMode and isSimulated, so no import, ` +
-            `helper, fetch or process.env, and works only on its request. The same reachability rules apply as for a ` +
+            `NextResponse (next/server), redirect, permanentRedirect and notFound (next/navigation), and appMode and ` +
+            `isSimulated, so no other import, no helper, fetch or process.env, and works only on its request. The ` +
+            `same reachability rules apply as for a ` +
             `mutation: a call in a string, a dead branch, an uncalled function or another module does not count, nor ` +
             `does one whose denial cannot reach the handler. Call authorize(...) in this handler (a self-only read ` +
             `authorizes its self-only subject), or, only if it reads nothing org-scoped, ` +
@@ -1982,7 +1983,8 @@ const INERT_GLOBALS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * The imports a handler that reads nothing may name, by module and exported name: Next's `NextResponse`, and SSSB's
+ * The imports a handler that reads nothing may name, by module and exported name: Next's `NextResponse` and
+ * `next/navigation`'s `redirect`, `permanentRedirect` and `notFound`, which only build or throw a response, and SSSB's
  * run-mode constants, which a liveness probe reports.
  */
 const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {

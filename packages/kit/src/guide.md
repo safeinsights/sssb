@@ -120,13 +120,15 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
   (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
   The role `none` (a fixed org source gives it to every signed-in user by default: `params.auth`) is placed in the home
-  org with no standing in it. The check enforces it for route handlers (a screen is kept by hand), and does not guess
-  which reads are org-scoped: a read handler that names an import, a helper, `fetch` or `process.env` authorizes. A
+  org with no standing in it. The check enforces it for route handlers (a screen and a metadata route such as
+  `sitemap.ts` or `opengraph-image.tsx` are kept by hand), and does not guess which reads are org-scoped: a read
+  handler that names an import (other than those below), a helper, `fetch` or `process.env` authorizes. A
   read of the caller's own things authorizes its self-only subject (`Notification`, `NotificationPref`), and a service
   caller its machine actor. A read handler that reads nothing passes without it: it names nothing from outside itself
-  but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` holding a string or number, `NextResponse`,
-  `redirect` and `notFound` from `next/navigation`, and SSSB's `appMode` and `isSimulated`, so it works only on its
-  request, as a liveness probe or a CORS preflight does. Any other read that is genuinely not org-scoped (a public one)
+  but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
+  array), `NextResponse`, `redirect`, `permanentRedirect` and `notFound` from `next/navigation`, and SSSB's `appMode`
+  and `isSimulated`, so it works only on its request, as a liveness probe does, or a CORS preflight whose headers are
+  written inline. Any other read that is genuinely not org-scoped (a public one)
   names an exemption.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant

@@ -7611,15 +7611,16 @@ safeinsights/sssb#103. The design is ADR-0012's 2026-11-27 addendum; the calls i
   exemption. It excuses reads only; a mutation that reads nothing still authorizes, as before.
 - **Any `authorize` call counts on a read**, not only `'read'`: the scan does not evaluate the action argument, and a
   read that checks a stronger action is correct.
-- **OPTIONS is judged** with GET and HEAD: a preflight calls only globals and passes, so judging it costs an adopter
-  nothing and closes an OPTIONS that reads.
+- **OPTIONS is judged** with GET and HEAD, which closes an OPTIONS that reads: a preflight that builds its headers
+  inline from literals (or primitive consts) reads nothing and passes; one that shares a headers object or reads
+  `process.env` authorizes or names an exemption (safeinsights/sssb#220).
 - **The showcase's three unauthorized reads authorize** rather than being exempted: the notification feed (`read
 Notification`, self-only), the preferences (`read NotificationPref`, self-only) and the service job poll (`read Job`,
   its machine actor). Each subject's rule already granted the read; behaviour for a caller is unchanged.
 - **`storage/[...key]/route.ts` is a framework exemption**, not the showcase's: it is the download twin of the
   framework's `storage-upload/route.ts`, and an app's exemption key cannot hold `[`, which the app file reads as a glob.
-- **The check keeps its id**, `authz-mutations`, since an app's `optOut` names it; its title and test name say
-  "route handler".
+- **The check keeps its id**, `authz-mutations`, since an app's `optOut` names it; its title says "route
+  handler", and its test "every handler reaches authorize(...), reads nothing, or passes its exemption's gate".
 - **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
   who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
   of this fix.

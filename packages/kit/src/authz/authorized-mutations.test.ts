@@ -12,8 +12,9 @@ import { type ScanRoot, exemptionFor, isReadVerb, judge, scanRoutes } from './ro
  * build-time scan makes "every product route is authorized" a checked invariant rather than a discipline: it
  * judges EACH exported handler on its own, a read (GET/HEAD/OPTIONS) as well as a mutation (POST/PUT/PATCH/DELETE):
  * the handler must reach authorize(...) on its own path, or its route must sit in the justified exemption map AND
- * the handler must pass that exemption's gate. A read handler may instead read nothing, naming only inert globals and
- * its request (./route-scan.ts `readsNothing`, safeinsights/sssb#103). "Reach" is may-reach: the scan
+ * the handler must pass that exemption's gate. A read handler may instead read nothing, naming nothing from outside
+ * itself but inert globals, primitive consts, a few named imports and its request (./route-scan.ts `readsNothing`,
+ * safeinsights/sssb#103). "Reach" is may-reach: the scan
  * does not prove that every path authorizes, or that it does so before mutating (./route-scan.ts, "What it does
  * not prove").
  *

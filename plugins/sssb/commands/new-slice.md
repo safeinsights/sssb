@@ -29,8 +29,9 @@ House shape for a slice:
    `getDb()`: `sssb/no-raw-db-handle` bans it under `src`); auth through `auth.requireUser()`/`requireRole()`. Every
    route handler, a read (GET) as well as a mutation (POST/PUT/PATCH/DELETE), MUST call `authorize(...)`
    (`@sssb/kit/authz/authorize`): the conformance suite's `authz-mutations` check fails any handler that neither calls
-   it nor is justified in the app's exemption map (a read that names only inert globals and its request, such as a
-   liveness probe, reads nothing and passes).
+   it nor is justified in the app's exemption map (a read that names nothing from outside itself but inert globals,
+   primitive consts, `NextResponse`, `next/navigation`'s redirects, SSSB's `appMode` and `isSimulated`, and its
+   request, such as a liveness probe, reads nothing and passes).
 3. **Authorization**: register your subject types and rules on the seam: `AppSubjectType`, `appAbilityRules` (and
    any two-sided fields in `AppSubjectFields`) in `src/app-config/abilities.ts`, following the `Item` case.
    Deny-by-default is the framework's; you only add rules. A route a MACHINE calls passes its machine actor

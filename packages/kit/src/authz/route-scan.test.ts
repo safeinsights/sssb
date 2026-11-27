@@ -1906,7 +1906,7 @@ describe('a read that reads nothing (safeinsights/sssb#103)', () => {
     const IMPORT = "import { appMode, db, load, store, query } from '@sssb/kit/adapters/index'\n"
     const tsx = (src: string) => scanTree({ 'route.tsx': src }).find((r) => r.rel === 'route.tsx')!.handlers[0]!.facts!
 
-    it('holds for a probe that names only inert globals, its request, literal constants and the named imports', () => {
+    it('holds for a probe that names only inert globals, its request, primitive constants and the named imports', () => {
         expect(only('export async function GET() { return Response.json({ ok: true }) }')).toBe(true)
         expect(
             only(
@@ -2100,6 +2100,15 @@ describe('a read that reads nothing (safeinsights/sssb#103)', () => {
         ).toBe(false)
     })
 
+    it("holds for next/navigation's other inert imports, which only throw a response", () => {
+        expect(
+            only(
+                "import { permanentRedirect } from 'next/navigation'\nexport function GET() { permanentRedirect('/a') }",
+            ),
+        ).toBe(true)
+        expect(only("import { notFound } from 'next/navigation'\nexport function GET() { notFound() }")).toBe(true)
+    })
+
     it('never holds for a wrapper, whose code runs on every request out of sight', () => {
         expect(only("import { wrap } from './wrap'\nexport const GET = wrap(() => Response.json({}))")).toBe(false)
     })
@@ -2170,7 +2179,7 @@ describe('judging a handler against a policy', () => {
         )
     })
 
-    it('reading nothing excuses a read only: a mutation that calls only globals still authorizes', () => {
+    it('reading nothing excuses a read only: a mutation that reads nothing still authorizes', () => {
         expect(judge(route('items/route.ts'), { verb: 'POST', facts: facts({ readsNothing: true }) }, policy)).toMatch(
             /exports a mutating handler that does not reach authorize/,
         )
@@ -2265,7 +2274,7 @@ describe('judging a handler against a policy', () => {
 
     it('describes each gate in words an author can act on', () => {
         expect(describeGate({ kind: 'wrapped-by', callees: ['withA', 'withB'] })).toBe(
-            'the handler is itself a call to an imported withA(…) or withB(…), as in `export const POST = withA(…)`',
+            'the handler is itself a call to an imported withA(…) or withB(…), as in `export const <VERB> = withA(…)`',
         )
         expect(describeGate({ kind: 'calls', callees: ['a.b'] })).toBe(
             'the handler reaches a call to an imported a.b(…) on its own path',

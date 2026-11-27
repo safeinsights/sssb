@@ -1046,7 +1046,8 @@ of inert globals (`Response`, `Date`, `URL`, `JSON`, …: no `fetch`, `process`,
 `redirect`, `permanentRedirect` and `notFound` from `next/navigation`; SSSB's `appMode` and `isSimulated`). So only
 inert values and the handler's own request are in reach, and any method may be called on them. A class, `import()`,
 `import.meta`, `using` and a `constructor` or `__proto__` member fail it. It is a fact the analyser computes
-(`readsNothing`), not a gate an entry names, so a liveness probe or a CORS preflight needs no exemption. Like a gate,
+(`readsNothing`), not a gate an entry names, so a liveness probe, or a CORS preflight whose headers are written
+inline, needs no exemption. Like a gate,
 it proves the KIND of handler: a member read through a computed key the scan cannot evaluate is not seen.
 
 **Which action.** Any `authorize` call counts on a read, as on a mutation; the scan does not require the action to be
@@ -1059,5 +1060,6 @@ and preferences authorize the self-only `Notification` and `NotificationPref`, a
 download twin of the exempt `storage-upload/route.ts`, under the simulated-mode 404 gate. The fixture carries an
 authorized read, a machine read, a Simulator read, that download, and a probe that reads nothing.
 
-**Limits.** A screen (a server component) that reads org-scoped data is not judged: the scan reads route handlers and
-Server Actions only. The conformance check keeps its id, `authz-mutations`, since an app's `optOut` names it.
+**Limits.** A screen (a server component) that reads org-scoped data is not judged, nor is a metadata route
+(`opengraph-image`, `icon`, `sitemap`, `robots`, `manifest`), which Next serves without a `route.ts`: the scan reads
+route handlers and Server Actions only (safeinsights/sssb#221). The conformance check keeps its id, `authz-mutations`, since an app's `optOut` names it.

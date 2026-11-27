@@ -5,8 +5,8 @@ import type { Exemption, Gate, ScanPolicy } from './route-scan'
  * tree it walks. Every exported route handler, a read (GET/HEAD/OPTIONS) as well as a mutation
  * (POST/PUT/PATCH/DELETE), must reach `authorize(...)` on its own path (./route-scan.ts judges that), or its route must
  * sit in the justified exemption map below AND the handler must pass that exemption's gate. A read handler may also
- * pass by reading nothing (naming only inert globals and its request, ./route-scan.ts `readsNothing`), which needs no entry
- * here. An entry applies to every verb of the routes it names, each judged against its gate on its own.
+ * pass by reading nothing (./route-scan.ts `readsNothing`: naming nothing from outside itself but inert globals,
+ * primitive consts, a few named imports and its request), which needs no entry here. An entry applies to every verb of the routes it names, each judged against its gate on its own.
  *
  * It lives in source, not in a test, because two scans apply it: the kit's own (`authorized-mutations.test.ts`, over
  * the framework's reference tree `packages/kit/test-fixture/api`, which is also what keeps every entry here from
@@ -113,7 +113,8 @@ export const EXEMPT_FILES: Readonly<Record<string, Exemption>> = {
 }
 
 /**
- * Gates a mutating handler under a prefix must pass IN ADDITION to reaching authorize(...). Authorizing an
+ * Gates a handler under a prefix, read or mutation, must pass IN ADDITION to reaching authorize(...) (or to reading
+ * nothing). Authorizing an
  * actor means something only if the actor came from a verified credential: `authorize(` alone is satisfied
  * just as well by a `{ kind: 'machine', credential: { kind: 'service-key' } … }` literal built from the
  * request. So a service handler must also BE the wrapper call that verifies its caller and BUILDS that
