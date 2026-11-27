@@ -64,17 +64,20 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
 
 /*
  * The default windows, from the tick's start, in which each drain may START work. They are sized to the server's
- * 30-second limit (@sssb/cdk's `SssbApp`, `packages/cdk/src/sssb-app.js:526` in SSSB's repository; the tick runs inside the cron route's request), counted from the start of the
- * request: schedules first, then deliveries, so schedules may start work for 8 seconds and deliveries until 16. A
- * delivery started at 16 seconds may take the POST's 10 (`WEBHOOK_TIMEOUT_MS`, ../server-lib/webhook-dispatch.ts)
- * plus its claim, record and audit transactions, which leaves about four seconds for those, a listing query begun just
- * before the deadline, and the response. Giving deliveries a window of their own means a run of schedules cannot spend
- * the whole tick: deliveries always get from where schedules stopped until 16 seconds. A schedule's spawn under the
- * in-process jobs runner runs the job itself (`jobs.start`), which no window can bound; such work belongs on a runner
- * with compute of its own.
+ * 30-second limit (@sssb/cdk's `SssbApp`, `packages/cdk/src/sssb-app.js:526` in SSSB's repository; the tick runs inside
+ * the cron route's request), counted from the start of the request: schedules first, then job retries, then deliveries,
+ * so schedules may start work for 6 seconds, retries until 10 and deliveries until 16. A delivery started at 16 seconds
+ * may take the POST's 10 (`WEBHOOK_TIMEOUT_MS`, ../server-lib/webhook-dispatch.ts) plus its claim, record and audit
+ * transactions, which leaves about four seconds for those, a listing query begun just before the deadline, and the
+ * response. Giving each drain a window of its own means none can spend the whole tick: retries always get from where
+ * schedules stopped until 10 seconds, deliveries from there until 16. A schedule's spawn and a retry's start under the
+ * in-process jobs runner run the job itself (`jobs.start`), which no window can bound; such work belongs on a runner
+ * with compute of its own. A change to the server's timeout has to change these too.
  */
 /** How long after the tick's start the schedules drain may start a spawn. */
-export const SCHEDULES_WINDOW_MS = 8_000
+export const SCHEDULES_WINDOW_MS = 6_000
+/** How long after the tick's start the job-retry drain may start a retry (safeinsights/sssb#135). */
+export const RETRIES_WINDOW_MS = 10_000
 /** How long after the tick's start the deliveries drain may start a delivery. */
 export const DELIVERIES_WINDOW_MS = 16_000
 

@@ -30,6 +30,14 @@ export interface DemoJob {
     timeline: { status: string; at: string; message?: string | null }[]
     /** Twin of `jobs.requested_by`: the person who started it; absent for a scheduled run. */
     requestedBy?: string | null
+    /** Twin of `jobs.attempt`: which attempt this row is, from 1; absent means 1. A kind that retries runs each
+     *  attempt as a row of its own. */
+    attempt?: number
+    /** Twin of `jobs.retry_of`: the first attempt's id, on a retry; absent or null on attempt 1. */
+    retryOf?: string | null
+    /** Twin of `jobs.run_after`, in world-clock ms: set only on a retry still waiting out its backoff, which the
+     *  retry drain (the clock's advance and run-due) starts once the world clock reaches it. */
+    runAfterMs?: number | null
 }
 
 /** Twin of a StoredInvite (../adapters/fake/auth.ts) — with no server an invite is just a row of

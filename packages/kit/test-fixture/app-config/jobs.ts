@@ -1,7 +1,8 @@
 import { digestEmailHandler } from '@sssb/kit/jobs/digest-email'
-import type { JobNotify } from '@sssb/kit/core/jobs'
+import type { JobNotify, JobRetry } from '@sssb/kit/core/jobs'
 import type { JobHandler } from '@sssb/kit/ports/jobs'
 import { exportDocketsHandler } from '../domain/export-dockets'
+import { flakyDocketsHandler } from '../domain/flaky-dockets'
 import { noopDocketsHandler } from '../domain/noop-dockets'
 
 /**
@@ -11,13 +12,14 @@ import { noopDocketsHandler } from '../domain/noop-dockets'
  * default, `always`; `sweep-dockets` is `failure`; `quiet-dockets` is `never`. @sssb/kit/server-lib/notify.ts builds
  * NOTIFIED_JOB_KINDS out of `appJobKinds`, so `server-lib/notify.test.ts` needs an app kind that notifies AND the
  * framework's own `digest-email` that does not — a distinction an empty registration cannot express — and
- * `server-lib/notify-opt-out.test.ts` needs all three modes, each run on every runner.
+ * `server-lib/notify-opt-out.test.ts` needs all three modes, each run on every runner. A FOURTH, `flaky-dockets`, is the
+ * one kind with a `jobRetry` entry (below), for the retry proofs (`db/job-retries.test.ts`).
  *
  * COMPOSITION ROOT: `jobHandlers` is the single dispatch map the fake jobs adapter consumes. The
  * framework reaches its OWN handler through this seam because the fence forbids the adapter importing
  * app-side modules directly.
  */
-export const appJobKinds = ['export-dockets', 'sweep-dockets', 'quiet-dockets'] as const
+export const appJobKinds = ['export-dockets', 'sweep-dockets', 'quiet-dockets', 'flaky-dockets'] as const
 export type AppJobKind = (typeof appJobKinds)[number]
 
 /**
@@ -30,6 +32,7 @@ const appJobHandlers: Record<AppJobKind, JobHandler> = {
     'export-dockets': exportDocketsHandler,
     'sweep-dockets': noopDocketsHandler,
     'quiet-dockets': noopDocketsHandler,
+    'flaky-dockets': flakyDocketsHandler,
 }
 
 /**
@@ -40,6 +43,14 @@ const appJobHandlers: Record<AppJobKind, JobHandler> = {
 export const jobNotify: Partial<Record<AppJobKind, JobNotify>> = {
     'sweep-dockets': 'failure',
     'quiet-dockets': 'never',
+}
+
+/**
+ * How each app kind is tried again after it fails (safeinsights/sssb#135). Only `flaky-dockets` retries: three attempts,
+ * one minute and then ten minutes apart. A kind this leaves out runs once; the export is optional.
+ */
+export const jobRetry: Partial<Record<AppJobKind, JobRetry>> = {
+    'flaky-dockets': { attempts: 3, delaysMs: [60_000, 600_000] },
 }
 
 /** The composed dispatch map (framework kinds + app kinds) — the jobs adapter's single source. */

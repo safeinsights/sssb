@@ -11,6 +11,10 @@ export interface SubmittedJob {
     tenantId: string
     orgId: string | null
     payload: unknown
+    /** Which attempt this is, from 1; absent means 1 (a submitted job, not a retry: safeinsights/sssb#135). */
+    attempt?: number
+    /** The first attempt's id, the key that stays the same across a job's retries; absent means `id`. */
+    firstJobId?: string
 }
 
 /**
@@ -44,6 +48,15 @@ interface JobContext {
     tenantId: string
     orgId: string | null
     jobId: string
+    /**
+     * Which attempt this run is, from 1. Above 1 only for a kind the seam's `jobRetry` lets retry: each attempt is a job
+     * row of its own (`jobId` differs), and runs over whatever the failed attempt left behind, so such a handler must be
+     * idempotent. SSSB's runners always set it and `firstJobId`; both are optional so that a test calling a handler
+     * directly need not, and a handler reads an absent one as the first attempt.
+     */
+    attempt?: number
+    /** The first attempt's job id, the same on every attempt: the key to deduplicate a retried handler's side effects on. */
+    firstJobId?: string
 }
 
 export type JobHandler = (payload: unknown, ctx: JobContext) => Promise<{ resultKey?: string }>
