@@ -33,8 +33,10 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `LlmUnavailableError` (`@sssb/kit/ports/errors`), which `withPortErrors` answers with a 503 and `Retry-After`: let it
   propagate. A job handler run by the CodeBuild runner, where no person waits and the process lives longer, passes a
   longer `timeoutMs` on the request; a route, and a job the in-process runner runs inside the server's function, never
-  pass more than that function allows. `stream` throws it from the iteration, so a route that has begun its response cannot
-  change the status.
+  pass more than that function allows. `stream` throws it from the iteration, after the text it had already delivered, so a route that has begun its
+  response cannot change the status: say the failure in the response's body, and test that path with a fixture entry that
+  has a `failure` (`{ "failure": { "reason": "overloaded" } }`), which the fake adapter replays as the deployed adapter
+  fails.
 - Read `process.env` only in `adapters/real/` (and never the run mode there), in Next's instrumentation hooks, in
   tests and in the app-root tool configs (Playwright, Vite). Every other module imports the resolved value: deployment
   parameters from `config/params.ts`, the run mode from `isSimulated`.
