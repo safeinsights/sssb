@@ -8153,6 +8153,7 @@ settle:
   intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
 - **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
   own, in its own PR.
+
 ## `check-real-env` notices, and a bound on the feature-flag read (2026-11-27, `fix/real-env-notices`)
 
 safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
