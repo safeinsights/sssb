@@ -13,35 +13,49 @@ import type { DB } from './schema'
  * connection reset between transactions.
  *
  * If the work throws and the rollback that follows throws too, the work's error is the one thrown (safeinsights/sssb#189):
- * `keepRollbackFailure` below says what is kept of the other.
+ * `transactionKeepingWorkError` below says how, and `keepRollbackFailure` what is kept of the other.
  */
 export async function runWithTenant<T>(
     db: Kysely<DB>,
     tenantId: string,
     fn: (trx: Transaction<DB>) => Promise<T>,
 ): Promise<T> {
-    // What the transaction's own work threw, the tenant scope's statement included, told apart from what Kysely throws
-    // after it: when the work throws, Kysely rolls back, and a rollback that throws in turn replaces the work's error
-    // (a 403 becomes a 503 when the Data API throttles the rollback). Kysely does not say which it is rethrowing.
-    let work: { readonly error: unknown } | undefined
+    return transactionKeepingWorkError(db, async (trx) => {
+        await sql`SELECT set_config('role', 'app_user', true), set_config('app.current_tenant', ${tenantId}, true)`.execute(
+            trx,
+        )
+        return fn(trx)
+    })
+}
+
+/**
+ * `db.transaction().execute(work)`, except that when the work throws and the rollback Kysely then makes throws too, the
+ * work's error is the one thrown (safeinsights/sssb#189). Otherwise the rollback's replaces it (a 403 becomes a 503 when
+ * the Data API throttles the rollback; a migration's SQL error becomes "the database is unavailable"), and Kysely does
+ * not say which of the two it is rethrowing. For the transactions the framework opens itself: `runWithTenant` and the
+ * Data API transport's migrations. A rollback the caller makes (a controlled transaction's `rollback()`) calls the
+ * driver without passing through here, and fails as it did.
+ */
+export async function transactionKeepingWorkError<T>(
+    db: Kysely<DB>,
+    work: (trx: Transaction<DB>) => Promise<T>,
+): Promise<T> {
+    let thrown: { readonly error: unknown } | undefined
     try {
         return await db.transaction().execute(async (trx) => {
             try {
-                await sql`SELECT set_config('role', 'app_user', true), set_config('app.current_tenant', ${tenantId}, true)`.execute(
-                    trx,
-                )
-                return await fn(trx)
+                return await work(trx)
             } catch (error) {
-                work = { error }
+                thrown = { error }
                 throw error
             }
         })
     } catch (error) {
         // The work threw and something else was thrown after it: the rollback Kysely made because of it. The work's
         // error is the one the caller acts on; the rollback's is kept beside it.
-        if (work !== undefined && error !== work.error) {
-            keepRollbackFailure(work.error, error)
-            throw work.error
+        if (thrown !== undefined && error !== thrown.error) {
+            keepRollbackFailure(thrown.error, error)
+            throw thrown.error
         }
         throw error
     }
@@ -49,8 +63,7 @@ export async function runWithTenant<T>(
 
 /**
  * Kept, not lost: a warning, and on the work's error (when it is an object that takes one) a non-enumerable
- * `rollbackError`. A rollback a caller makes itself (a controlled transaction's `rollback()`) is not this one: it does
- * not pass through here, and its failure is thrown as it was.
+ * `rollbackError`.
  */
 function keepRollbackFailure(work: unknown, rollback: unknown): void {
     const name = work instanceof Error ? work.name : typeof work

@@ -8229,15 +8229,17 @@ catchRequests })`), which the conformance check uses so it never touches an app'
 safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "DatabaseUnavailableError" and the
 18 s `DATABASE_RESUME_BUDGET_MS` above).
 
-- **#189: kept in `runWithTenant`, not in the dialect.** Kysely's `execute()` catches the work's error, awaits
+- **#189: kept in the framework's own transactions, not in the dialect.** Kysely's `execute()` catches the work's error, awaits
   `driver.rollbackTransaction`, and rethrows the work's error; if the rollback throws, that replaces it. A controlled
   transaction's `rollback()` calls the same driver method with the same connection, and nothing tells the driver which
   caller it has, so a rule in `rollbackTransaction` (swallow a failure) would also hide a deliberate rollback's: the
-  issue's open question. `runWithTenant`, which every framework transaction goes through (both transports, the Data
-  API and `pg`), sees the work's error, so it throws that when something else was thrown after it, and keeps the
+  issue's open question. `transactionKeepingWorkError` (`packages/kit/src/db/with-tenant.ts`), which `runWithTenant`
+  (both transports) and the Data API transport's `migrateToLatest` run their transactions through, sees the work's
+  error, so it throws that when something else was thrown after it, and keeps the
   rollback's failure as a warning and as a non-enumerable `rollbackError` on the work's error when that is an object that
   takes one (a thrown string or a frozen error gets the warning alone). The rollback's error is never `cause`: the work's
-  error may carry its own. A transaction opened on the raw handle keeps Kysely's behaviour, and a commit that fails is
+  error may carry its own. A transaction opened on the raw handle (`getDb()`: the contract suite's proofs, which never throttle) keeps Kysely's
+  behaviour, and a commit that fails is
   thrown as it was: nothing the work threw is there to keep. Rejected: **a Kysely subclass or a proxy of
   `TransactionBuilder`**, to catch the same on the raw handle: private fields, and the builder's methods each return
   another builder. Rejected: **swallowing every failed rollback**, which hides a deliberate one.

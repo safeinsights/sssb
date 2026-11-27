@@ -182,12 +182,8 @@ export class ResumeWait {
     async #poll(wake: Wake): Promise<void> {
         for (let attempt = 0; ; attempt += 1) {
             await sleep(PROBE_DELAYS_MS[Math.min(attempt, PROBE_DELAYS_MS.length - 1)])
-            if (wake.waiters === 0) {
-                // Nobody waits any more, and the probes left out are nobody's.
-                for (const probe of wake.inFlight) probe.abort()
-                wake.inFlight.clear()
-                return
-            }
+            // Nobody waits any more: the poll ends, and `#finish` aborts the probes it leaves out.
+            if (wake.waiters === 0) return
             let over = false
             let inTurn = true
             const controller = new AbortController()

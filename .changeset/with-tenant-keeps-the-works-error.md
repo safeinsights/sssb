@@ -8,7 +8,7 @@
 
 **Action.** none
 
-**What changed.** When the work inside `db.withTenant()` throws, Kysely rolls the transaction back, and a rollback that
+**What changed.** When the work inside `db.withTenant()` (or the Data API transport's migrations) throws, Kysely rolls the transaction back, and a rollback that
 fails in turn used to replace the work's error with its own: a handler that threw `ForbiddenError` reached the route as
 a `DatabaseUnavailableError` (a 503, not a 403) when the Data API throttled or timed out the rollback. `withTenant` now
 throws the work's own error, with the rollback's failure kept on it as a non-enumerable `rollbackError` property (where

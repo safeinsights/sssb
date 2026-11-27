@@ -4,9 +4,11 @@ import {
     ExecuteStatementCommand,
     RollbackTransactionCommand,
 } from '@aws-sdk/client-rds-data'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { Kysely, sql } from 'kysely'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { runWithTenant } from '../../db/with-tenant'
+import { runWithTenant, transactionKeepingWorkError } from '../../db/with-tenant'
 import type { DB } from '../../db/schema'
 import { DatabaseUnavailableError, ForbiddenError } from '../../ports/errors'
 import { RdsDataDialect, type RdsDataCommand } from './rds-data-dialect'
@@ -694,6 +696,20 @@ describe('a rollback that fails after the work threw', () => {
         expect(error).toBe(mine)
         expect(warn).not.toHaveBeenCalled()
         expect(Object.hasOwn(mine, 'rollbackError')).toBe(false)
+    })
+
+    it("keeps a migration's error as well: the Data API transport runs its migrations through the same helper", async () => {
+        const h = failingRollback(throttled)
+        const migration = new Error('relation "x" already exists')
+        const done = outcome(
+            transactionKeepingWorkError(h.db as unknown as Kysely<DB>, () => Promise.reject(migration)),
+        )
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect((await done).error).toBe(migration)
+        // And the transport does run them through it: its source says so.
+        expect(await readFile(path.join(__dirname, 'db-data-api.ts'), 'utf8')).toMatch(
+            /transactionKeepingWorkError\(db,[\s\S]*migrateToLatest\(trx\)/,
+        )
     })
 
     it("still throws a commit's failure as it was: nothing the work threw is there to keep", async () => {
