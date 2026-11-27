@@ -7859,6 +7859,7 @@ safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
   while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
   nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
   **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
+
 ## The LLM adapter has a deadline, and the provider's limits are a port error (2026-11-27, `fix/llm-timeout`)
 
 `safeinsights/sssb#98`: `createRealLlm` built the SDK client with a key and nothing else. The SDK's timeout is ten minutes
