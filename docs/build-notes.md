@@ -2437,6 +2437,6 @@ its first paint, as this adopter did (no call before first paint, one after).
   out of `connectionString` over the config it was handed, so `?sslmode=disable` on a URL beats `ssl: {...}` in code
   (pinned by `packages/kit/src/adapters/real/db.test.ts`). That is why `createRealDb` refuses a URL with any `ssl*`
   parameter rather than trusting its own option to win.
-- **`rejectUnauthorized: false` turns off the host check too**, not only the chain: Node runs `checkServerIdentity` only
+- **`rejectUnauthorized: false` turns off the host check too**, not only the chain: Node acts on `checkServerIdentity`'s verdict only
   when it rejects unauthorized certificates. Weakening the option in `db.ts` turns both of the contract test's refusal
   cases red, which is how the test was seen to fail.
