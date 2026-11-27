@@ -2,10 +2,10 @@ import type { JobRetry } from '../core/jobs'
 import { backoffDelayMs } from '../core/webhook-events'
 
 /**
- * The static demo's copy of core/jobs' retry policy (safeinsights/sssb#135): `isJobRetry`, `retryDelayMs` and
- * `MAX_JOB_ATTEMPTS`, re-implemented because core/jobs imports the seam's jobs module, and through it every server
+ * The static demo's copy of core/jobs' retry policy (safeinsights/sssb#135): `isJobRetry`, `retryDelayMs`,
+ * `MAX_JOB_ATTEMPTS` and `MAX_JOB_RETRY_DELAY_MS`, re-implemented because core/jobs imports the seam's jobs module, and through it every server
  * handler, which the `file://` bundle cannot carry (the same reason ./world.ts does not value-import `notifiesOn`).
- * `job-retry.test.ts` holds the two copies to the same answers.
+ * `world-job-retries.test.tsx` holds the two copies to the same answers.
  */
 
 /** core/jobs' MAX_JOB_ATTEMPTS. */

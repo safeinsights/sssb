@@ -7880,4 +7880,35 @@ is answered here.
 
     Removing the arming, the notifier's skip, the sweep's or run-pending's exclusion, the drain's under-lock re-check,
     the delay, or the first job id's hand-off each turns them red. `core/jobs.test.ts` covers the seam reader;
-    `db.contract.test.ts` arms and drains a retry on real Postgres under RLS.
+    `db.contract.test.ts` arms and drains a retry on real Postgres under RLS; `demo-static/world-job-retries.test.tsx`
+    runs the twin through the same cases and holds its copy of the policy to core's answers.
+
+- **What review changed** (two review rounds on Opus, then a check of the second round's fixes as a diff).
+    - **A waiting retry is hidden from a service caller.** `listServiceJobs` lists a job a service may run, and a
+      waiting retry is not one yet; the Simulator's service actor would otherwise have run every armed retry at once.
+      `listServiceJobs` therefore leaves it out, and the twin's service driver too.
+    - **Any hop out of `queued` clears `run_after`.** A path that reached the retry anyway (a caller that knew its id, a
+      webhook) takes it out of the drain's list.
+    - **A last attempt that could not start notifies.** A start that throws is recorded failed. Before review, the drain
+      then told no one, even when that was the job's end. `runDueRetries` now takes an `onFailed`. The tick and the
+      Simulator's clock and run-due controls pass `notifyRetryEnd`, which calls `notifyJobTerminal`, and that skips a
+      failure that armed a further attempt.
+    - **A delay over 30 days (`MAX_JOB_RETRY_DELAY_MS`) is refused.** A delay past JavaScript's date range would
+      otherwise throw inside the failure's transaction and leave the job unrecordable. The twin's copy of the check
+      carries the same cap.
+    - **The twin honours the jobs-held knob** for a due retry: it is left queued for Run pending, as `fakeJobs.start`
+      holds one on the server.
+    - **The views' new fields are optional** (`JobView.attempt`, `.retryOf`, the same on `ServiceJobView`), so a story or
+      test that builds a view by hand still compiles. The list functions always set them.
+- **Limitations accepted.**
+    - **A StartBuild that throws after the build really started** records that attempt failed and arms the next. The
+      build's own `completed` webhook is then refused with a 409, `failed -> completed`, and the work may run twice.
+      `submitJob` leaves a job queued when its start throws, but the drain cannot: on CodeBuild a queued job with no build
+      is lost for good (safeinsights/sssb#231). A failure the next attempt repairs costs less.
+    - **In a simulated world, a retry armed through the jobs webhook or the service status route uses the real clock.**
+      Those routes pass no `now`. After the world clock has been moved forward, such a retry is due at once. The runners'
+      own failures and the sweep use the world clock.
+    - **The static demo's twin** delivers a webhook a retry enqueued during a clock advance at the next drain, not in the
+      same advance, as the server's tick does.
+    - **The showcase's static bundle has about 11 KB of its size budget left** after this change (`pnpm check:demo-size`
+      passes with a warning).

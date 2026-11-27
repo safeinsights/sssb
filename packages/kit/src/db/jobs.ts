@@ -213,7 +213,8 @@ export async function recordJobStatus(
  * runner's sweep fails as lost, again arming the next attempt.
  *
  * `onFailed` is called after a start that threw has been recorded failed, so the caller can notify the job's end as
- * every runner does (the scheduled tick passes `notifyJobTerminal`; this module cannot import the notifier).
+ * every runner does (the scheduled tick and the Simulator pass `notifyRetryEnd`, ../server-lib/scheduled-tick.ts, which
+ * calls `notifyJobTerminal`; this module cannot import the notifier).
  *
  * BOUND (./drain-budget.ts): with a budget, at most `budget.maxItems` starts, none after its deadline, one tenant's
  * retry at a time in turn; a due retry left over is not claimed and the next tick lists it again. Without a budget it

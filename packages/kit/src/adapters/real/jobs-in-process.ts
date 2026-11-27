@@ -45,6 +45,12 @@ export const IN_PROCESS_LOST_AFTER_MS = 5 * 60_000
  * sweep (a build may wait in CodeBuild's own queue), and neither does the simulated world, whose held jobs stay
  * `queued` on purpose.
  *
+ * Retries (safeinsights/sssb#135). A retry still waiting out its delay (`queued` with `run_after` set) is the
+ * scheduled tick's to start, so the sweep leaves it alone; once the tick claims it (`run_after` cleared, `updated_at`
+ * set to the claim) it is judged as any queued job. A lost job of a kind whose `jobRetry` has attempts left is failed
+ * like any other, and `recordJobStatus` arms its next attempt, a new job: the work does run again, as that attempt,
+ * which is why a kind that retries must be idempotent.
+ *
  * A terminal status notifies the job's org admins as the jobs webhook route does, through `notify`, which the adapter
  * registry passes in (the notification modules import the registry). Best effort: `notifyJobTerminal` swallows its
  * own failures, and anything else `notify` throws is logged; neither fails a job that already finished.

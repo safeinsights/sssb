@@ -13,7 +13,7 @@ import type { JobsPort } from '../../ports/jobs'
  * build having to look it up, JOB_ORG_ID (empty for a job with no org), JOB_PAYLOAD, and JOB_ATTEMPT and JOB_FIRST_ID, a handler's `ctx.attempt` and
  * `ctx.firstJobId` (safeinsights/sssb#135): a kind that retries gets a new job, so a new build, for each attempt, armed by
  * the failed build's `failed` webhook. A build lost without posting one is never noticed, so never retried: no sweep
- * watches CodeBuild. Every override is PLAINTEXT,
+ * watches CodeBuild (safeinsights/sssb#231). Every override is PLAINTEXT,
  * readable in the CodeBuild console and in CloudTrail, so a job's payload must never carry a secret or personal data:
  * pass an id the build reads with its own access instead.
  */
