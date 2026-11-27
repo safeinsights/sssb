@@ -7589,3 +7589,54 @@ standing rule for these sessions: decide, and record the rejected alternative.
   every app follows. The cutover checklist's `auth-dev` row gains one sentence (a sibling change edits the same row).
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
+
+## A bounded, fair scheduled tick (2026-11-27, `fix/bounded-drains`)
+
+safeinsights/sssb#97: `runDueSchedules` and `runDueDeliveries` drained every due row of every tenant in one tick, one
+tenant's list after another's, with no bound. A webhook POST may take 10 seconds (`WEBHOOK_TIMEOUT_MS`) and the server
+that runs the cron route has 30 (`SssbApp`), so three slow deliveries could end the tick, and a tenant listed late
+waited behind every other tenant's backlog. Both drains now go through `packages/kit/src/db/drain-budget.ts`.
+
+- **The unit is both rows and time, and it bounds what is STARTED.** A drain starts at most `maxItems` rows (100 by
+  default) and none after its deadline on the wall clock. The time bound is what protects the server's limit; the row
+  bound caps a tick's database work and lets a caller ask for less. Work already started always finishes: cutting a
+  delivery off mid-POST would only turn it into an at-least-once resend. So the deadline leaves room for one more item
+  after it. Rejected: **rows alone**, which cannot keep a tick of slow endpoints under 30 seconds (four of them do not
+  fit); **time alone**, which leaves a caller no way to ask for a small tick and lets a fast backlog run to its window.
+- **The windows run from the tick's start: schedules may start for 8 seconds, deliveries until 16.** Deliveries get a
+  window of their own, so a run of schedules cannot spend the whole tick; a delivery started at 16 seconds has 10 for its
+  POST and about four for its claim, record and audit transactions and the response. A schedule's spawn is a few
+  statements, unless the in-process runner runs the job inside `jobs.start`, which no window bounds (that runner already
+  says such work belongs on CodeBuild). Rejected: **one shared deadline**, in which schedules first could leave deliveries
+  nothing. The numbers are the kit's defaults, written beside the arithmetic in `drain-budget.ts`: the kit cannot read
+  `@sssb/cdk`'s 30 seconds, so a change to the server's timeout has to change them too.
+- **Configured as an argument, not a parameter.** `runScheduledTick({ budget })` takes any of `maxSchedules`,
+  `maxDeliveries`, `schedulesWindowMs`, `deliveriesWindowMs`, and each drain takes an optional `DrainBudget` as its last
+  argument; leaving them out is the defaults. Rejected: **a key in `config/params.ts`**, which every app must hold
+  (`tests/tooling/app-scaffold.test.ts` fails a drift), so it would be a required change for every adopter, for a value
+  that follows the server's limit, which SSSB's deployment fixes, rather than anything an app decides. An app whose
+  server differs changes the one line of its cron route.
+- **Fair means round-robin per tenant, oldest due tenant first, with no per-tenant cap.** Each tenant's due rows form a
+  queue, oldest first; a drain takes one row from each tenant in turn, so no tenant has a second turn while another with
+  due work has had none, and one slow endpoint costs each other tenant at most a turn's wait per round. The tenants go in
+  order of their oldest due row, ties by id: the rows of a tenant served in one tick are claimed and move on (a schedule
+  advances, a delivery's `next_attempt_at` is armed into the future), while a tenant left out keeps its oldest row, so the
+  next tick serves it first. Nothing is stored for this. Rejected: **a per-tenant cap** on its own, which idles budget
+  while one tenant has work and the rest none, and still lets the first tenants listed take every tick's time; **a
+  rotating start offset**, which needs state between ticks or a clock-derived index that a tick's tenant count changes;
+  **weighting by time spent** (a tenant whose POSTs are slow gets fewer turns), more machinery than the issue needs.
+- **The remainder is never touched, so it is never lost or run twice.** A row the drain does not start gets no claim, no
+  lock and no write, and stays due; the next tick lists it again. Running twice is still prevented where it was: each
+  drain's locked re-check of the row (two overlapping ticks included). A tick reports what it left as `deferred` and
+  `stoppedBy` (`'items'`, `'time'` or null), for schedules and inside `deliveries`, which the route's JSON, the scheduled
+  tick's log line and `pnpm tick` show. `deferred` is a lower bound: each tenant is listed with a `LIMIT` of one more than
+  `maxItems`, enough to tell a drain that stopped on its bound from one that ran out. A drain whose deadline has already
+  passed lists nothing at all, so a tick that is out of time adds no per-tenant queries.
+- **The listing itself is still one query per tenant per drain**, as before: a tick with many tenants spends time listing
+  before it starts anything, and that time counts against the windows. Not changed here; filed as a follow-up.
+- **The static demo's in-browser twins of the drains are unchanged**: no server and no time limit there.
+- **Proofs.** `drain-budget.test.ts` pins the order, both bounds and the cross-tick rotation; the schedules and webhooks
+  tests each run a starvation case on the fake database (a busy tenant's backlog, a slow endpoint whose POSTs each take
+  ten seconds of the tick's clock, and another tenant's single row still served in the same tick, with what was left
+  served once in later ticks); `db.contract.test.ts` runs the bounded schedules drain on real Postgres under RLS. Removing
+  the round-robin, the tenant order or the deadline check each turns tests red.

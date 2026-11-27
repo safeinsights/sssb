@@ -173,6 +173,15 @@ describe('summarizeTick', () => {
         expect(summarizeTick({ ok: true })).toContain('0 job(s) spawned')
     })
 
+    it('says what a bounded tick left for the next one, and nothing when it left nothing', () => {
+        expect(
+            summarizeTick({ ...GOOD_BODY, deferred: 3, deliveries: { delivered: 1, failed: 0, dead: 0, deferred: 0 } }),
+        ).toBe(
+            'ticked: 2 job(s) spawned from due schedules, 0 schedule(s) failed; webhook deliveries: 1 delivered, 0 failed, 0 dead; left for the next tick: at least 3 schedule(s), 0 delivery(ies)',
+        )
+        expect(summarizeTick({ ...GOOD_BODY, deferred: 0 })).not.toContain('left for the next tick')
+    })
+
     it('knows whether anything moved', () => {
         expect(tickDidWork(GOOD_BODY)).toBe(true)
         expect(tickDidWork({ ok: true, spawned: 0, failed: 0, deliveries: { delivered: 0, failed: 0, dead: 0 } })).toBe(
