@@ -7960,3 +7960,28 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
   scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
+
+## `check-real-env` notices, and a bound on the feature-flag read (2026-11-27, `fix/real-env-notices`)
+
+safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
+
+- **#192: `realEnvNotices(env)` beside `assertRealEnv`, printed by `sssb check-real-env` after a pass.** Advisory lines
+  returned by the framework, so the command's one reader of a deployment's environment stays the framework's, with
+  `@sssb/tools` only printing them (a `notice:` each, to stdout, exit code unchanged). The framework's list holds two
+  cases: `CLERK_AUTHORIZED_PARTIES` unset, and any variable that starts `CLERK_AUTHORI` (any case) and is not that name,
+  the issue's second comment: such a variable looks like the setting and does nothing. Not in the list: `CLERK_JWT_KEY`,
+  the issue's open question. Unset it costs Clerk API calls rather than leaves a check off, and what it costs is a
+  measurement (cutover row `auth-dev`); it is one line to add if wanted. A notice is not printed after a failure, which
+  is the whole answer then. `@sssb/tools` finds `realEnvNotices` by looking through the framework's exports by name at
+  run time, and offers none for a framework without it: esbuild warns about any static mention of a missing export,
+  `in` guard included (a test pins that no warning is printed). A notices function that throws prints a notice saying
+  so and never fails the check. Rejected: **a `--strict` flag that fails on a notice**, which nobody asked for and
+  which would make unset look unsupported; and **warning at boot**, where the server's log is nobody's checklist.
+- **#104: `FLAG_TIMEOUT_MS` = one second, no retries.** Chosen against what a page can afford: the protected layout
+  awaits a flag read before it renders, so a slow PostHog costs every authenticated page the bound, once. One second
+  rather than the capture bound (two): a capture is awaited only to get the event out of a frozen Lambda, a flag read
+  is on the way to the person's page. The client is given `featureFlagsRequestTimeoutMs` and
+  `featureFlagsRequestMaxRetries: 0` (posthog-node 5.73, @posthog/core 1.67: ten seconds and one retry for a
+  stateful client, so twenty seconds and more per page in an outage), so the request is aborted, and the adapter races
+  the read against the same bound, so the page is held to it whatever the client does. Late answers and failures are
+  dropped. Not measured against a live PostHog (cutover row `analytics`).

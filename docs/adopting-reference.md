@@ -947,8 +947,10 @@ strings, so list every origin each deployment is served from (its custom domain,
 `<id>.cloudfront.net` while people use it, each preview host), each as the browser's `Origin` header names it (scheme,
 lower-case host and any port, with no path or trailing slash), and `http` only for `localhost`, `127.0.0.1` or `[::1]`.
 A malformed list (a path, a trailing slash, upper case, a wildcard, a duplicate, an empty entry or an empty value) fails
-every request the server answers, and `sssb check-real-env`, naming the entry; unset it to turn the check off. Verify it
-under cutover row `auth-dev`.
+every request the server answers, and `sssb check-real-env`, naming the entry; unset it to turn the check off, and
+`sssb check-real-env` then says so in a `notice:` line after it passes (as it does for a variable spelled like it and not
+it, such as `CLERK_AUTHORISED_PARTIES`), without failing: it reads the environment it runs in, so run it with the
+server's. Verify it under cutover row `auth-dev`.
 
 The same settings run in `pnpm dev` when your dev environment sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their slugs:
 the simulated world then places its seeded people the same way. With a single tenancy, seed them in that tenant; with a
