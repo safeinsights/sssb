@@ -17,6 +17,15 @@ assertNoLiveDevTicker()
  */
 const BASE_URL = originForApp(__dirname)
 
+/**
+ * Against a PRODUCTION build instead of `next dev` when `E2E_BUILD=1`, as CI's e2e job sets it (SSSB's reusable
+ * workflow). A production build is the stronger check of this app: `next build` typechecks the routes, prerenders what
+ * it can and enforces the server/client boundary, all of which `next dev` only meets route by route, when a test happens
+ * to reach one. It is also faster on a cold runner, which compiles every route once up front instead of on each first
+ * hit. Locally the suite stays on `next dev`, whose warm server `reuseExistingServer` keeps between runs.
+ */
+const E2E_BUILD = process.env['E2E_BUILD'] === '1'
+
 export default defineConfig({
     testDir: './tests/e2e',
     fullyParallel: true,
@@ -39,12 +48,14 @@ export default defineConfig({
     },
     projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
     webServer: {
-        command: 'pnpm dev',
+        command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
         url: BASE_URL,
         // `pnpm dev` ticks the scheduler on a timer when DEV_TICK_SECONDS is set (`sssb dev-tick`). The e2e suite expects a
         // scheduler that does nothing until a test asks, so whatever is in the caller's shell, the server it starts is not ticked.
         env: { DEV_TICK_SECONDS: '' },
         reuseExistingServer: !process.env['CI'],
-        timeout: 120_000,
+        // A production build compiles the whole app before it serves; `next dev` serves at once and compiles per route.
+        // Build and start took 28 s on CI (2026-11-27): 180 s is over 6x that.
+        timeout: E2E_BUILD ? 180_000 : 120_000,
     },
 })

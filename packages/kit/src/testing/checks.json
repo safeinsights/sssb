@@ -85,6 +85,16 @@
             "tests": ["through the exports map of the app's seam package, when it has one", "from the kit's own code"]
         },
         {
+            "id": "llm-stream-failure",
+            "runner": "unit",
+            "title": "a stream that fails after text is visible to its consumer",
+            "tests": [
+                "the fake adapter's stream delivers a failing entry's partial answer and then throws; complete throws",
+                "the static demo's replay runs a failing entry's tool calls and then throws in place of the answer",
+                "the real adapter throws a failure that follows text, with the consumer busy, and the same reason"
+            ]
+        },
+        {
             "id": "contract-owner-pass",
             "runner": "contract",
             "title": "a non-superuser owner on real Postgres",

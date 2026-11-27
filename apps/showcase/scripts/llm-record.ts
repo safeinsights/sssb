@@ -83,6 +83,12 @@ async function main() {
         let changed = false
         for (const entry of fixture.entries) {
             if (!entry.request) continue
+            // A failing entry is hand-authored for the failure path of a screen or a route: recording would replace
+            // its partial answer with a whole one and leave the failure on it.
+            if (entry.failure) {
+                console.warn(`skip ${fixture.purpose}/${entry.name}: it is a hand-authored failure`)
+                continue
+            }
 
             // Tool-loop entry: drive the real loop with the app's execute against the fake world.
             if (Array.isArray(entry.conversation)) {

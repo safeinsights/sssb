@@ -38,10 +38,6 @@ async function signInAs(page: Page, personId: string) {
 }
 
 test('advancing the world clock past a schedule fires its digest job and lands the email in Mail', async ({ page }) => {
-    // Reset re-migrates+re-seeds pglite lazily (cold), the Jobs tab compiles on first hit, and the
-    // digest fires inline — generous room over the default.
-    test.setTimeout(120_000)
-
     // Research admin (Dana) — the seeded weekly digest is addressed to her, so her own inbox shows it.
     await signInAs(page, 'person-admin')
 

@@ -681,6 +681,66 @@ describe('fake llm', () => {
     })
 })
 
+describe('fake llm failure entries', () => {
+    const tools = [{ name: 'lookup', description: 'd', inputSchema: { type: 'object' as const } }]
+    const write = (entries: object[]) => {
+        const dir = makeTestTmpDir('fake-llm-failure-')
+        mkdirSync(path.join(dir, 'llm'), { recursive: true })
+        writeFileSync(path.join(dir, 'llm', 'failing.json'), JSON.stringify({ purpose: 'failing', entries }))
+        return dir
+    }
+    const request = { purpose: 'failing', messages: [{ role: 'user' as const, content: 'q' }] }
+
+    test('a failing default entry fails complete before any text, and stream after its partial answer', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const dir = write([{ name: 'd', request: null, response: 'Half an ', failure: { reason: 'timed-out' } }])
+        const llm = createFakeLlm({ fixturesDir: dir, catchRequests: false })
+        await expect(llm.complete(request)).rejects.toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
+        const chunks: string[] = []
+        const streamed = (async () => {
+            for await (const chunk of llm.stream(request)) chunks.push(chunk)
+        })()
+        await expect(streamed).rejects.toMatchObject({ reason: 'timed-out' })
+        expect(chunks.join('')).toBe('Half an ')
+    })
+
+    test('a failing tool-loop entry runs its recorded tool calls live, then fails in place of the answer', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const dir = write([
+            {
+                name: 'd',
+                request: null,
+                response: null,
+                conversation: [
+                    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'lookup', input: { q: 1 } }] },
+                    { role: 'assistant', content: [{ type: 'text', text: 'never delivered' }] },
+                ],
+                failure: { reason: 'overloaded' },
+            },
+        ])
+        const llm = createFakeLlm({ fixturesDir: dir, catchRequests: false })
+        const executed: string[] = []
+        await expect(
+            llm.runToolLoop({
+                ...request,
+                tools,
+                execute: async (call) => {
+                    executed.push(call.name)
+                    return '{}'
+                },
+            }),
+        ).rejects.toMatchObject({ name: 'LlmUnavailableError', reason: 'overloaded' })
+        expect(executed).toEqual(['lookup'])
+    })
+
+    test('an entry without a failure still answers, so only the entries that say so fail', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const dir = write([{ name: 'd', request: null, response: 'Fine.' }])
+        const llm = createFakeLlm({ fixturesDir: dir, catchRequests: false })
+        expect(await llm.complete(request)).toEqual({ text: 'Fine.' })
+    })
+})
+
 describe('fake llm request catch', () => {
     const user = (content: string) => ({ role: 'user' as const, content })
 

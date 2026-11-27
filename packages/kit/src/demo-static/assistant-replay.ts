@@ -1,3 +1,5 @@
+import { LlmUnavailableError, type LlmUnavailableReason } from '../ports/errors'
+
 /**
  * Static-demo twin of the fake llm's runToolLoop (../adapters/fake/llm.ts, ADR-0006/-0009). That
  * adapter reads its fixture off disk with node:fs, which no `file://` bundle can do — so the twin
@@ -24,6 +26,8 @@ interface FixtureEntry {
     request: { messages?: { role: string; content: string }[] } | null
     response?: string | null
     conversation?: { role: string; content: FixtureBlock[] }[]
+    /** The fake adapter's failure form (`LlmFixtureEntry.failure`): the final answer is a thrown error instead. */
+    failure?: { reason: LlmUnavailableReason } | null
 }
 
 /** The shape of a committed fixtures/llm/*.json file, as far as browser replay cares. */
@@ -35,27 +39,38 @@ export interface AssistantFixture {
  * Replay `question` against `fixture`, running `execute(toolName, input)` for every recorded tool_use before
  * returning the turn's text. Falls back to the fixture's default answer when the question matches no
  * recorded conversation — the same fallback the fake adapter makes, so an unrecorded question is
- * answered rather than thrown at a demo audience.
+ * answered rather than thrown at a demo audience. An entry with a `failure` runs its recorded tool calls and then
+ * throws `LlmUnavailableError` in place of the answer, as the fake adapter's tool loop does, so the demo's failure
+ * path is the server's.
  */
 export async function replayAssistant(
     fixture: AssistantFixture,
     question: string,
     execute: (toolName: string, input: unknown) => Promise<string>,
 ): Promise<string> {
-    const fallback = fixture.entries.find((e) => e.request === null)?.response ?? 'fixture missing'
-    const conversation = fixture.entries.find(
-        (e) => e.conversation && e.request?.messages?.[0]?.content === question,
-    )?.conversation
-    if (!conversation) return fallback
+    const defaultEntry = fixture.entries.find((e) => e.request === null)
+    const fallback = defaultEntry?.response ?? 'fixture missing'
+    const entry = fixture.entries.find(
+        (e) => e.conversation && e.conversation.length > 0 && e.request?.messages?.[0]?.content === question,
+    )
+    const conversation = entry?.conversation
+    if (!conversation) {
+        // The default entry may fail too, as the fake adapter's does for a question nothing recorded.
+        if (defaultEntry?.failure) throw new LlmUnavailableError(defaultEntry.failure.reason)
+        return fallback
+    }
+    const failure = entry?.failure?.reason
     for (const turn of conversation) {
         const toolUses = turn.content.filter((b) => b.type === 'tool_use')
         for (const call of toolUses) await execute(call.name ?? '', call.input)
         if (toolUses.length === 0) {
+            if (failure) throw new LlmUnavailableError(failure)
             return turn.content
                 .filter((b) => b.type === 'text')
                 .map((b) => b.text ?? '')
                 .join('')
         }
     }
+    if (failure) throw new LlmUnavailableError(failure)
     return fallback
 }

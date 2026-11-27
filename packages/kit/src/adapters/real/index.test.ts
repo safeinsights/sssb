@@ -342,6 +342,67 @@ describe('the auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE)', () => {
     })
 })
 
+describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsights/sssb#192)', () => {
+    it('says CLERK_AUTHORIZED_PARTIES is unset, and nothing once it is set', async () => {
+        const { realEnvNotices } = await import('./index')
+        expect(realEnvNotices({})).toEqual([expect.stringMatching(/CLERK_AUTHORIZED_PARTIES is unset.*any origin/)])
+        expect(realEnvNotices({ CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })).toEqual([])
+    })
+
+    it('reads the process environment unless given one, and never fails the preflight it follows', async () => {
+        const { assertRealEnv, realEnvNotices } = await import('./index')
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        expect(() => assertRealEnv()).not.toThrow()
+        expect(realEnvNotices()).toHaveLength(1)
+        stubEnv({ CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })
+        expect(realEnvNotices()).toEqual([])
+    })
+
+    it('flags a misspelled name, which does nothing though a value looks set', async () => {
+        const { realEnvNotices } = await import('./index')
+        const notices = realEnvNotices({
+            CLERK_AUTHORISED_PARTIES: 'https://app.example.org',
+            clerk_authorized_parties: 'https://app.example.org',
+        })
+        expect(notices).toHaveLength(3)
+        expect(notices[0]).toMatch(/CLERK_AUTHORIZED_PARTIES is unset/)
+        expect(notices.slice(1).join('\n')).toMatch(
+            /CLERK_AUTHORISED_PARTIES is set, but the setting is read as CLERK_AUTHORIZED_PARTIES only/,
+        )
+        expect(notices.slice(1).join('\n')).toMatch(/clerk_authorized_parties is set/)
+        // With the real one set as well, the misspelling is still named: it does nothing, and may be a stale copy.
+        expect(
+            realEnvNotices({ CLERK_AUTHORIZED_PARTIES: 'https://a.example', CLERK_AUTHORISED_PARTIES: 'x' }),
+        ).toEqual([expect.stringMatching(/CLERK_AUTHORISED_PARTIES is set/)])
+    })
+
+    it('takes another case of the name for the variable itself on Windows, where the environment ignores case', async () => {
+        const { realEnvNotices } = await import('./index')
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        try {
+            Object.defineProperty(process, 'platform', { value: 'win32' })
+            expect(
+                realEnvNotices({ Clerk_Authorized_Parties: 'https://a.example', CLERK_AUTHORIZED_PARTIES: 'x' }),
+            ).toEqual([])
+            // A spelling that is not the name in another case is still a misspelling there.
+            expect(realEnvNotices({ CLERK_AUTHORISED_PARTIES: 'x', CLERK_AUTHORIZED_PARTIES: 'y' })).toHaveLength(1)
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+    })
+
+    it('leaves other Clerk variables alone', async () => {
+        const { realEnvNotices } = await import('./index')
+        expect(
+            realEnvNotices({
+                CLERK_AUTHORIZED_PARTIES: 'https://a.example',
+                CLERK_SECRET_KEY: 'sk',
+                CLERK_JWT_KEY: 'key',
+            }),
+        ).toEqual([])
+    })
+})
+
 describe('the optional ports follow their switches, and a port switched off is absent', () => {
     const PG = { DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' }
     const ALL_OFF = Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, 'none']))
