@@ -57,7 +57,9 @@ const SVIX_WEBHOOK_HEADERS = { id: 'svix-id', timestamp: 'svix-timestamp', signa
 /**
  * Where verified messages are remembered until their window closes, so the same signed message is not accepted
  * twice. `claim` records `key` until `expiresAtMs` and answers false when it is already held (and has not expired);
- * `release` forgets it. The default is per-process; a multi-instance deployment passes a shared one.
+ * `release` forgets it. A store judges expiry by its own clock: `expiresAtMs` already runs a minute past the moment the
+ * signature stops verifying, to cover the store's latency and its clock's skew from the server's. The default is
+ * per-process; a multi-instance deployment passes a shared one.
  */
 export interface StandardWebhookReplayStore {
     claim(key: string, expiresAtMs: number): boolean | Promise<boolean>
@@ -227,10 +229,17 @@ export function __resetStandardWebhookReplayGuard(): void {
     seen.clear()
 }
 
-/** The replay store's key for a message: its id and timestamp, unambiguously joined. */
-function claimKey(id: string, timestamp: number): string {
-    return JSON.stringify([id, timestamp])
+/**
+ * The replay store's key for a message: the sender (the variables its secret is read from), its id and its timestamp,
+ * unambiguously joined. The sender is part of it so that one sender's ids never collide with another's, and so a
+ * sender holding one route's secret cannot claim keys another sender will use.
+ */
+function claimKey(envNames: readonly string[], id: string, timestamp: number): string {
+    return JSON.stringify([[...envNames].sort(), id, timestamp])
 }
+
+/** How long past the end of its window a claim is kept, for a store's latency and clock skew (see the store's doc). */
+const CLAIM_MARGIN_MS = 60_000
 
 interface Verified {
     webhook: VerifiedStandardWebhook
@@ -266,9 +275,9 @@ async function verifyAndClaim(
     if (!result.ok || !id || !timestamp) throw new AuthRequiredError()
 
     const seconds = Number(timestamp)
-    const key = claimKey(id, seconds)
+    const key = claimKey(envNames, id, seconds)
     // Remembered until the signature stops verifying: the timestamp may run up to the tolerance AHEAD of the clock.
-    const expiresAtMs = Math.max(now.getTime(), seconds * 1000) + toleranceMs
+    const expiresAtMs = Math.max(now.getTime(), seconds * 1000) + toleranceMs + CLAIM_MARGIN_MS
     const store = options.replayStore
     const claimed = store ? await store.claim(key, expiresAtMs) : claimInProcess(key, expiresAtMs, now.getTime())
     if (!claimed) throw new AuthRequiredError()
@@ -322,7 +331,8 @@ export function withStandardWebhookSignature(
         }
         try {
             const response = await handler({ request, webhook: verified.webhook })
-            if (response.status >= 500) await verified.release()
+            // Released quietly: a store that cannot release must not replace the handler's own answer.
+            if (response.status >= 500) await verified.release().catch(() => {})
             return response
         } catch (error) {
             // The handler's error is the one to see: a store that also fails to release must not replace it.

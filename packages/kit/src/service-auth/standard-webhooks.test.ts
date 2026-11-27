@@ -296,6 +296,29 @@ describe('replay', () => {
         expect(read).toBe(false)
     })
 
+    test('two senders whose ids and timestamps coincide do not refuse each other', async () => {
+        const a = withStandardWebhookSignature(ok, { secretEnv: 'PARTNER_WEBHOOK_SECRET' })
+        const b = withStandardWebhookSignature(ok, { secretEnv: 'OTHER_SENDER_SECRET' })
+        const timestamp = nowSeconds()
+        expect((await a(signed(devSecret(), { id: '42', timestamp }))).status).toBe(200)
+        expect((await b(signed(devSecret(), { id: '42', timestamp }))).status).toBe(200)
+        expect((await a(signed(devSecret(), { id: '42', timestamp }))).status).toBe(401)
+    })
+
+    test('a store that fails to release on a 5xx does not replace the handler’s answer', async () => {
+        const store: StandardWebhookReplayStore = {
+            claim: () => true,
+            release: () => Promise.reject(new Error('store down')),
+        }
+        const guarded = withStandardWebhookSignature(
+            async () => new Response('busy', { status: 503, headers: { 'retry-after': '30' } }),
+            { secretEnv: 'PARTNER_WEBHOOK_SECRET', replayStore: store },
+        )
+        const response = await guarded(signed(devSecret()))
+        expect(response.status).toBe(503)
+        expect(response.headers.get('retry-after')).toBe('30')
+    })
+
     test('a store that fails to release does not hide the handler’s error', async () => {
         const store: StandardWebhookReplayStore = {
             claim: () => true,
@@ -366,7 +389,9 @@ describe('replay', () => {
         const timestamp = nowSeconds()
         expect((await guarded(signed(devSecret(), { id: 'msg_s', timestamp }))).status).toBe(200)
         expect((await guarded(signed(devSecret(), { id: 'msg_s', timestamp }))).status).toBe(401)
-        expect(claims[0]![0]).toBe(JSON.stringify(['msg_s', timestamp]))
+        expect(claims[0]![0]).toBe(JSON.stringify([['PARTNER_WEBHOOK_SECRET'], 'msg_s', timestamp]))
+        // Held a minute past the moment the signature stops verifying, for the store's latency and skew.
+        expect(claims[0]![1]).toBeGreaterThanOrEqual((timestamp + 5 * 60 + 60) * 1000)
     })
 
     test('verifyStandardWebhook claims the message as well', async () => {
