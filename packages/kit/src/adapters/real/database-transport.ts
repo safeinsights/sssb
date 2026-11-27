@@ -101,8 +101,9 @@ export function databaseSsl(): DatabaseSsl {
 }
 
 /**
- * The URL may not set its own TLS (./db.ts's `createRealDb` refuses one at boot, and `assertRealEnv` before it). `pg` reads `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`
- * and `uselibpqcompat` from the query string, and what it reads there REPLACES the `ssl` option it is given
+ * The URL may not set its own TLS (./db.ts's `createRealDb` refuses one at boot, and `assertRealEnv` before it).
+ * `pg` reads `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation` and `uselibpqcompat` from the
+ * query string, and what it reads there REPLACES the `ssl` option it is given
  * (pg's ConnectionParameters merges the parsed URL over the config), so `?sslmode=disable` or `?sslmode=no-verify`
  * would quietly undo the mode. Refused rather than stripped, so a URL that asks for something is never silently
  * answered with something else; the message names the parameters and never the URL, which holds the password.
