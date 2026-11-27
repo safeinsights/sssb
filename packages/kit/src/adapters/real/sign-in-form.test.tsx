@@ -39,10 +39,13 @@ const signIn = {
 
 /** What the hook answers: `signIn`, until a client update puts another attempt in its place. */
 const hook = { signIn }
-/** What `useClerk` answers: whether clerk-js has loaded, the sessions its client holds, and its client sign-out. */
+/**
+ * What `useClerk` answers: whether clerk-js has loaded, the sessions its client holds signed in, and its client sign-out,
+ * which (as Clerk's) takes the session off the client.
+ */
 const clerk = {
     loaded: true,
-    client: { sessions: [] as { id: string }[] },
+    client: { signedInSessions: [] as { id: string }[] },
     signOut: vi.fn<(options: { sessionId: string; redirectUrl: string }) => Promise<void>>(),
 }
 vi.mock('@clerk/nextjs', () => ({
@@ -91,8 +94,10 @@ beforeEach(() => {
     signIn.createdSessionId = null
     signIn.supportedSecondFactors = []
     clerk.loaded = true
-    clerk.client.sessions = [{ id: 'sess_1' }]
-    clerk.signOut.mockReset().mockResolvedValue(undefined)
+    clerk.client.signedInSessions = [{ id: 'sess_1' }]
+    clerk.signOut.mockReset().mockImplementation(async ({ sessionId }) => {
+        clerk.client.signedInSessions = clerk.client.signedInSessions.filter((session) => session.id !== sessionId)
+    })
     signIn.password.mockReset().mockImplementation(leaves('complete'))
     signIn.finalize.mockReset().mockResolvedValue(ok)
     signIn.reset.mockReset().mockResolvedValue(ok)
@@ -637,7 +642,7 @@ describe('a finalize that fails after the code was accepted', () => {
         signIn.finalize.mockResolvedValueOnce(refused)
         await reachStep([TOTP])
         await enterCode()
-        clerk.client.sessions = []
+        clerk.client.signedInSessions = []
         await click('back')
         expect(clerk.signOut).not.toHaveBeenCalled()
         await submitForm()
@@ -753,10 +758,44 @@ describe('a session the form saw created, when signing in does not finish (safei
         signIn.finalize.mockResolvedValueOnce(refused)
         await reachStep([TOTP])
         await enterCode()
-        clerk.client.sessions = [{ id: 'sess_other' }]
+        clerk.client.signedInSessions = [{ id: 'sess_other' }]
         await click('back')
         expect(clerk.signOut).not.toHaveBeenCalled()
         expect(signOutButton()).toBeNull()
         expect(submitButton().disabled).toBe(false)
+    })
+})
+
+describe('after the held session is signed out (safeinsights/sssb#198)', () => {
+    const signOutButton = () => container.querySelector<HTMLButtonElement>('[data-testid="sign-in-sign-out"]')
+    const submitButton = () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!
+
+    // Clerk's redirect to this page is a soft navigation, which keeps the form: it must be ready to sign in again.
+    it('is ready to sign in again, with nothing held', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        await reachStep([TOTP])
+        await enterCode()
+        await click('back')
+        expect(clerk.signOut).toHaveBeenCalledTimes(1)
+        expect(signOutButton()).toBeNull()
+        expect(submitButton().disabled).toBe(false)
+        expect(alertText()).toBeUndefined()
+    })
+
+    it('says the sign-out failed when Clerk answers but the client still holds the session', async () => {
+        signIn.finalize.mockResolvedValueOnce(refused)
+        clerk.signOut.mockResolvedValueOnce(undefined)
+        await reachStep([TOTP])
+        await enterCode()
+        await click('back')
+        expect(alertText()).toBe(copy.refusedSignOutError)
+        expect(signOutButton()).not.toBeNull()
+    })
+
+    it('offers no sign-out, and stays busy, once a sign-in has finished and the browser is leaving', async () => {
+        await submit('/en/dashboard')
+        expect(assign).toHaveBeenCalledTimes(1)
+        expect(signOutButton()).toBeNull()
+        expect(submitButton().disabled).toBe(true)
     })
 })

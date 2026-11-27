@@ -64,23 +64,30 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
     const [held, setHeld] = useState<string | null>(null)
     const [signOutFailed, setSignOutFailed] = useState(false)
 
-    /** Signs the held session out, back to this page; a session the client no longer holds is only forgotten. */
+    /** Whether the client still holds `sessionId` signed in (active or pending). */
+    const holds = (sessionId: string) => clerk.client?.signedInSessions.some((session) => session.id === sessionId)
+
+    /**
+     * Signs the held session out; a session the client no longer holds signed in is only forgotten. Clerk's redirect is
+     * a soft navigation to this same page, which keeps the form's state, so the form resets itself once the sign-out
+     * has answered: only when the client no longer holds the session, and otherwise says the sign-out failed.
+     */
     async function endHeld(sessionId: string): Promise<void> {
         setBusy(true)
         setSignOutFailed(false)
         try {
-            if (!clerk.client?.sessions.some((session) => session.id === sessionId)) {
-                setHeld(null)
-                setBusy(false)
-                return
-            }
-            // Clerk takes the browser back to this page, so the form stays busy.
-            await clerk.signOut({ sessionId, redirectUrl: window.location.href })
+            if (holds(sessionId)) await clerk.signOut({ sessionId, redirectUrl: window.location.href })
+            if (holds(sessionId)) throw new Error('the client still holds the session')
+            setHeld(null)
         } catch {
             setSignOutFailed(true)
+        } finally {
             setBusy(false)
         }
     }
+
+    // Set once a sign-in has finished and the browser is on its way to `returnTo`: the form stays busy until it leaves.
+    const [leaving, setLeaving] = useState(false)
 
     // Leaving the step puts focus back where the person types next.
     const password = useRef<HTMLInputElement>(null)
@@ -104,6 +111,9 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
                 if (attempt.createdSessionId) setHeld(attempt.createdSessionId)
                 const { error } = await attempt.finalize()
                 if (error) return false
+                // Signed in: the session is no longer one this form must offer to end.
+                setHeld(null)
+                setLeaving(true)
                 window.location.assign(sameOriginPath(returnTo) ?? '/')
                 return true
             }
@@ -192,7 +202,7 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
             <Stack>
                 <TextInput label={labels.email} type="email" required {...form.getInputProps('email')} />
                 <PasswordInput label={labels.password} required ref={password} {...form.getInputProps('password')} />
-                <Button type="submit" loading={busy || !clerk.loaded} disabled={held !== null}>
+                <Button type="submit" loading={busy || leaving || !clerk.loaded} disabled={held !== null}>
                     {labels.submit}
                 </Button>
                 {signOutFailed || formError ? (
