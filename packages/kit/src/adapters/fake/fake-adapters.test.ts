@@ -733,6 +733,37 @@ describe('fake llm failure entries', () => {
         expect(executed).toEqual(['lookup'])
     })
 
+    test('a failing default entry with no answer at all fails typed from all three methods (#249)', async () => {
+        const { createFakeLlm } = await import('./llm')
+        for (const entry of [
+            { name: 'd', request: null, response: null, failure: { reason: 'overloaded' } },
+            { name: 'd', request: null, failure: { reason: 'overloaded' } },
+            { name: 'd', request: null, response: null, conversation: [], failure: { reason: 'overloaded' } },
+        ]) {
+            const llm = createFakeLlm({ fixturesDir: write([entry]), catchRequests: false })
+            const typed = { name: 'LlmUnavailableError', reason: 'overloaded' }
+            await expect(llm.complete(request)).rejects.toMatchObject(typed)
+            await expect(
+                (async () => {
+                    for await (const chunk of llm.stream(request)) void chunk
+                })(),
+            ).rejects.toMatchObject(typed)
+            await expect(llm.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toMatchObject(typed)
+        }
+    })
+
+    test('a default entry with no answer and no failure is still the plain "no default entry" error', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const llm = createFakeLlm({
+            fixturesDir: write([{ name: 'd', request: null, response: null }]),
+            catchRequests: false,
+        })
+        await expect(llm.complete(request)).rejects.toThrow(/no matching llm fixture/)
+        await expect(llm.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toThrow(
+            /no matching llm tool-loop fixture/,
+        )
+    })
+
     test('an entry without a failure still answers, so only the entries that say so fail', async () => {
         const { createFakeLlm } = await import('./llm')
         const dir = write([{ name: 'd', request: null, response: 'Fine.' }])

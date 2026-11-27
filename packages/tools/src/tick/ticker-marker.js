@@ -10,7 +10,8 @@
 // Imported by playwright.config.ts, which Playwright compiles to CommonJS: no `import.meta`, no top-level await, nothing
 // but `node:` imports here (the constraint @sssb/tools' ports module documents).
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -21,14 +22,23 @@ export function tickerMarkerPath(env = process.env, cwd = process.cwd()) {
     return path.join(env.APP_DATA_DIR ?? path.join(cwd, '.data'), 'dev-ticker.json')
 }
 
+/** A name beside `file` that no other process picks (the pid and random bytes), for a file that is moved onto or off it. */
+const beside = (/** @type {string} */ file, /** @type {string} */ kind) =>
+    `${file}.${process.pid}.${randomBytes(4).toString('hex')}.${kind}`
+
 /**
+ * Writes the marker whole or not at all (`safeinsights/sssb#258`): to a name beside it, then renamed onto it, which is
+ * atomic on one file system, so a reader (a Playwright config loading at that instant) sees the old marker or the new
+ * one, never half of it. A process killed between the two leaves a `.tmp` file beside the marker, which nothing reads.
+ *
  * @param {string} file
  * @param {number} seconds
  */
 export function writeTickerMarker(file, seconds) {
     mkdirSync(path.dirname(file), { recursive: true })
+    const temporary = beside(file, 'tmp')
     writeFileSync(
-        file,
+        temporary,
         JSON.stringify({
             pid: process.pid,
             seconds,
@@ -36,6 +46,7 @@ export function writeTickerMarker(file, seconds) {
             startToken: processStartToken(process.pid),
         }),
     )
+    renameSync(temporary, file)
 }
 
 /** @param {string} file */
@@ -121,19 +132,50 @@ export function liveTickerMarker(file, tokenOf = processStartToken) {
 }
 
 /**
- * Removes a marker found stale, unless the file has changed since it was read: another wrapper may have written its own
- * in the meantime, and that one is not stale. (A wrapper that writes between the re-read and the removal still loses its
- * marker: microseconds wide, and a ticker that finds it gone writes it again on its next start.)
+ * Removes a marker found stale, and only that one (`safeinsights/sssb#257`). Reading the file and then removing it leaves
+ * a gap in which another wrapper's new marker could be written and then removed, so the file is first MOVED aside, which
+ * is atomic and takes whatever file is there at that instant, and judged from the copy: the one that was read, it is
+ * deleted; a newer one, a wrapper wrote it between the judgment and the move, it is put back unless a newer still has
+ * been written there meanwhile (`link` fails rather than overwrite, and the newest wins). A marker written after the
+ * move finds the name free and is never touched. A reader that looks in the instant a newer marker is out of place sees
+ * none, which is what it saw for every marker before this change, and only in that race.
  *
  * @param {string} file
  * @param {{ pid: number, startedAt: string }} stale
+ * @param {{ afterClaim?: () => void }} [hooks] for a test to interleave a writer
  */
-function clearStaleMarker(file, stale) {
+export function clearStaleMarker(file, stale, hooks = {}) {
+    const claimed = beside(file, 'stale')
     try {
-        const current = JSON.parse(readFileSync(file, 'utf8'))
-        if (current && current.pid === stale.pid && current.startedAt === stale.startedAt) rmSync(file, { force: true })
+        renameSync(file, claimed)
     } catch {
         // already gone, or not ours to judge
+        return
+    }
+    hooks.afterClaim?.()
+    try {
+        let current
+        try {
+            current = JSON.parse(readFileSync(claimed, 'utf8'))
+        } catch {
+            current = null
+        }
+        if (current && current.pid === stale.pid && current.startedAt === stale.startedAt) return
+        // Not the one judged: a newer marker, or one that cannot be read. Put it back where it was.
+        try {
+            linkSync(claimed, file)
+        } catch (error) {
+            // EEXIST: a still newer marker is there, and wins. Anything else (a file system without hard links): move it back.
+            if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) {
+                try {
+                    renameSync(claimed, file)
+                } catch {
+                    // gone
+                }
+            }
+        }
+    } finally {
+        rmSync(claimed, { force: true })
     }
 }
 
