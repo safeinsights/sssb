@@ -73,6 +73,13 @@ describe('replayAssistant', () => {
         expect(calls).toEqual(['lookup'])
     })
 
+    it("throws a failing entry's failure even when it has no answer to give", async () => {
+        const fixture: AssistantFixture = {
+            entries: [{ request: null, response: null, failure: { reason: 'overloaded' } }],
+        }
+        await expect(replayAssistant(fixture, 'q', async () => '{}')).rejects.toMatchObject({ reason: 'overloaded' })
+    })
+
     it('answers fixture missing when no entry can answer', async () => {
         expect(await replayAssistant({ entries: [] }, 'q', async () => '{}')).toBe('fixture missing')
     })

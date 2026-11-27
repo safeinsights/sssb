@@ -624,4 +624,69 @@ describe('createRealLlm: a dropped connection (safeinsights/sssb#230)', () => {
         const streamed = (await consume(createRealLlm('key', { maxRetries: 0 }))).error
         expect(streamed).not.toBeInstanceOf(LlmUnavailableError)
     })
+
+    it('maps each transport signal on its own: terminated alone, and each code alone', async () => {
+        const bodyDying = (error: Error) => () =>
+            new Response(new ReadableStream({ start: (c) => setTimeout(() => c.error(error), 5) }), { status: 200 })
+        const signals: [string, Error][] = [
+            ['terminated, with no cause', new TypeError('terminated')],
+            ['ECONNRESET', Object.assign(new Error('reset'), { code: 'ECONNRESET' })],
+            ['EPIPE', Object.assign(new Error('broken pipe'), { code: 'EPIPE' })],
+            ['an undici code', Object.assign(new Error('body timeout'), { code: 'UND_ERR_BODY_TIMEOUT' })],
+            [
+                'a code three causes down',
+                Object.assign(new Error('a'), {
+                    cause: new Error('b', { cause: Object.assign(new Error('c'), { code: 'ECONNREFUSED' }) }),
+                }),
+            ],
+        ]
+        for (const [label, error] of signals) {
+            stubFetch(bodyDying(error))
+            expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request)), label).toMatchObject({
+                name: 'LlmUnavailableError',
+                reason: 'connection-lost',
+            })
+        }
+    })
+
+    it("never takes an error the app's own tool threw for a dropped connection, whatever it carries", async () => {
+        const toolUse = messageBody([{ type: 'tool_use', id: 'tu_1', name: 'lookup', input: {} }], 'tool_use')
+        const tools: LlmToolLoopRequest['tools'] = [
+            { name: 'lookup', description: 'd', inputSchema: { type: 'object' } },
+        ]
+        const thrown: Error[] = [
+            Object.assign(new Error('pg went away'), { code: 'ECONNRESET' }),
+            new TypeError('terminated'),
+            Object.assign(new TypeError('fetch failed'), {
+                cause: Object.assign(new Error('x'), { code: 'UND_ERR_SOCKET' }),
+            }),
+        ]
+        for (const toolError of thrown) {
+            const fetchMock = stubFetch(() => json(200, toolUse))
+            const error = await rejection(
+                createRealLlm('key').runToolLoop({
+                    ...request,
+                    tools,
+                    execute: async () => {
+                        throw toolError
+                    },
+                }),
+            )
+            expect(error).toBe(toolError)
+            expect(fetchMock).toHaveBeenCalledTimes(1)
+        }
+        // And one that throws before it returns a promise at all.
+        stubFetch(() => json(200, toolUse))
+        const sync = Object.assign(new Error('sync reset'), { code: 'ECONNRESET' })
+        const error = await rejection(
+            createRealLlm('key').runToolLoop({
+                ...request,
+                tools,
+                execute: () => {
+                    throw sync
+                },
+            }),
+        )
+        expect(error).toBe(sync)
+    })
 })

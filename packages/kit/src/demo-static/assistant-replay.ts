@@ -60,7 +60,11 @@ export async function replayAssistant(
         : typeof answering?.response === 'string'
           ? [{ role: 'assistant', content: [{ type: 'text', text: answering.response }] }]
           : undefined
-    if (!conversation) return 'fixture missing'
+    if (!conversation) {
+        // An entry that fails and has no answer still fails, as the demo's replay always has.
+        if (failure) throw new LlmUnavailableError(failure)
+        return 'fixture missing'
+    }
     let lastText = ''
     for (const turn of conversation) {
         const toolUses = turn.content.filter((b) => b.type === 'tool_use')

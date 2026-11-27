@@ -8176,6 +8176,10 @@ catchRequests })`), which the conformance check uses so it never touches an app'
   is undici's (`UND_ERR_*`) or a transport's (`ECONNRESET`, `ECONNREFUSED`, `ECONNABORTED`, `EPIPE`, `ENOTFOUND`,
   `EAI_AGAIN`, `ENETUNREACH`, `EHOSTUNREACH`). Matching `AnthropicError` alone was rejected: the SDK also throws it for a
   request it refuses to send, which no retry mends. An error with no transport cause passes through as before.
+  The check runs over what the provider's calls throw, never over what the app's tool throws: a tool loop's `execute`
+  failures are tagged on the way out (`ToolFailure`) and unwrapped by the adapter's error mapping, because a database
+  reset or a tool's own `fetch` that dropped carries the same codes and would otherwise be reported as the provider's
+  outage (found in review; a test per shape). The demo replay's failing entry still fails when it has no answer to give.
 - **The same rule retries and maps.** A call whose connection dropped is repeated once, as every other retryable failure,
   inside the deadline and only when the wait fits; a stream only when it had delivered no text (the consumer has the rest
   otherwise, so it ends in `connection-lost` after that text). A non-streaming call is repeated though its body had begun,

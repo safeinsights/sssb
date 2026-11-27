@@ -35,9 +35,10 @@ interface CallLimits {
  * the app's `execute` in a tool loop, which the loop stops waiting for when the deadline passes. The SDK's own retries
  * are off, because it sleeps a provider's whole `Retry-After` and so hides it: the adapter retries itself, once per
  * request to the provider by default, only when the wait is less than half of what is left of the deadline, and
- * otherwise answers at once with the provider's own figure. What the provider says (429, 529, a mid-stream overload) or a call that outruns the deadline becomes
- * `LlmUnavailableError` (`@sssb/kit/ports/errors`); any other error, the app's `execute` throwing included, passes
- * through as it is. `safeinsights/sssb#98`, `docs/decision-log.md`, "The LLM adapter has a deadline".
+ * otherwise answers at once with the provider's own figure. What the provider says (429, 529, a mid-stream overload),
+ * a connection to it that failed, or a call that outruns the deadline becomes `LlmUnavailableError`
+ * (`@sssb/kit/ports/errors`); any other error passes through as it is, and so does whatever the app's `execute` throws,
+ * even an error that looks like a dropped connection (it is tagged on the way out and unwrapped, `ToolFailure`). `safeinsights/sssb#98`, `docs/decision-log.md`, "The LLM adapter has a deadline".
  */
 export function createRealLlm(apiKey: string, options: RealLlmOptions = {}): LlmPort {
     const defaultTimeoutMs = llmTimeoutMs(options.timeoutMs)
@@ -141,6 +142,16 @@ export function createRealLlm(apiKey: string, options: RealLlmOptions = {}): Llm
     }
 }
 
+/** What the app's `execute` threw, carried past the adapter's own error mapping, which is for the provider's errors. */
+class ToolFailure extends Error {
+    readonly original: unknown
+
+    constructor(original: unknown) {
+        super("the app's tool failed")
+        this.original = original
+    }
+}
+
 async function toolLoop(
     request: LlmToolLoopRequest,
     deadline: Deadline,
@@ -194,7 +205,15 @@ async function toolLoop(
             // `execute` takes no signal, so a slow one cannot be stopped: the loop stops waiting for it when the
             // deadline passes (the tool runs on) and the call ends as timed-out.
             const result = known
-                ? await deadline.race(request.execute({ name: block.name, input: block.input }))
+                ? await deadline.race(
+                      // Tagged, so that nothing the app's tool throws is taken for the provider's failure, a database
+                      // reset or a tool's own `fetch` that dropped included: `portError` hands it back as it was.
+                      (async () => request.execute({ name: block.name, input: block.input }))().catch(
+                          (error: unknown) => {
+                              throw new ToolFailure(error)
+                          },
+                      ),
+                  )
                 : `unknown tool: ${block.name}`
             toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result })
             resultBlocks.push({ type: 'tool_result', toolUseId: block.id, content: result })
@@ -347,10 +366,11 @@ function retryWaitMs(error: unknown, retry: number, deadline: Deadline): number 
 /**
  * The port's error for what ended a call: a rate limit and an overloaded provider by their status or type, a deadline
  * (the adapter's own signal, however the SDK or the platform reports the abort, or the SDK's per-attempt timeout) as
- * `timed-out`, a failed connection as `connection-lost`. Anything else, the app's own `execute` throwing among it, is returned as it is: an abort that the
- * deadline did not cause is not a timeout.
+ * `timed-out`, a failed connection as `connection-lost`. What the app's `execute` threw (a `ToolFailure`) is handed back as
+ * it was. Anything else is returned as it is: an abort that the deadline did not cause is not a timeout.
  */
 function portError(error: unknown, deadline: Deadline): unknown {
+    if (error instanceof ToolFailure) return error.original
     if (error instanceof LlmUnavailableError) return error
     if (
         error instanceof Anthropic.APIConnectionTimeoutError ||
