@@ -154,7 +154,7 @@ export function isGate(gate: unknown): gate is Gate {
     if (typeof gate !== 'object' || gate === null || !('kind' in gate)) return false
     if (gate.kind === 'opens-with-simulated-404') return true
     if (gate.kind === 'reads-only') {
-        // Names, not dotted callees: an import's exported name or a declaration of the route's file.
+        // Names, not dotted callees: an import's exported name (a default import's local one).
         return (
             'names' in gate &&
             Array.isArray(gate.names) &&

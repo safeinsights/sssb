@@ -40,6 +40,12 @@ import {
  * `service/` gate above all), when it is a prefix nested in another of the app's prefixes (both fail: a route under
  * both would get one gate and silently lose the other), or when it matches no judged route (one that exports a handler) in the app's own tree: an app exemption is
  * measured against the app, so a deleted route's exemption cannot wait for a new route at the same path.
+ *
+ * Since safeinsights/sssb#220: `outsideApi: { files, prefixes }` takes `reads-only` entries keyed from `src/app`; a
+ * route group's `(name)` and a slot's `@name` segment are dropped from every key, as from a route's path, and two keys
+ * for one route are both refused; one `reads-only` file entry may sit under the framework's `webhooks/` prefix (the
+ * one overlap allowed, for reads only); a `reads-only` entry is stale without a read handler it governs, and each name
+ * it lists must be one such a read uses.
  */
 
 /** The file, beside the app's `package.json`. */
@@ -99,7 +105,7 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
         const base = outside ? "the app's src/app" : "the app's src/app/api"
         for (const [written, entry] of Object.entries(entries as Record<string, unknown>)) {
             const where = `${label}: ${name} \`${written}\``
-            // Matched as the scan matches a route: by URL, so a route group's segment is dropped.
+            // Matched as the scan matches a route: by URL, so a route group's and a slot's segment is dropped.
             const rel = written
                 .split('/')
                 .filter((segment) => !isUnroutedSegment(segment))
@@ -353,8 +359,9 @@ const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
 /**
  * The authorization scan over ONE app: every `route.*` under `<appDir>/src/app` (Next serves one from anywhere
  * there, so not only `api/`, and through a symbolic link too), each exported handler, read or mutation, judged against the framework's policy plus the app's
- * own exemptions, which are measured from `<appDir>/src/app/api` (so a route outside `api/` can match no
- * exemption and must call `authorize(...)` itself). Every Server Action under `<appDir>/src` (a `'use server'` file's
+ * own exemptions, which are measured from `<appDir>/src/app/api` (so a route outside `api/` can match only an
+ * `outsideApi` entry, whose gate is `reads-only` and which covers reads only; a mutation there must call
+ * `authorize(...)` itself). Every Server Action under `<appDir>/src` (a `'use server'` file's
  * exports, and each function whose body opens with `'use server'`) is judged as a POST is, and can match no
  * exemption. A Pages Router API directory fails outright: SSSB apps are App Router, and the scan reads no
  * `pages/api` handler. So does a root-level `app/` directory (Next serves it instead of `src/app`), and a file under

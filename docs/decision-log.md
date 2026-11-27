@@ -8018,12 +8018,12 @@ settle:
 - **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
   prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
   a prefix's gate override every exact entry beneath it (an existing test caught it in the first draft).
-- **`names` are identifiers**, not dotted names: an import's exported name (a default import's local name) or a
-  declaration of the route's file. A namespace import is refused outright, since it names the whole module, and so is
+- **`names` are identifiers**, not dotted names: an import's exported name (a default import's local name), never a
+  value of the route's own file (below). A namespace import is refused outright, since it names the whole module, and so is
   an aliased one (`import { headers as cors }`), as for every gate.
 - **Narrowed in review.** The first draft let a listed declaration of the file excuse whatever it held (an alias of an
-  import, a helper reading the database, a `declare`d `fetch`): the scan now reads a listed `const` or function and
-  counts its names, and refuses an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
+  import, a helper reading the database, a `declare`d `fetch`): the first fix had the scan read a listed `const` or
+  function and count its names, and refuse an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
   under `simulator/` too, which the issue did not ask for and whose 404-in-real guarantee such a read does not keep:
   `webhooks/` only. A listed name nobody reads is a problem. The second round found a listed `const` that the file
   fills elsewhere (`cache.set(…)` in a POST): a listed declaration used anywhere outside the read is now refused.

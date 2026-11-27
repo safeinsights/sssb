@@ -32,7 +32,7 @@ For a read that the check refuses and that reads no org-scoped data, name what i
 export default {
     files: {
         'cors/route.ts': {
-            reason: 'CORS preflight: answers with the shared, constant headers object, nothing else',
+            reason: 'CORS preflight: answers with the constant headers object from ./cors, nothing else',
             mustMatch: { kind: 'reads-only', names: ['corsHeaders'] },
         },
     },

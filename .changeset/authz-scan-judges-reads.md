@@ -38,7 +38,7 @@ existing entry now also covers a GET at the path it names, which passes its gate
 
 A GET under `src/app/api/webhooks/` that neither authorizes nor reads nothing passes only when it is wrapped by the
 webhook guard (`withWebhookSecret` or `withMailgunSignature`), the gate of SSSB's `webhooks/` exemption. An app's own
-entry cannot replace that gate: an entry at or under `webhooks/` is refused. A provider's verification handshake (a GET that checks
-a token and echoes a challenge) that is not wrapped moves out of `webhooks/` to a path of its own, with an exemption
-whose `calls` gate names the imported function that checks the token. A public read outside `src/app/api` (a feed, a
-sitemap route) can match no exemption: it moves under `src/app/api`, or authorizes.
+entry cannot replace that gate, but for one: a provider's verification handshake (a GET that checks a token and
+echoes a challenge) that is not wrapped can have a `reads-only` entry for its own file, listing the imports it reads
+(see the reads-only gate's entry in these notes). A public read outside `src/app/api` (a feed, a sitemap route) can
+have one too, under the exemptions file's `outsideApi` key.

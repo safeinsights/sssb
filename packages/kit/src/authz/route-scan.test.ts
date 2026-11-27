@@ -2430,10 +2430,20 @@ describe('judging a handler against a policy', () => {
                 withEntry,
             ),
         ).toMatch(/It cannot pass one: `fetch` is a global off the inert list\./)
-        expect(judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
-            /A read that reads nothing org-scoped can instead have a reads-only entry for its own file/,
+        // The handshake hint: only under webhooks/, the one framework prefix an app's reads-only file entry may sit under.
+        const webhooks: ScanPolicy = {
+            ...policy,
+            exemptPrefixes: {
+                'webhooks/': { reason: 'machine', mustMatch: { kind: 'wrapped-by', callees: ['withSecret'] } },
+            },
+        }
+        expect(judge(route('webhooks/meta/route.ts'), { verb: 'GET', facts: facts({}) }, webhooks)).toMatch(
+            /A read here that reads nothing org-scoped \(a provider's verification handshake\) can instead have a reads-only entry/,
         )
-        expect(judge(route('hooks/a/route.ts'), { verb: 'POST', facts: facts({}) }, policy)).not.toMatch(
+        expect(judge(route('webhooks/meta/route.ts'), { verb: 'POST', facts: facts({}) }, webhooks)).not.toMatch(
+            /reads-only entry/,
+        )
+        expect(judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).not.toMatch(
             /reads-only entry/,
         )
     })

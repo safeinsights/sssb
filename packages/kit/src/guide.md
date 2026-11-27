@@ -135,7 +135,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
   `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
-  `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names, each judged on
+  `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names (a `reads-only`
+  entry, reads only), each judged on
   its own. A mutating route outside `src/app/api` can match no exemption.
 - A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
   (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
@@ -148,7 +149,7 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
   array), `NextResponse`, `redirect`, `permanentRedirect` and `notFound` from `next/navigation`, and SSSB's `appMode`
   and `isSimulated`, so it works only on its request, as a liveness probe does, or a CORS preflight whose headers are
-  written inline. Any other read that is genuinely not org-scoped (a public one, a preflight sharing a headers object,
+  written inline. Any other read that is genuinely not org-scoped (a public one, a preflight whose headers object comes from a module,
   a provider's verification handshake) names an exemption with a `reads-only` gate,
   `{ kind: 'reads-only', names: ['corsHeaders'] }`: the read may then name, besides those inert values, only the
   listed imports (by exported name), so the reason covers exactly what it reads; every name listed must be in use. A

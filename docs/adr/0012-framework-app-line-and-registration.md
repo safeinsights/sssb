@@ -1068,7 +1068,8 @@ route handlers and Server Actions only (safeinsights/sssb#221). The conformance 
 
 safeinsights/sssb#220. Since reads are judged (the addendum above), three kinds of read that touch no org-scoped data
 had no clean way through: a public read outside `src/app/api` (a feed), which no app exemption could name; a read that
-names an inert value no gate describes (a preflight's shared headers object, a probe reporting a deployment parameter);
+names an inert value no gate describes (a preflight's headers object from a module, a probe reporting a deployment
+parameter);
 and a provider's verification handshake GET under `webhooks/`, which the framework's `wrapped-by` gate refused and an
 app entry could not replace.
 
@@ -1082,7 +1083,8 @@ gate it is applies to reads only: at its path, a mutation is judged by the exemp
 **Where it may sit, and nothing else may.** An app may put a `reads-only` entry (and only that kind) outside
 `src/app/api`, under a new key `outsideApi: { files, prefixes }` relative to `src/app`; and it may name ONE file
 (not a prefix) under the framework's `webhooks/` prefix, not under `simulator/` (whose guarantee, 404 in real mode, a
-reads-only read does not keep), a framework exact entry or a required-alongside prefix (`service/`). Everything else an app's file could say before is unchanged, and
+reads-only read does not keep), a framework exact entry or a required-alongside prefix (`service/`). Apart from keys now being matched by URL (below) and dynamic segments being allowed literally, everything else an
+app's file could say before is unchanged, and
 every other overlap with a framework entry still fails. A `reads-only` entry is stale unless its path has a read
 handler.
 
@@ -1112,6 +1114,6 @@ which Next also serves at the URL it intercepts on a header the client sends, is
 can tell which URL it answers.
 
 **Rejected:** treating `process.env` as inert (the app's lint, `sssb/no-process-env`, keeps it out of routes; a value
-from the environment arrives through `config/params.ts`, an import a `reads-only` gate can name); treating a frozen
-object `const` as inert by itself (the gate covers it, by name, with a reason); letting a `reads-only` entry under a
+from the environment arrives through `config/params.ts`, an import a `reads-only` gate can name); letting any value
+of the route's own file be listed (above); letting a `reads-only` entry under a
 framework prefix fall back to the prefix's gate for a read it refuses (an exact entry wins, as before).

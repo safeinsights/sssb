@@ -145,7 +145,10 @@ export interface ScanRoot {
     label: string
     /** Where the walk starts. */
     dir: string
-    /** Where exemption paths are measured from. A file outside it gets a `../` path no exemption can match. */
+    /**
+     * Where exemption paths are measured from. A file outside it gets a `../` path, which only an app's `outsideApi`
+     * entry (a `reads-only` one, for reads) can match.
+     */
     exemptDir: string
     /**
      * The tsconfig whose module resolution (its `paths`, its `moduleResolution`) re-exports and imported
@@ -670,11 +673,11 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
                         .filter((n) => !gate.names.includes(n))
                         .map((n) => `\`${n}\``)
                         .join(', ')}, which the gate does not list.`
-        // A read the prefix's guard does not cover (a provider's handshake under webhooks/) has one other way through.
+        // A read the webhook guard does not cover (a provider's handshake) has one other way through.
         const hint =
-            read && gate.kind !== 'reads-only'
-                ? ` A read that reads nothing org-scoped can instead have a reads-only entry for its own file in the ` +
-                  `app's authz-exemptions.mjs (under webhooks/ the framework allows one).`
+            read && gate.kind !== 'reads-only' && route.rel.startsWith('webhooks/')
+                ? ` A read here that reads nothing org-scoped (a provider's verification handshake) can instead have a ` +
+                  `reads-only entry for its own file in the app's authz-exemptions.mjs.`
                 : ''
         return (
             `${where} sits under an exemption that holds only when ${describeGate(gate)}, and this ` +
