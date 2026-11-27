@@ -17,6 +17,8 @@ import type { MailItem } from '../components/simulator/mail-app'
 import type { Person } from '../components/simulator/people-app'
 import { LOCALES } from '../core/locale'
 import { sameOriginPath } from '../core/same-origin-path'
+import { runDueRetries } from '../db/jobs'
+import { notifyRetryEnd } from './scheduled-tick'
 import { listSchedulesForWorld, runDueSchedules } from '../db/schedules'
 import { runDueDeliveries } from '../db/webhooks'
 import { AuthRequiredError, ForbiddenError, NotFoundError } from '../ports/errors'
@@ -276,14 +278,15 @@ async function schedules(): Promise<Response> {
 }
 
 /**
- * Due schedules and due webhook deliveries, run at the world's "now": what moving the clock past a schedule's next
- * run, or past a retry's backoff, makes happen at once.
+ * Due schedules, due job retries and due webhook deliveries, run at the world's "now": what moving the clock past a
+ * schedule's next run, or past a retry's backoff, makes happen at once.
  */
 async function runDueAtWorldNow() {
     const now = worldNow()
     const { spawned, failed } = await runDueSchedules(db, jobs, now)
+    const retries = await runDueRetries(db, jobs, now, undefined, notifyRetryEnd)
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook)
-    return { spawned, failed, deliveries }
+    return { spawned, failed, retries, deliveries }
 }
 
 /** POST `clock` `{ action: 'advance', deltaMs }` or `{ action: 'reset' }`, then runs what is due. */

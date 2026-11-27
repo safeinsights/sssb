@@ -114,7 +114,7 @@ describe('recordJobStatus: the after-commit webhook enqueue', () => {
         })
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
         try {
-            await expect(recordJobStatus(failingEnqueue, tenantId, id, 'running')).resolves.toBeUndefined()
+            await expect(recordJobStatus(failingEnqueue, tenantId, id, 'running')).resolves.toEqual({ retry: null })
             expect(calls).toBe(2)
             expect(warn).toHaveBeenCalledWith(expect.stringContaining('enqueue failed'))
         } finally {

@@ -52,8 +52,14 @@ export function createDemoServiceDriver(
         async listJobs(): Promise<ServiceJobLike[]> {
             // Mirrors GET /api/service/jobs scoped to a token minted for this team — the token's own
             // claims are what narrow it server-side, so the twin filters by the same two slugs.
+            // A retry still waiting out its delay is left out, as listServiceJobs leaves it out.
             return jobsRef.current
-                .filter((job) => job.tenantSlug === scope.tenantSlug && job.orgSlug === scope.orgSlug)
+                .filter(
+                    (job) =>
+                        job.tenantSlug === scope.tenantSlug &&
+                        job.orgSlug === scope.orgSlug &&
+                        (job.runAfterMs === undefined || job.runAfterMs === null),
+                )
                 .map((job) => ({
                     id: job.id,
                     kind: job.kind,
@@ -114,11 +120,13 @@ export function createDemoBuilderDriver(
     return {
         async listBuilds(): Promise<PendingBuildLike[]> {
             // Mirrors GET /api/simulator/actors/builds: every non-terminal job whose org is NOT
-            // service-managed (or has none) — the builder-console's disjoint pool.
+            // service-managed (or has none) — the builder-console's disjoint pool. A retry still waiting out
+            // its backoff is no build yet, as there: the world's retry drain starts it.
             const builds = jobsRef.current
                 .filter(
                     (job) =>
                         (job.status === 'queued' || job.status === 'running') &&
+                        (job.runAfterMs ?? null) === null &&
                         !serviceManagedOrgSlugs.includes(job.orgSlug ?? ''),
                 )
                 .map((job) => ({
