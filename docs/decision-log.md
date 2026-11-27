@@ -7859,6 +7859,7 @@ safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
   while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
   nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
   **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
+
 ## The Data API emulator reads a plain literal's backslash as the Data API does (2026-11-27, `fix/emulator-backslash`)
 
 `safeinsights/sssb#201`: an app's query with `ESCAPE '\'` and a parameter after it passed the contract run, and the real
