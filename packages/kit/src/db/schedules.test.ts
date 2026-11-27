@@ -363,7 +363,8 @@ describe('a schedule whose spawn keeps failing (safeinsights/sssb#215)', () => {
         // the audit log would refuse; the audit event carries the reason alone.
         const id = await insertSchedule({
             nextRunAt: new Date('2016-02-01T00:00:00.000Z'),
-            spec: { type: '\u{1F600}'.repeat(400) } as unknown as ScheduleSpec,
+            // One ASCII character first, so a cut by UTF-16 units would land inside a surrogate pair.
+            spec: { type: 'x' + '\u{1F600}'.repeat(400) } as unknown as ScheduleSpec,
         })
         await runDueSchedules(fakeDb, stubJobs().port, now)
         expect((await scheduleRow(id)).enabled).toBe(false)
@@ -376,8 +377,9 @@ describe('a schedule whose spawn keeps failing (safeinsights/sssb#215)', () => {
             .executeTakeFirst()
         expect(audit, 'the audit event was written despite the error').toBeDefined()
         const stored = (await scheduleRow(id)).last_error!
-        // No half of a surrogate pair left at the cut.
-        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(stored)).toBe(false)
+        // No half of a surrogate pair at the cut: the driver would have stored it as U+FFFD, the replacement character.
+        expect(stored).not.toContain('\uFFFD')
+        expect(stored.endsWith('\u{1F600}')).toBe(true)
         const world = (await listSchedulesForWorld(fakeDb)).find((s) => s.id === id)
         expect(world).toMatchObject({ spec: null, enabled: false, failureCount: 1 })
     })
