@@ -67,8 +67,9 @@ export function publicOrigin(request?: HasHeaders & { readonly url: string }): s
  * holds a whole /64, so a limit keyed on the full address is one a visitor can multiply.
  *
  * It never reads `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or `Forwarded`: behind CloudFront the first
- * `X-Forwarded-For` entry and the next two hold what the visitor wrote (CloudFront appends the address it saw after the
- * visitor's entries), and `SssbApp`'s function drops a visitor's `Forwarded`, which anywhere else is theirs too.
+ * `X-Forwarded-For` entry, `X-Real-IP` and `CF-Connecting-IP` hold what the visitor wrote (CloudFront appends the
+ * address it saw after the visitor's entries), and `SssbApp`'s function drops a visitor's `Forwarded`, which anywhere
+ * else is theirs too.
  */
 export function clientAddress(request: HasHeaders): string | undefined {
     return clientAddressFrom(process.env, request)
