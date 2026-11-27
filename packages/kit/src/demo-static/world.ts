@@ -72,6 +72,7 @@ import type {
 } from './contracts'
 import { buildDigestEmailHtml, buildInviteEmailHtml, buildNotificationEmailHtml } from './email-html'
 import { go, useHashRoute } from './hash-route'
+import { demoJobRetryFor, demoRetryDelayMs } from './job-retry'
 import type {
     DemoAcceptance,
     DemoAgreement,
@@ -232,6 +233,8 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         onReset,
         presetOperations: appPresetOperationHalves = {},
         jobNotify = {},
+        jobRetry = {},
+        jobOutcome,
     } = options
     const route = useHashRoute()
     const tEmail = useTranslations('email')
@@ -514,20 +517,30 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
      * The server gates this on NOTIFIED_JOB_KINDS — `appJobKinds`, i.e. "kinds the app registered are
      * work someone submitted and is waiting on; the framework's scheduled kinds are internal machinery
      * and would just be noise" (see the decision log). The twin gets the same gate STRUCTURALLY rather
-     * than from a list: only startJob puts a job in the queue, and it is the composition root's twin of
-     * a user submitting work, while runDueSchedules spawns its jobs already completed. So the two call
-     * sites below ARE the app-submitted kinds. Importing the seam's registry to re-derive that would
-     * have dragged every server handler's db/email dependencies into a bundle that has neither.
+     * than from a list: only startJob puts a job in the queue (a retry is a later attempt of one it queued),
+     * and it is the composition root's twin of a user submitting work, while runDueSchedules spawns its jobs
+     * already completed. So the callers below ARE the app-submitted kinds. Importing the seam's registry to
+     * re-derive that would have dragged every server handler's db/email dependencies into a bundle that has neither.
      */
-    function notifyJobTerminal(job: { id: string; kind: string; orgSlug: string | null; requestedBy?: string | null }) {
+    function notifyJobTerminal(
+        job: { id: string; kind: string; orgSlug: string | null; requestedBy?: string | null; attempt?: number },
+        status: 'completed' | 'failed',
+    ) {
         if (job.orgSlug === null) return
-        // The twin of the server's `jobNotify` check (server-lib/notify.ts): this world only ever completes a job (the
-        // server's runners also fail them), so a kind that notifies only a failure, or never, is silent here. The
-        // server's `notifiesOn` is a value import of core/jobs, which reaches the seam's handlers, so it is not used.
+        // The twin of the server's `jobNotify` check (server-lib/notify.ts's `notifiesOn`, a value import of core/jobs,
+        // which reaches the seam's handlers, so it is not used): `always` (and a kind the map leaves out) notifies
+        // both ends, `failure` only a failure, `never` nothing.
         const mode = jobNotify[job.kind]
-        if (mode === 'failure' || mode === 'never') return
+        if (mode === 'never' || (mode === 'failure' && status !== 'failed')) return
         const orgSlug = job.orgSlug
-        const payload = { jobId: job.id, jobKind: job.kind, status: 'completed' } as const
+        const attempt = job.attempt ?? 1
+        const payload = {
+            jobId: job.id,
+            jobKind: job.kind,
+            status,
+            // As the server's payload: how many attempts a kind that retried made, when more than one.
+            ...(attempt > 1 && { attempts: attempt }),
+        }
         const hasAdmin = allPeople.some(
             (p) => p.memberships.some((m) => m.orgSlug === orgSlug) && canManageOrg(roleInOrg(p, orgSlug)),
         )
@@ -582,23 +595,37 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
      * job.status_changed webhook to the JOB's org (not the viewer's); an org-less job emits none. A service actor's
      * completion takes only this half, as its server route calls recordJobStatus alone.
      */
-    function emitJobWebhook(job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null }) {
+    function emitJobWebhook(
+        job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null },
+        status: 'completed' | 'failed' = 'completed',
+    ) {
         if (job.orgSlug === null) return
         enqueueWebhookFor({ tenantSlug: job.tenantSlug, orgSlug: job.orgSlug }, 'job.status_changed', {
             jobId: job.id,
             jobKind: job.kind,
-            status: 'completed',
+            status,
             orgId: job.orgSlug,
         })
     }
 
     /**
      * A job's whole terminal hop: the webhook, then the admin notification, as the in-process runner, the fake jobs
-     * adapter and the builder's completion webhook do. startJob, Run pending and the builder actor take it.
+     * adapter and the builder's completion webhook do. A job's attempt (runAttempt) and the builder actor take it; a
+     * failure that armed a retry takes only the webhook half.
      */
-    function emitJobTerminal(job: { id: string; kind: string; tenantSlug: string; orgSlug: string | null }) {
-        emitJobWebhook(job)
-        notifyJobTerminal(job)
+    function emitJobTerminal(
+        job: {
+            id: string
+            kind: string
+            tenantSlug: string
+            orgSlug: string | null
+            requestedBy?: string | null
+            attempt?: number
+        },
+        status: 'completed' | 'failed' = 'completed',
+    ) {
+        emitJobWebhook(job, status)
+        notifyJobTerminal(job, status)
     }
 
     /** Twin of runDueDeliveries: attempt each due pending/failed delivery, signing the envelope with the
@@ -607,7 +634,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
      *  pattern here, like runDueSchedules). Returns how many were delivered. */
     function runDueDeliveries(worldNowMs: number): number {
         let delivered = 0
-        const next = deliveries.map((delivery) => {
+        const attempted = deliveries.map((delivery) => {
             if (!['pending', 'failed'].includes(delivery.status) || delivery.nextAttemptAtMs > worldNowMs) {
                 return delivery
             }
@@ -646,17 +673,112 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
                 body,
             }
         })
-        setDeliveries(next)
+        // Merged by id into the latest state, so a delivery enqueued earlier in the same handler (a retry drain's
+        // job.status_changed, say) survives this drain; it is not attempted until the next one.
+        const byId = new Map(attempted.map((delivery) => [delivery.id, delivery]))
+        setDeliveries((prev) => prev.map((delivery) => byId.get(delivery.id) ?? delivery))
         return delivered
     }
 
     // ── Jobs, schedules and the world clock ───────────────────────────────────────────────────────
 
     /**
+     * One attempt of a job, the twin of the in-process runner's (../jobs/run-in-process.ts) plus what
+     * recordJobStatus arms (../db/jobs.ts). `jobOutcome` says how it ends: completed, or failed with its error.
+     * The timeline gets running at `startMs` and the end 200 ms later. A completion takes the whole terminal hop.
+     * A failure takes the webhook; when the kind's `jobRetry` has attempts left it also builds the next attempt, a
+     * new queued row (`retryOf` the first attempt's id) that waits until world-now plus the kind's delay, and
+     * notifies no one; with none left it notifies as the server does. Returns the row as it ended and the armed
+     * retry, for the caller to commit: it writes no job state itself. Call it from an event handler, never inside a
+     * state updater, since it emits.
+     */
+    function runAttempt(job: DemoJob, startMs: number, worldNowMs: number): { ran: DemoJob; retry: DemoJob | null } {
+        const attempt = job.attempt ?? 1
+        const outcome = jobOutcome?.({ kind: job.kind, attempt })
+        const running = { status: 'running', at: new Date(startMs).toISOString() }
+        const endedAt = new Date(startMs + 200).toISOString()
+        if (!outcome) {
+            const ran: DemoJob = {
+                ...job,
+                status: 'completed',
+                runAfterMs: null,
+                timeline: [...job.timeline, running, { status: 'completed', at: endedAt }],
+            }
+            emitJobTerminal(ran, 'completed')
+            return { ran, retry: null }
+        }
+        const policy = demoJobRetryFor(jobRetry, job.kind)
+        const armed =
+            attempt < policy.attempts
+                ? {
+                      attempt: attempt + 1,
+                      attempts: policy.attempts,
+                      runAfterMs: worldNowMs + demoRetryDelayMs(policy, attempt),
+                  }
+                : null
+        const ran: DemoJob = {
+            ...job,
+            status: 'failed',
+            error: outcome.error,
+            runAfterMs: null,
+            timeline: [
+                ...job.timeline,
+                running,
+                {
+                    status: 'failed',
+                    at: endedAt,
+                    message: armed
+                        ? `retry armed: attempt ${armed.attempt} of ${armed.attempts} at ${new Date(armed.runAfterMs).toISOString()}`
+                        : null,
+                },
+            ],
+        }
+        if (!armed) {
+            emitJobTerminal(ran, 'failed')
+            return { ran, retry: null }
+        }
+        // A failure that armed a retry is not the job's end: the webhook says it failed, and no one is notified.
+        emitJobWebhook(ran, 'failed')
+        const retry: DemoJob = {
+            id: crypto.randomUUID(),
+            kind: job.kind,
+            status: 'queued',
+            tenantSlug: job.tenantSlug,
+            orgSlug: job.orgSlug,
+            createdAt: endedAt,
+            error: null,
+            requestedBy: job.requestedBy ?? null,
+            attempt: armed.attempt,
+            retryOf: job.retryOf ?? job.id,
+            runAfterMs: armed.runAfterMs,
+            timeline: [
+                {
+                    status: 'queued',
+                    at: endedAt,
+                    message: `attempt ${armed.attempt} of ${armed.attempts}, after: ${outcome.error}`,
+                },
+            ],
+        }
+        return { ran, retry }
+    }
+
+    /** Commit attempts runAttempt ran over queued jobs already in the world: each row replaced (while still queued),
+     *  each armed retry added, newest first. */
+    function commitAttempts(runs: { ran: DemoJob; retry: DemoJob | null }[]) {
+        if (runs.length === 0) return
+        const ranById = new Map(runs.map((run) => [run.ran.id, run.ran]))
+        const retries = runs.flatMap((run) => (run.retry ? [run.retry] : []))
+        setJobs((prev) => [
+            ...retries,
+            ...prev.map((job) => (job.status === 'queued' ? (ranById.get(job.id) ?? job) : job)),
+        ])
+    }
+
+    /**
      * Twin of POST /api/jobs + fakeJobs.start: when the 'jobs-held' knob is on the job stays 'queued'
-     * for a later Run-pending step; otherwise it completes instantly with the full
-     * queued → running → completed story (a few hundred ms apart, exactly like the fake adapter) and
-     * emits what the terminal path emits server-side — the job.status_changed webhook recordJobStatus
+     * for a later Run-pending step; otherwise its first attempt runs at once (runAttempt), with the full
+     * queued → running → completed (or failed) story a few hundred ms apart, exactly like the fake adapter,
+     * and emits what the terminal path emits server-side — the job.status_changed webhook recordJobStatus
      * sends, and the org-admin notification notifyJobTerminal sends.
      * DEGRADE: no downloadUrl — the static shell has no server to serve result bytes (physics forbid).
      */
@@ -665,60 +787,58 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         // apart rather than however long React took between them (an event handler, not render, so
         // reading the clock here is correct).
         const now = Date.now()
-        const iso = (offset: number) => new Date(now + offset).toISOString()
         const held = flags['jobs-held'] ?? false
-        const base = {
+        const job: DemoJob = {
             id: crypto.randomUUID(),
             kind,
+            status: 'queued',
             tenantSlug: tenant.slug,
             orgSlug: activeOrgSlug,
-            createdAt: iso(0),
+            createdAt: new Date(now).toISOString(),
             error: null,
             requestedBy: person?.id ?? null,
+            timeline: [{ status: 'queued', at: new Date(now).toISOString() }],
         }
-        const job: DemoJob = held
-            ? { ...base, status: 'queued', timeline: [{ status: 'queued', at: iso(0) }] }
-            : {
-                  ...base,
-                  status: 'completed',
-                  timeline: [
-                      { status: 'queued', at: iso(0) },
-                      { status: 'running', at: iso(200) },
-                      { status: 'completed', at: iso(400) },
-                  ],
-              }
-        setJobs((prev) => [job, ...prev])
         // Held jobs stay queued (no terminal transition), so they emit later — from the Run-pending
         // step below, or from an actor completing them.
-        if (held) return
-        emitJobTerminal(job)
+        if (held) {
+            setJobs((prev) => [job, ...prev])
+            return
+        }
+        const { ran, retry } = runAttempt(job, now + 200, mountedAtMs + clockOffsetMs)
+        setJobs((prev) => [...(retry ? [retry] : []), ran, ...prev])
     }
 
     /**
-     * Simulator "Run pending jobs" twin: advance every queued job to completed with the full timeline,
-     * then fire each one's terminal notification. Pure in-memory logic (no server), so this is genuine
-     * parity — not a degrade.
+     * Simulator "Run pending jobs" twin (fakeJobs' runPendingJobs): run an attempt of every queued job
+     * (runAttempt, so `jobOutcome` decides how each ends), each emitting its own terminal hop. A retry still
+     * waiting out its backoff is not stepped: the retry drain starts it once the world clock reaches it.
+     * Pure in-memory logic (no server), so this is genuine parity — not a degrade.
      */
     function runPendingJobs() {
-        const completing = jobs.filter((job) => job.status === 'queued')
-        setJobs((prev) =>
-            prev.map((job) => {
-                if (job.status !== 'queued') return job
-                const now = Date.now()
-                return {
-                    ...job,
-                    status: 'completed',
-                    timeline: [
-                        ...job.timeline,
-                        { status: 'running', at: new Date(now).toISOString() },
-                        { status: 'completed', at: new Date(now + 200).toISOString() },
-                    ],
-                }
-            }),
+        const pending = jobs.filter((job) => job.status === 'queued' && (job.runAfterMs ?? null) === null)
+        const now = Date.now()
+        commitAttempts(pending.map((job) => runAttempt(job, now, mountedAtMs + clockOffsetMs)))
+        pushNotice(tSimulator('noticeJobsRan', { count: pending.length }))
+    }
+
+    /**
+     * Twin of runDueRetries (../db/jobs.ts): start every retry whose backoff has run out at the given world "now"
+     * (queued, `runAfterMs` at or before it), clearing `runAfterMs` and running the attempt as Run pending does. A
+     * retry that attempt arms waits for a later drain. Reads current jobs from the render closure (the house pattern
+     * here); returns how many it started.
+     */
+    function runDueRetries(worldNowMs: number): number {
+        const due = jobs.filter(
+            (job) =>
+                job.status === 'queued' &&
+                job.runAfterMs !== undefined &&
+                job.runAfterMs !== null &&
+                job.runAfterMs <= worldNowMs,
         )
-        // The same terminal hop startJob's non-held branch takes, for each job's own org.
-        for (const job of completing) emitJobTerminal(job)
-        pushNotice(tSimulator('noticeJobsRan', { count: completing.length }))
+        const now = Date.now()
+        commitAttempts(due.map((job) => runAttempt({ ...job, runAfterMs: null }, now, worldNowMs)))
+        return due.length
     }
 
     /**
@@ -794,6 +914,9 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
         const newOffset = clockOffsetMs + deltaMs
         setClockOffsetMs(newOffset)
         const spawned = runDueSchedules(mountedAtMs + newOffset)
+        // Then due job retries, as the server's clock route and tick do: advancing past a failed attempt's delay
+        // starts its next attempt.
+        runDueRetries(mountedAtMs + newOffset)
         // Same tick drains due webhook deliveries — "advance past a retry's backoff and watch it fire"
         // works in the twin too. Silent (the Hooks tab shows the result); the notice stays
         // schedule-focused to match the real glue.
@@ -810,6 +933,7 @@ export function useDemoWorld(options: DemoWorldOptions = {}): DemoWorld {
 
     function runDueSchedulesNow() {
         const spawned = runDueSchedules(mountedAtMs + clockOffsetMs)
+        runDueRetries(mountedAtMs + clockOffsetMs)
         pushNotice(spawned > 0 ? tSimulator('noticeScheduleFired', { count: spawned }) : tSimulator('noticeNoDue'))
     }
 

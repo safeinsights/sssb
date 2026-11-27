@@ -10,7 +10,7 @@ import type { MailItem } from '../components/simulator/mail-app'
 import type { SmsMessageRow } from '../components/simulator/messages-app'
 import type { FeatureFlag } from '../components/simulator/snapshots-app'
 import type { PendingAgreement } from '../core/agreements'
-import type { JobNotify } from '../core/jobs'
+import type { JobNotify, JobRetry } from '../core/jobs'
 import type {
     NotificationChannel,
     NotificationKind,
@@ -130,10 +130,25 @@ export interface DemoWorldOptions {
      * Twin of the seam's optional `jobNotify` export (`@sssb/app-config/jobs`): when each app job kind's terminal
      * state notifies its team's admins. Supplied here, as `inboundHandlers` are, because the seam module imports
      * every server handler, which the static bundle cannot carry: an app that sets `jobNotify` passes the same map
-     * from a module of its own that both import. A world only ever completes a job, so `failure` and `never` both
-     * mean "no notification"; a kind the map leaves out is `always`.
+     * from a module of its own that both import. A kind the map leaves out is `always`. A job fails here only when
+     * `jobOutcome` says so; as on the server, a failure that armed a retry notifies no one, and the last attempt's
+     * outcome is what notifies.
      */
     jobNotify?: Record<string, JobNotify>
+    /**
+     * Twin of the seam's optional `jobRetry` export (`@sssb/app-config/jobs`, safeinsights/sssb#135): how each app job
+     * kind is tried again after it fails. Supplied here for the reason `jobNotify` is: an app that sets `jobRetry`
+     * passes the same map. A kind the map leaves out, and an entry core/jobs' `isJobRetry` would refuse, runs once.
+     * A failure with attempts left adds the next attempt as a new queued job, which waits out its delay on the world
+     * clock: advancing the clock past it, or run-due, starts it; Run pending does not.
+     */
+    jobRetry?: Record<string, JobRetry>
+    /**
+     * How the composition root's job kinds end in this world: the twin of a handler that throws. Called once per
+     * attempt with the job's kind and attempt (from 1); `{ error }` fails that attempt with that message, and
+     * `undefined` completes it. Absent, every job completes. This is how a demo, or a test, makes a job fail.
+     */
+    jobOutcome?: (job: { kind: string; attempt: number }) => { error: string } | undefined
     /**
      * Static halves of the app's demo-preset operation kinds, keyed by kind — the twins of its server
      * halves (`@sssb/app-config/preset-operations`), supplied here for the same reason `inboundHandlers` are:
@@ -201,8 +216,9 @@ export interface DemoWorld {
     jobs: DemoJob[]
     /** Cross-tenant queued/running/completed counts — the Actors tab's world strip. */
     jobCounts: { queued: number; running: number; completed: number }
-    /** Twin of POST /api/jobs + the fake executor: honours the 'jobs-held' knob and, on an instant
-     *  completion, emits the same terminal webhook + notification the server emits. */
+    /** Twin of POST /api/jobs + the fake executor: honours the 'jobs-held' knob and, unheld, runs the first
+     *  attempt at once (`jobOutcome`, `jobRetry`), emitting the same terminal webhook + notification the server
+     *  emits. */
     startJob: (kind: string) => void
     /** Stable factories for the two actor-driver shapes; scope comes from the app's actor registry. */
     serviceDriver: (scope: DemoServiceScope, log: ActorLog) => ServiceDriver

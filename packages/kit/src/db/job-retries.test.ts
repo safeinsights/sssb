@@ -136,14 +136,15 @@ const RUNNERS: Runner[] = [
             let status: 'completed' | 'failed' = 'completed'
             let error: string | undefined
             try {
-                await flakyDocketsHandler(job.payload, {
-                    ...({} as never),
+                // The fixture's handler reads only the context's ids, so the ports are left out.
+                const ctx = {
                     tenantId,
                     orgId: job.orgId,
                     jobId: job.id,
                     attempt: job.attempt ?? 1,
                     firstJobId: job.firstJobId ?? job.id,
-                })
+                } as Parameters<typeof flakyDocketsHandler>[1]
+                await flakyDocketsHandler(job.payload, ctx)
             } catch (e) {
                 status = 'failed'
                 error = e instanceof Error ? e.message : String(e)
