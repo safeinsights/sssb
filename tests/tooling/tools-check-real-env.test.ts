@@ -18,7 +18,8 @@ function write(file: string, text: string) {
     writeFileSync(file, text)
 }
 
-function writeKit(dir: string) {
+/** `notices`, when given, is the body of the fake framework's `realEnvNotices`, which a kit before #192 lacks. */
+function writeKit(dir: string, notices?: string) {
     write(
         path.join(dir, 'package.json'),
         JSON.stringify({
@@ -42,16 +43,19 @@ function writeKit(dir: string) {
             'export function assertRealEnv(): void {',
             "    if (process.env['FAKE_READY'] !== '1') throw new CutoverPendingError(`missing for ${APP_SLUG}`)",
             '}',
+            ...(notices === undefined
+                ? []
+                : ['', 'export function realEnvNotices(): string[] {', `    ${notices}`, '}']),
             '',
         ].join('\n'),
     )
 }
 
 /** An app with its own kit and a seam whose identity module is `identity`. */
-function writeApp(root: string, name: string, identity: string | undefined) {
+function writeApp(root: string, name: string, identity: string | undefined, notices?: string) {
     const appDir = path.join(root, 'apps', name)
     write(path.join(appDir, 'package.json'), JSON.stringify({ name, private: true }))
-    writeKit(path.join(appDir, 'node_modules/@sssb/kit'))
+    writeKit(path.join(appDir, 'node_modules/@sssb/kit'), notices)
     if (identity !== undefined) write(path.join(appDir, 'src/app-config/identity.ts'), identity)
     return appDir
 }
@@ -89,6 +93,41 @@ describe('sssb check-real-env', () => {
             expect(result.status).toBe(0)
             expect(result.output).toContain('real-mode env complete')
         }
+    })
+
+    // safeinsights/sssb#192: the framework's advisory lines, after a pass, never a failure.
+    describe('the notices the framework offers', () => {
+        const NOTICES = "return ['CLERK_AUTHORIZED_PARTIES is unset: any origin', 'CLERK_AUTHORISED_PARTIES is set']"
+        const withNotices = writeApp(root, 'notices', "export const APP_SLUG = 'theta'\n", NOTICES)
+        const throwing = writeApp(root, 'notices-throw', "export const APP_SLUG = 'iota'\n", "throw new Error('boom')")
+
+        it('prints each after a passing check, and still exits 0', () => {
+            const result = checkRealEnv(withNotices, { FAKE_READY: '1' })
+            expect(result.status).toBe(0)
+            expect(result.output).toContain('real-mode env complete')
+            expect(result.output).toContain('notice: CLERK_AUTHORIZED_PARTIES is unset: any origin')
+            expect(result.output).toContain('notice: CLERK_AUTHORISED_PARTIES is set')
+        })
+
+        it('prints none when the check fails: the failure is the whole answer', () => {
+            const result = checkRealEnv(withNotices)
+            expect(result.status).toBe(1)
+            expect(result.output).toContain('missing for theta')
+            expect(result.output).not.toContain('notice:')
+        })
+
+        it('prints none, and says nothing of them, for a framework that offers none', () => {
+            const result = checkRealEnv(appA, { FAKE_READY: '1' })
+            expect(result.status).toBe(0)
+            expect(result.output).not.toContain('notice')
+            expect(result.output.toLowerCase()).not.toContain('warning')
+        })
+
+        it('does not fail a passing check when the notices themselves fail', () => {
+            const result = checkRealEnv(throwing, { FAKE_READY: '1' })
+            expect(result.status).toBe(0)
+            expect(result.output).toContain('notice: the notices could not be read: boom')
+        })
     })
 
     it('acts on the app --app names, not the working directory', () => {

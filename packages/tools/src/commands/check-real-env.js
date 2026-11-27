@@ -1,6 +1,7 @@
 // @ts-check
 // `sssb check-real-env`: the `dev:real` preflight. Prints exactly which cutover items the real adapters' environment
-// still lacks, instead of letting the server crash on its first request.
+// still lacks, instead of letting the server crash on its first request. After a pass it prints the framework's
+// `realEnvNotices()` too, advisory lines on optional settings (a `notice:` each), which never change the exit code.
 //
 // THROUGH esbuild, NOT tsx OR NODE (ADR-0014 part 2). @sssb/kit ships TypeScript source, and Node refuses to strip
 // types from a file under node_modules, so the framework is bundled first. The bundle holds the framework and every
@@ -55,11 +56,23 @@ export async function run(args) {
         const result = await build({
             stdin: {
                 contents: [
-                    `import { assertRealEnv } from ${JSON.stringify(realIndex)}`,
+                    `import * as real from ${JSON.stringify(realIndex)}`,
                     `import { CutoverPendingError } from ${JSON.stringify(errors)}`,
                     'try {',
-                    '    assertRealEnv()',
+                    '    real.assertRealEnv()',
                     "    console.log('real-mode env complete: starting dev:real')",
+                    // Advisory lines the framework may offer (safeinsights/sssb#192), after a pass and never a failure.
+                    // A framework without `realEnvNotices` (the packages move in one version group, but a guard costs
+                    // one line) offers none. The lookup is by name, at run time: esbuild warns about any static
+                    // mention of an export the framework lacks, `in` guard or not.
+                    "    const offered = Object.entries(real).find(([name]) => name === 'realEnvNotices')?.[1]",
+                    '    try {',
+                    "        const notices = typeof offered === 'function' ? offered() : []",
+                    "        for (const notice of notices) console.log('notice: ' + notice)",
+                    '    } catch (error) {',
+                    // Advice that fails is advice missed, not a failed check.
+                    "        console.log('notice: the notices could not be read: ' + (error && error.message))",
+                    '    }',
                     '} catch (error) {',
                     '    if (!(error instanceof CutoverPendingError)) throw error',
                     "    console.error('\\ndev:real is not available yet.\\n')",
