@@ -54,7 +54,9 @@ const vendorsOption = {
     properties: { vendors: { type: 'array', items: { type: 'string', pattern: vendorEntrySource } } },
     additionalProperties: false,
 }
-const vendorGroupOf = (context) => [...vendorSdkPattern.group, ...(context.options[0]?.vendors ?? [])]
+// A bare package name is anchored (`/stripe`) so that, as in the list above, it never bans a local `./stripe`.
+const anchorBare = (entry) => (entry.includes('/') ? entry : `/${entry}`)
+const vendorGroupOf = (context) => [...vendorSdkPattern.group, ...(context.options[0]?.vendors ?? []).map(anchorBare)]
 // One rule module per distinct vendor list, built once: `build(group)` makes the rule that fences that group.
 const withAppVendors = (build) => {
     const built = new Map()
@@ -77,16 +79,6 @@ const vendorStatic = withAppVendors((group) =>
     }),
 )
 
-// The dynamic half keeps its OWN reading of the vendor list. The two disagree at the edges: the declaration half
-// matches a bare name at any depth and ignores case, so its `pg` flags a local `./pg` and its `@clerk/*` flags
-// `@CLERK/nextjs`; this rule flags neither. Bringing them together means anchoring the bare names in
-// vendorSdkPattern first, which changes the declaration half, so it is left for its own change.
-const isVendorSpecifier = (group, specifier) =>
-    group.some((pattern) =>
-        pattern.endsWith('/*')
-            ? specifier.startsWith(pattern.slice(0, -1)) && specifier.length > pattern.length - 1
-            : specifier === pattern || specifier.startsWith(`${pattern}/`),
-    )
 const vendorDeclarationlessRule =
     "Vendor SDKs live only in packages/kit/src/adapters/ (SSSB's ports) or apps/<app>/src/adapters/real/ " +
     '(a port the app owns) — code against the port instead (docs/recipes/app-owned-adapter.md).'
@@ -94,7 +86,8 @@ const vendorDynamic = withAppVendors((group) =>
     declarationlessImportBan({
         description: 'Vendor SDKs are not imported dynamically outside an adapters directory.',
         what: 'a vendor SDK',
-        matches: (specifier) => (isVendorSpecifier(group, specifier) ? [vendorDeclarationlessRule] : []),
+        // The same list through the same matcher as the declaration half: the two cannot read it differently.
+        matches: matchesPatterns([{ group, message: vendorDeclarationlessRule }]),
     }),
 )
 
