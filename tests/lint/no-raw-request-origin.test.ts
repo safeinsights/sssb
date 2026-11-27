@@ -93,6 +93,16 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
             filename: 'apps/any-app/src/app/api/callback/route.ts',
             errors: [{ messageId: 'origin' }],
         })),
+        // A file named like the proxy that is not Next's proxy: a route handler's wrapper, the framework's own.
+        ...[
+            'apps/any-app/src/lib/auth/middleware.ts',
+            'apps/any-app/src/app/proxy.ts',
+            'packages/kit/src/adapters/proxy.ts',
+        ].map((filename) => ({
+            code: "NextResponse.redirect(new URL('/sign-in', request.url))",
+            filename,
+            errors: [{ messageId: 'origin' }],
+        })),
         // The proxy keeps every other form.
         {
             code: "const link = new URL('/en', request.url).toString()",

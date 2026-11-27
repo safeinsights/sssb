@@ -347,8 +347,12 @@ const requestOriginSelectorWith = (urlOnRequest) =>
     `VariableDeclarator${REQUEST_URL('init')} > ObjectPattern > Property[key.name=${ORIGIN_PART}], ` +
     `${urlOnRequest}, ` +
     'Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"])'
-/** The file Next runs as the app's proxy, where a same-origin redirect or rewrite is relativized. */
-export const PROXY_FILE = /(^|[\\/])(proxy|middleware)\.[cm]?[jt]sx?$/
+/**
+ * The file Next runs as the app's proxy, where a same-origin redirect or rewrite is relativized: `proxy.*` or
+ * `middleware.*` directly in `src/`, beside `app/` (the rule runs on `src/` alone). A `middleware.ts` elsewhere, a route
+ * handler's wrapper say, is not Next's proxy, and its redirect is not relativized.
+ */
+export const PROXY_FILE = /(^|[\\/])src[\\/](proxy|middleware)\.[cm]?[jt]sx?$/
 const REQUEST_ORIGIN_MESSAGE =
     'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
     "request's own URL names the server's bind address (https://localhost:3000), not the app's. Its path and " +
