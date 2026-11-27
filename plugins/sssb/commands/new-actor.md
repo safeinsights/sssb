@@ -72,8 +72,7 @@ the app's `pnpm dev` panel takes app tabs, which SSSB's host does not yet: the r
 **The server host.** On `pnpm dev` an actor runs in a page the server panel embeds, driving the app's real HTTP
 surfaces. A generated app's `SimulatorHost` has no Actors tab and no actor routes, but it takes the app's own tabs:
 `extraTabs` (the panel's `SimulatorExtraTab`), whose content reads the world's jobs with `useSimulatorWorld()`, both
-from `@sssb/kit/components/simulator/simulator-host` and both provisional until safeinsights/sssb#152 decides how an
-app's tabs reach the host. The reference app's is a short glue
+from `@sssb/kit/components/simulator/simulator-host` and both provisional until SSSB settles how an app's tabs reach the host. The reference app's is a short glue
 (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/src/app/[locale]/simulator-glue.tsx`, mounted from its
 locale layout in place of `SimulatorHost`): it hands `SimulatorHost` the Actors tab and keeps the panel out of the actor
 frames. Beside it come the routes the actor pages call that SSSB's catch-all `src/app/api/simulator/[...path]/route.ts`
