@@ -149,6 +149,24 @@ describe("a forged x-clerk-auth request, outside a production build, on a path C
         await expect(realAuth.getCurrentUser()).rejects.toThrow(/Set CLERK_SECRET_KEY/)
     })
 
+    it('is signed in by Clerk with only an encryption key, by a signature under an empty key, and refused by SSSB', async () => {
+        // No request data at all: Clerk checks the token header against its secret key, which is empty.
+        vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '1')
+        vi.stubEnv('CLERK_SECRET_KEY', '')
+        vi.stubEnv('CLERK_ENCRYPTION_KEY', 'an-encryption-key-of-the-deployment')
+        const token = forgedToken()
+        h.headers = new Headers({
+            'x-clerk-auth-status': 'signed-in',
+            'x-clerk-auth-token': token,
+            'x-clerk-auth-signature': createHmac('sha1', '').update(token).digest('hex'),
+            'x-clerk-clerk-url': 'http://localhost:3000/en/some.page',
+        })
+        const { auth } = await import('@clerk/nextjs/server')
+        expect((await auth()).userId).toBe('user_victim')
+        const { realAuth } = await import('./auth')
+        await expect(realAuth.getCurrentUser()).rejects.toThrow(/Set CLERK_SECRET_KEY/)
+    })
+
     it('signs no one in once keyless mode is disabled: Clerk refuses the forged request data', async () => {
         vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '1')
         const { realAuth } = await import('./auth')

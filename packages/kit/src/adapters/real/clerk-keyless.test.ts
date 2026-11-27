@@ -15,14 +15,6 @@ describe('clerkKeylessProblem', () => {
 
     it.each(['1', 'true'])('finds none outside one with a secret key and keyless disabled by %j', (v) => {
         expect(clerkKeylessProblem({ ...READY, NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: v })).toBeNull()
-        expect(
-            clerkKeylessProblem({
-                ...READY,
-                CLERK_SECRET_KEY: undefined,
-                CLERK_ENCRYPTION_KEY: 'enc_1',
-                NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: v,
-            }),
-        ).toBeNull()
     })
 
     // Clerk reads `TRUE` and ` 1 ` as set too, but a padded ` true ` as unset: only the two plain forms are taken.
@@ -37,7 +29,11 @@ describe('clerkKeylessProblem', () => {
         },
     )
 
-    it('refuses no secret key, keyless disabled or not', () => {
+    it('refuses no secret key, keyless disabled or not, and an encryption key in its place', () => {
         expect(clerkKeylessProblem({ ...READY, CLERK_SECRET_KEY: '' })).toMatch(/Set CLERK_SECRET_KEY/)
+        // Clerk would check the token header against an empty key, which anyone can sign with.
+        expect(clerkKeylessProblem({ ...READY, CLERK_SECRET_KEY: undefined, CLERK_ENCRYPTION_KEY: 'enc_1' })).toMatch(
+            /Set CLERK_SECRET_KEY/,
+        )
     })
 })

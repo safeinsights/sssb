@@ -19,15 +19,19 @@
  *
  * Clerk is bundled into the app, where Next inlines `process.env.NODE_ENV` (as `development` under `next dev`, whatever
  * the process was started with), so `assertClerkKeylessClosed` reads it in the same literal form, which Next inlines
- * alike. `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` is read at run time: under `next dev` the server compiles and runs in one
- * process, with one value.
+ * alike. `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` is read in that form too: Next inlines every `NEXT_PUBLIC_` variable set at
+ * build time into server code, Clerk's constant included, so a build and a run with different values agree.
+ *
+ * The secret key itself must be set, even with an encryption key: with none, Clerk checks the token header's signature
+ * against an empty key, which anyone can sign with.
  */
 export function clerkKeylessProblem(env: Readonly<Record<string, string | undefined>> = process.env): string | null {
     if (env['NODE_ENV'] === 'production') return null
-    if (!env['CLERK_SECRET_KEY'] && !env['CLERK_ENCRYPTION_KEY']) {
+    if (!env['CLERK_SECRET_KEY']) {
         return (
             'Clerk has no secret key: outside a production build it would read request data under its public keyless ' +
-            'key, so a forged x-clerk-auth header could sign anyone in. Set CLERK_SECRET_KEY'
+            'key, or check a token header against an empty key, so a forged x-clerk-auth header could sign anyone in. ' +
+            'Set CLERK_SECRET_KEY'
         )
     }
     const disabled = env['NEXT_PUBLIC_CLERK_KEYLESS_DISABLED']
@@ -45,8 +49,21 @@ export function clerkKeylessProblem(env: Readonly<Record<string, string | undefi
 export function assertClerkKeylessClosed(): void {
     const problem = clerkKeylessProblem({
         ...process.env,
-        // The literal form, which Next inlines in this module as it does in Clerk's (above).
+        // The literal forms, which Next inlines in this module as it does in Clerk's (above).
         NODE_ENV: process.env.NODE_ENV,
+        NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: process.env.NEXT_PUBLIC_CLERK_KEYLESS_DISABLED,
     })
     if (problem) throw new Error(problem)
+}
+
+declare global {
+    // The one way to add a variable to Node's `process.env` type, which the literal read above needs under the strict
+    // `noPropertyAccessFromIndexSignature`.
+    // eslint-disable-next-line @typescript-eslint/no-namespace -- a declaration merge into Node's own namespace
+    namespace NodeJS {
+        interface ProcessEnv {
+            /** Clerk's switch for its keyless mode, read here in the literal form Next inlines (above). */
+            readonly NEXT_PUBLIC_CLERK_KEYLESS_DISABLED?: string
+        }
+    }
 }
