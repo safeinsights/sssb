@@ -723,6 +723,57 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         }
     })
 
+    // safeinsights/sssb#201. The live observation (2026-11-24): an app's query with `ESCAPE '\'` ran on the emulator, and the
+    // Data API answered `syntax error at or near ":"`. Postgres reads `'\'` as a complete literal; the Data API's own
+    // scanner, which finds the `:name` parameters before Postgres sees the statement, evidently does not, so a parameter
+    // after it reaches Postgres as a bare `:kp1`. The emulator finds parameters the same way (`toPositional`), so the same
+    // statement fails here with the same error. What the one observation proves and what is inferred: docs/runbooks/data-api.md, step 2.
+    describe('a plain string literal ending in a backslash, whose closing quote the Data API does not see (#201)', () => {
+        const execute = (statement: string, parameters: { name: string; value: { longValue: number } }[] = []) =>
+            emulator.send(
+                new ExecuteStatementCommand({
+                    resourceArn: RESOURCE_ARN,
+                    secretArn: SECRET_ARN,
+                    database: DATABASE,
+                    sql: statement,
+                    parameters,
+                }),
+            ) as Promise<{ records?: { longValue?: number }[][] }>
+        const p = [{ name: 'p', value: { longValue: 1 } }]
+
+        test('the dialect fails with the syntax error the real service gave, where the pg transport runs the same statement', async () => {
+            // a template literal reads `\'` as a quote, so the backslash literal goes in raw
+            const escape = sql.raw(String.raw`'\'`)
+            const run = (port: DbPort) =>
+                sql<{ n: number }>`select 1 as n where 'a' like 'a' escape ${escape} and ${1}::int = 1`.execute(
+                    port.getDb(),
+                )
+            expect((await run(viaPg)).rows).toEqual([{ n: 1 }])
+            const error = await run(dataApi).then(
+                () => null,
+                (e: unknown) => e as Error,
+            )
+            expect(error).toBeInstanceOf(RdsDataDatabaseError)
+            expect(error?.message).toMatch(/syntax error at or near ":"/)
+        })
+
+        test('the emulator refuses it as the Data API does: a :name after the literal is not read as a parameter', async () => {
+            await expect(execute(String.raw`select 1 where length('\') > 0 and :p = 1`, p)).rejects.toMatchObject({
+                name: 'DatabaseErrorException',
+                message: expect.stringMatching(/syntax error at or near ":"/) as unknown,
+            })
+        })
+
+        test('what that observation does not cover is not refused: nothing after the literal, a parameter before it, a spelling both scanners read alike', async () => {
+            const one = { records: [[{ longValue: 1 }]] }
+            expect(await execute(String.raw`select 1 where length('\') > 0`)).toMatchObject(one)
+            expect(await execute(String.raw`select :p where length('\') > 0`, p)).toMatchObject(one)
+            for (const form of [String.raw`'\\'`, String.raw`E'\\'`, 'chr(92)']) {
+                expect(await execute(`select 1 where length(${form}) > 0 and :p = 1`, p), form).toMatchObject(one)
+            }
+        })
+    })
+
     test('control: the emulator refuses more than one statement in a call, before running any of it', async () => {
         const slug = `multi-control-${Date.now()}`
         await expect(
