@@ -54,7 +54,7 @@ export function RealUserMenu({
     return (
         <UserMenu
             user={user}
-            onProfile={profileHref === undefined ? undefined : () => window.location.assign(profileHref)}
+            {...(profileHref !== undefined && { onProfile: () => window.location.assign(profileHref) })}
             onSignOut={() => void signOutHere()}
         />
     )
