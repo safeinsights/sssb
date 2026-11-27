@@ -131,6 +131,26 @@ describe('PATCH /api/tickets/[id] — authorization and scoping', () => {
         expect(h.recordAuditEvent).not.toHaveBeenCalled()
     })
 
+    // safeinsights/sssb#137: authorize comes before the lookup, so a person who may not change a ticket learns
+    // nothing about whether the id names one.
+    test.each([
+        ['a restricted member', user({ role: 'restricted', restricted: true })],
+        ['a person with no standing (none)', user({ role: 'none', restricted: true })],
+    ])('%s gets the same 403 for an existing id as for a missing one, on PATCH and DELETE', async (_, who) => {
+        h.requireUser.mockResolvedValue(who)
+        const existing = [await patch({ status: 'pending' }), await del()]
+        h.ticketForOrg.mockResolvedValue(null)
+        const missing = [await patch({ status: 'pending' }), await del()]
+
+        for (const [i, response] of existing.entries()) {
+            expect(response.status).toBe(403)
+            expect([response.status, await response.json()]).toEqual([missing[i]!.status, await missing[i]!.json()])
+        }
+        expect(h.ticketForOrg).not.toHaveBeenCalled()
+        expect(h.updateTicket).not.toHaveBeenCalled()
+        expect(h.deleteTicket).not.toHaveBeenCalled()
+    })
+
     test('404 when the tenant or the active org cannot be resolved', async () => {
         h.tenantIdForSlug.mockResolvedValue(null)
         expect((await patch({ status: 'pending' })).status).toBe(404)
