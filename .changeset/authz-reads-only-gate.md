@@ -10,7 +10,8 @@
 
 **What changed.** An app's `authz-exemptions.mjs` takes a new gate kind, `{ kind: 'reads-only', names: [...] }`, for
 a read (GET, HEAD or OPTIONS) that names nothing from outside itself but inert values and the listed imports (by
-exported name) or `const`s and functions of its file, whose own reads must be listed too. Such an entry applies to
+exported name) or, from its own file, a `const` bound to a literal value that only that handler uses (a function or
+other value of the file is refused: import it from a module instead). Such an entry applies to
 reads only: a mutation at its path keeps the gate it had. It is the one kind an app may put outside `src/app/api`,
 under a new key `outsideApi: { files, prefixes }` with keys relative to `src/app` (a public feed, a sitemap route), or
 name one file under SSSB's `webhooks/` prefix (a provider's verification handshake GET, whose POST stays behind the

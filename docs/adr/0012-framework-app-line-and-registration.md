@@ -1087,15 +1087,21 @@ every other overlap with a framework entry still fails. A `reads-only` entry is 
 handler.
 
 **What it proves.** That the read touches nothing but its request, inert values and the listed names: the entry's
-reason has to answer for exactly those names. A declaration of the route's file counts by name only as a `const` or a
-function the file neither exports, declares ambiently (`declare`, `declare global`) nor reassigns, and the scan reads
-it: what it names counts too, so `const corsHeaders = db` or `function posts() { return db.all() }` also needs `db`
-listed. A listed import is not read (a helper in another module is out of the scan's sight, as always), so listing a
-function that reads org data is a claim the reason makes, which review judges, as it judges a `calls` gate's port
-call. A listed declaration of the file is refused if anything else in the file refers to it (a top-level
-`cache.db = db`, another handler's `cache.set(…)`, an `export { cache }`), or it has more than one declaration: what the
-read sees must be all there is. A listed name no read handler the entry governs uses is a problem, so a list cannot
-pre-approve one. The handler naming itself (`GET.load`) is refused whatever is listed.
+reason has to answer for exactly those names. From the route's own file, a name counts only for an unexported
+`const` bound to a literal value (`isLiteralValue`: a headers object) that nothing in the file but the handler and its
+own declaration refers to (a type position aside), so nothing else can fill it: not a top-level `cache.db = db`,
+another handler's `cache.set(…)`, an `export { cache }`, or a second handler sharing it. A function, a destructured
+binding, a `let`, an ambient (`declare`, `declare global`), an `import … = require(…)` or a value computed at load is
+refused whatever is listed: put it in a module and list the import. A listed import is not read (a helper in another
+module is out of the scan's sight, as always), so listing a function that reads org data is a claim the reason makes,
+which review judges, as it judges a `calls` gate's port call. A listed name no read handler the entry governs uses is
+a problem, so a list cannot pre-approve one. The handler naming itself (`GET.load`) is refused whatever is listed.
+
+**What it does not see.** A listed import can be changed by any module, the route's own file included (a top-level
+`(feed as any).users = db`): the scan does not follow writes to an import. An inert global can be patched at load
+without an assignment to its name (`Object.defineProperty(JSON, 'x', …)`, `eval`), a gap older than this addendum that
+reading nothing has had since reads were judged. Both are evasions a reviewer sees in the file, where the scan's stance
+is to catch a route that lost its gate, not one written to fool it.
 
 **Route groups and slots.** The scan matches a route by its URL: a route group's `(name)` segment and a parallel
 route's `@slot` segment are dropped from a route's path, and from an app's exemption key, before either is matched, as
