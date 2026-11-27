@@ -12,9 +12,10 @@ export const CAPTURE_TIMEOUT_MS = 2_000
  * How long a feature-flag read waits for PostHog before it answers the default (safeinsights/sssb#104). The protected
  * layout awaits a flag read on every authenticated render, so a slow PostHog costs every page this much, once: a second
  * is what a page can afford, and shorter than a capture (which no render awaits for its own sake) because a flag read
- * is on the way to the person's page. Without it the client's own bound is ten seconds, with one retry: twenty
- * seconds and more per page in an outage. The client is told the same bound with no retries, so the request is aborted
- * rather than left running, and the adapter holds to it whatever the client does.
+ * is on the way to the person's page. Without it the client's own bound is three seconds, with one retry after a
+ * delay (posthog-node 5.73, which builds on @posthog/core's stateless client): six seconds and more per page in an
+ * outage. The client is told the same bound with no retries, so the request is aborted rather than left running, and
+ * the adapter holds to it whatever the client does.
  */
 export const FLAG_TIMEOUT_MS = 1_000
 
@@ -66,10 +67,8 @@ export function createRealAnalytics(apiKey: string, host: string): AnalyticsPort
                 timer = setTimeout(() => resolve('timed out'), FLAG_TIMEOUT_MS)
             })
             try {
-                const read = client.isFeatureEnabled(flag, 'server')
-                // Once the bound has passed the read's own answer, or failure, is nobody's: keep a late rejection quiet.
-                read.catch(() => undefined)
-                const enabled = await Promise.race([read, timedOut])
+                // Once the bound has passed, the read's own answer or failure is nobody's: the race has handled it.
+                const enabled = await Promise.race([client.isFeatureEnabled(flag, 'server'), timedOut])
                 return enabled === 'timed out' ? defaultValue : (enabled ?? defaultValue)
             } catch {
                 return defaultValue

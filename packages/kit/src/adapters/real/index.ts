@@ -123,8 +123,8 @@ export function assertRealEnv(): void {
  * - `CLERK_AUTHORIZED_PARTIES` unset: Clerk's middleware then accepts a session token minted for any origin, as before
  *   the setting existed (./clerk-authorized-parties.ts), and nothing else tells an operator the check is off. It is
  *   read from the environment this command runs in, so it speaks for the server only when that is the server's.
- * - A variable spelled like it and not it (`CLERK_AUTHORISED_PARTIES`): the check is just as off, though a value looks
- *   set.
+ * - A variable spelled like it and not it (`CLERK_AUTHORISED_PARTIES`): it does nothing, though a value looks set (on
+ *   Windows, where the environment ignores case, the same name in another case is the variable itself, so not this).
  *
  * safeinsights/sssb#192. The environment is a parameter for the test's sake.
  */
@@ -139,11 +139,10 @@ export function realEnvNotices(env: Readonly<Record<string, string | undefined>>
     }
     // `CLERK_AUTHORISED_PARTIES` and its like: every variable that starts the way the name does and is not it.
     for (const name of Object.keys(env).sort()) {
-        if (name !== NAME && /^CLERK_AUTHORI/i.test(name) && env[name] !== undefined) {
-            notices.push(
-                `${name} is set, but the variable Clerk's check reads is ${NAME}: ${name} does nothing, so the check ` +
-                    'is off unless that one is set too.',
-            )
+        // On Windows the environment ignores case: `Clerk_Authorized_Parties` is the variable, not a misspelling of it.
+        const sameName = process.platform === 'win32' && name.toUpperCase() === NAME
+        if (name !== NAME && !sameName && /^CLERK_AUTHORI/i.test(name) && env[name] !== undefined) {
+            notices.push(`${name} is set, but the setting is read as ${NAME} only: ${name} does nothing.`)
         }
     }
     return notices

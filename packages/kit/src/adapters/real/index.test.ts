@@ -347,7 +347,7 @@ describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsi
         expect(realEnvNotices()).toEqual([])
     })
 
-    it('flags a misspelled name, which leaves the check off while a value looks set', async () => {
+    it('flags a misspelled name, which does nothing though a value looks set', async () => {
         const { realEnvNotices } = await import('./index')
         const notices = realEnvNotices({
             CLERK_AUTHORISED_PARTIES: 'https://app.example.org',
@@ -356,13 +356,28 @@ describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsi
         expect(notices).toHaveLength(3)
         expect(notices[0]).toMatch(/CLERK_AUTHORIZED_PARTIES is unset/)
         expect(notices.slice(1).join('\n')).toMatch(
-            /CLERK_AUTHORISED_PARTIES is set, but the variable .* reads is CLERK_AUTHORIZED_PARTIES/,
+            /CLERK_AUTHORISED_PARTIES is set, but the setting is read as CLERK_AUTHORIZED_PARTIES only/,
         )
         expect(notices.slice(1).join('\n')).toMatch(/clerk_authorized_parties is set/)
         // With the real one set as well, the misspelling is still named: it does nothing, and may be a stale copy.
         expect(
             realEnvNotices({ CLERK_AUTHORIZED_PARTIES: 'https://a.example', CLERK_AUTHORISED_PARTIES: 'x' }),
         ).toEqual([expect.stringMatching(/CLERK_AUTHORISED_PARTIES is set/)])
+    })
+
+    it('takes another case of the name for the variable itself on Windows, where the environment ignores case', async () => {
+        const { realEnvNotices } = await import('./index')
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        try {
+            Object.defineProperty(process, 'platform', { value: 'win32' })
+            expect(
+                realEnvNotices({ Clerk_Authorized_Parties: 'https://a.example', CLERK_AUTHORIZED_PARTIES: 'x' }),
+            ).toEqual([])
+            // A spelling that is not the name in another case is still a misspelling there.
+            expect(realEnvNotices({ CLERK_AUTHORISED_PARTIES: 'x', CLERK_AUTHORIZED_PARTIES: 'y' })).toHaveLength(1)
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
     })
 
     it('leaves other Clerk variables alone', async () => {

@@ -7981,7 +7981,8 @@ safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
   awaits a flag read before it renders, so a slow PostHog costs every authenticated page the bound, once. One second
   rather than the capture bound (two): a capture is awaited only to get the event out of a frozen Lambda, a flag read
   is on the way to the person's page. The client is given `featureFlagsRequestTimeoutMs` and
-  `featureFlagsRequestMaxRetries: 0` (posthog-node 5.73, @posthog/core 1.67: ten seconds and one retry for a
-  stateful client, so twenty seconds and more per page in an outage), so the request is aborted, and the adapter races
+  `featureFlagsRequestMaxRetries: 0` (posthog-node 5.73 builds on @posthog/core 1.67's stateless client: three
+  seconds and one retry after a delay, so six seconds and more per page in an outage; the issue's "ten seconds" is the
+  stateful client's default, which this is not), so the request is aborted, and the adapter races
   the read against the same bound, so the page is held to it whatever the client does. Late answers and failures are
   dropped. Not measured against a live PostHog (cutover row `analytics`).

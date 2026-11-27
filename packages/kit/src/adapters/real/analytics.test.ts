@@ -89,7 +89,7 @@ describe('real analytics, reading a feature flag', () => {
         return { analytics: createRealAnalytics('key', 'https://posthog.example'), FLAG_TIMEOUT_MS }
     }
 
-    test("tells the client the bound, with no retries: the client's own is ten seconds and one retry", async () => {
+    test("tells the client the bound, with no retries: the client's own is three seconds and one retry", async () => {
         const { FLAG_TIMEOUT_MS } = await flagAdapter()
         expect(clientOptions.last).toMatchObject({
             featureFlagsRequestTimeoutMs: FLAG_TIMEOUT_MS,
