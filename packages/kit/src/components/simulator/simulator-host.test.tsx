@@ -36,7 +36,8 @@ const AGREEMENT = {
 }
 
 type Answer = { status?: number; body?: unknown; text?: string }
-let answers: Record<string, Answer>
+/** An answer, or one the test hands out when it chooses (`held`), to order two responses the way a race would. */
+let answers: Record<string, Answer | (() => Promise<Answer>)>
 const posts: Array<{ path: string; body: unknown }> = []
 const gets: string[] = []
 const assign = vi.fn()
@@ -66,7 +67,10 @@ beforeEach(() => {
             expect(new Headers(init?.headers).get('content-type')).toBe('application/json')
             posts.push({ path, body: JSON.parse(String(init?.body)) })
         }
-        return respond(answers[`${method} ${path}`] ?? { status: method === 'POST' ? 204 : 404 })
+        const answer = answers[`${method} ${path}`]
+        return respond(
+            (typeof answer === 'function' ? await answer() : answer) ?? { status: method === 'POST' ? 204 : 404 },
+        )
     })
     // Location's fields are getters on its prototype, so a spread copies none of them: the stub names each one.
     const url = new URL('http://localhost:3000/en/dashboard')
@@ -83,6 +87,19 @@ afterEach(() => {
     window.sessionStorage.clear()
     vi.unstubAllGlobals()
 })
+
+/** An answer the test releases later: `answer` waits on it, `release` hands it out. */
+function held(): { answer: () => Promise<Answer>; release: (answer: Answer) => Promise<void> } {
+    let resolve: (answer: Answer) => void = () => {}
+    const pending = new Promise<Answer>((done) => (resolve = done))
+    return {
+        answer: () => pending,
+        release: async (answer) => {
+            resolve(answer)
+            await settle()
+        },
+    }
+}
 
 /** Lets every pending fetch and the renders it causes finish. */
 async function settle() {
@@ -194,6 +211,32 @@ describe('SimulatorHost: Snapshots', () => {
         await click(container, 'flag-toggle-jobs-held')
         expect(posts).toEqual([{ path: 'flags', body: { flag: 'jobs-held', enabled: true } }])
         expect(reload).toHaveBeenCalled()
+    })
+
+    it('two bumps in flight: the first refresh, answered last, does not undo the second', async () => {
+        const second = { ...AGREEMENT, id: '7a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d', title: 'Lakeside rules' }
+        const before = { agreements: [AGREEMENT, second] }
+        answers['GET agreements'] = { body: before }
+        answers['POST agreements/bump'] = { body: { version: 2 } }
+        const container = await renderHost()
+
+        const slow = held()
+        answers['GET agreements'] = slow.answer
+        await click(container, `agreement-bump-${AGREEMENT.id}`)
+        answers['GET agreements'] = {
+            body: {
+                agreements: [
+                    { ...AGREEMENT, version: 2 },
+                    { ...second, version: 2 },
+                ],
+            },
+        }
+        await click(container, `agreement-bump-${second.id}`)
+        expect(byTestId(container, `agreement-meta-${second.id}`).textContent).toMatch(/^v2 /)
+
+        // The first bump's refresh, read before the second bump landed, arrives last.
+        await slow.release({ body: { agreements: [{ ...AGREEMENT, version: 2 }, second] } })
+        expect(byTestId(container, `agreement-meta-${second.id}`).textContent).toMatch(/^v2 /)
     })
 
     it('an agreement bump posts its id and says the new version', async () => {
@@ -408,6 +451,22 @@ describe('SimulatorHost: what the app hands in', () => {
         await click(container, 'simulator-ticker-toggle')
         expect(posts).toEqual([{ path: 'ticker', body: { action: 'start', seconds: 30 } }])
         expect(notices(container).join(' ')).toContain('30')
+    })
+
+    it("a poll sent while a start is in flight, and answered first, does not overwrite the start's answer", async () => {
+        answers['GET ticker'] = { body: TICKER }
+        const start = held()
+        answers['POST ticker'] = start.answer
+        const container = await renderHost()
+        await act(async () => byTestId(container, 'simulator-ticker-toggle').click())
+        // Leave the Jobs tab and come back while the POST is unanswered: the refresh asks the ticker again.
+        await click(container, 'simulator-tab-people')
+        await click(container, 'simulator-tab-jobs')
+        expect(gets.filter((path) => path === 'ticker').length).toBeGreaterThan(1)
+        expect(byTestId(container, 'simulator-ticker-status').textContent).toBe('Stopped')
+
+        await start.release({ body: { ...TICKER, running: true, seconds: 30 } })
+        expect(byTestId(container, 'simulator-ticker-status').textContent).toContain('Ticking every 30')
     })
 
     it("renders an app's own tab, which reads the world's jobs and has them polled while it is open", async () => {
