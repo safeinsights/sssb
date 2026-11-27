@@ -151,9 +151,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   written inline. Any other read that is genuinely not org-scoped (a public one, a preflight sharing a headers object,
   a provider's verification handshake) names an exemption with a `reads-only` gate,
   `{ kind: 'reads-only', names: ['corsHeaders'] }`: the read may then name, besides those inert values, only the
-  listed imports (by exported name) and, from its own file, only a `const` bound to a literal value (a headers
-  object) that nothing but this handler uses, so the reason covers exactly what it reads; every name listed must be in
-  use. A function or any other value of the file is refused: put it in a module and list the import. Such an
+  listed imports (by exported name), so the reason covers exactly what it reads; every name listed must be in use. A
+  value of the route's own file (a headers object, a helper) cannot be listed, since code of the file can change it:
+  put it in a module and list the import. Such an
   entry applies to reads only (a mutation at its path keeps the gate it had), and it is the one kind that may sit
   outside `src/app/api`, under `outsideApi: { files, prefixes }` with keys relative to `src/app`, or name one file
   under SSSB's `webhooks/` prefix (a provider's verification handshake). A key names a dynamic segment literally

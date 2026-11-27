@@ -2121,7 +2121,7 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         return facts.outsideNames === null ? null : [...facts.outsideNames].sort()
     }
 
-    it('lists an import by its exported name, a default import by its local one, and a declaration of the file', () => {
+    it('lists an import by its exported name and a default import by its local one, never a value of the file', () => {
         expect(
             names(
                 "import { corsHeaders } from './cors'\nexport function GET() { return new Response(null, { headers: corsHeaders }) }",
@@ -2136,11 +2136,11 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
             names(
                 "const CORS = { allow: 'GET', methods: ['GET'] }\nexport function GET() { return Response.json({ CORS }) }",
             ),
-        ).toEqual(['CORS'])
+        ).toBeNull()
         expect(names('export function GET() { return Response.json({ ok: true }) }')).toEqual([])
     })
 
-    it('refuses a declaration of the file that is not an unexported const bound to a literal value', () => {
+    it("refuses every value of the route's own file but a primitive const", () => {
         for (const src of [
             "import { db } from './db'\nconst corsHeaders = db\nexport function GET() { return Response.json(corsHeaders) }",
             "import { db } from './db'\nfunction publicPosts() { return db.all() }\nexport function GET() { return Response.json(publicPosts()) }",
@@ -2153,7 +2153,7 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         expect(
             factsOf('function h() { return 1 }\nexport function GET() { return Response.json(h()) }', 'GET')
                 .outsideRefusal,
-        ).toMatch(/other than an unexported `const` bound to a literal value/)
+        ).toMatch(/a declaration of the route's own file, which code of the file can change; put it in a module/)
     })
 
     it('is null for a declared ambient, an import-equals, an exported or mutable name, and the handler itself', () => {
@@ -2188,7 +2188,7 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
                 "import { db } from './db'\nconst box = {}\nObject.assign(box, { db })\nexport function GET() { return Response.json(box) }",
                 'GET',
             ).outsideRefusal,
-        ).toMatch(/`box` is used outside the handler too \(line 3\)/)
+        ).toMatch(/`box` is a declaration of the route's own file/)
         // Shared by two handlers: each may change it, so each is refused (give each its own, or import it).
         expect(
             names(
@@ -2198,9 +2198,9 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         // A type position changes nothing.
         expect(
             names(
-                "const CORS = { allow: 'GET' }\ntype C = typeof CORS\nexport function GET() { return Response.json(CORS as C) }",
+                "const CORS = { allow: 'GET' }\nexport function GET(r?: Request) { if (!r) return CORS as never; return Response.json(CORS) }\n;(GET() as never as { db: unknown }).db = 1",
             ),
-        ).toEqual(['CORS'])
+        ).toBeNull()
     })
 
     it('is null for a handler exported by name that reads what is hung on it', () => {

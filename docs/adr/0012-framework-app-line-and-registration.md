@@ -1074,8 +1074,8 @@ app entry could not replace.
 
 **One new gate kind, `reads-only`, with `names`.** It holds for a READ handler (GET, HEAD, OPTIONS) that reads nothing
 but the names it lists: every name it refers to from outside itself is an inert value (the reads-nothing allow-list)
-or one of `names`, an import by its exported name (a default import by its local one) or a declaration of the route's
-file. No global off the inert list counts (`fetch`, `process`), and no name can excuse an aliased or namespace import, a
+or one of `names`, an import by its exported name (a default import by its local one). No value of the route's own
+file can be listed (below). No global off the inert list counts (`fetch`, `process`), and no name can excuse an aliased or namespace import, a
 class, `import()`, `import.meta`, `using` or a `constructor` member. It never holds for a mutation, and an entry whose
 gate it is applies to reads only: at its path, a mutation is judged by the exemption it would have had without it.
 
@@ -1087,12 +1087,12 @@ every other overlap with a framework entry still fails. A `reads-only` entry is 
 handler.
 
 **What it proves.** That the read touches nothing but its request, inert values and the listed names: the entry's
-reason has to answer for exactly those names. From the route's own file, a name counts only for an unexported
-`const` bound to a literal value (`isLiteralValue`: a headers object) that nothing in the file but the handler and its
-own declaration refers to (a type position aside), so nothing else can fill it: not a top-level `cache.db = db`,
-another handler's `cache.set(…)`, an `export { cache }`, or a second handler sharing it. A function, a destructured
-binding, a `let`, an ambient (`declare`, `declare global`), an `import … = require(…)` or a value computed at load is
-refused whatever is listed: put it in a module and list the import. A listed import is not read (a helper in another
+reason has to answer for exactly those names. Only imports can be listed. A value of the route's own file (a
+headers object, a helper function, a destructured binding, a `declare`d ambient, an `import … = require(…)`) is
+refused whatever is listed, since code of the file the scan does not walk can fill or change it: a top-level
+`cache.db = db`, another handler's `cache.set(…)`, an `export { cache }`, a sibling binding of a destructuring, or a
+caller of the handler itself that gets the object back. Four review rounds found each in turn while the rule let a
+file's own values through; put such a value in a module and list the import. A listed import is not read (a helper in another
 module is out of the scan's sight, as always), so listing a function that reads org data is a claim the reason makes,
 which review judges, as it judges a `calls` gate's port call. A listed name no read handler the entry governs uses is
 a problem, so a list cannot pre-approve one. The handler naming itself (`GET.load`) is refused whatever is listed.

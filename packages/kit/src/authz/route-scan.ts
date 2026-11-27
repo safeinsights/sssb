@@ -168,8 +168,8 @@ export interface ScanRoot {
  *   assigns to none of the globals that branch builds (`Response`, `JSON`, an `…Error`), so the real-mode path
  *   does nothing.
  * - `reads-only`: a READ handler (GET, HEAD, OPTIONS) that reads nothing (`readsNothing`) but the `names` listed:
- *   imports by their exported name (a default import by its local one), or declarations of the route's own file
- *   by their name (`corsHeaders`, `params`, `publicPosts`). Every other name it refers to from outside itself is an
+ *   imports, by their exported name (a default import by its local one: `corsHeaders`, `params`, `publicPosts`). No
+ *   value of the route's own file can be listed, since code of the file can change it. Every other name it refers to from outside itself is an
  *   inert value, and it names no global off the inert list (`fetch`, `process`). It never holds for a mutation, and an
  *   entry whose gate it is applies to reads only, so a mutation at its path is judged by the exemption it would have
  *   had without the entry. It is the one gate an app may put outside `src/app/api` or under one of the framework's
@@ -702,7 +702,7 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
                   `a \`reads-only\` gate listing the imports it reads, the only gate a route outside src/app/api can ` +
                   `match.`
                 : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs (a ` +
-                  `\`reads-only\` gate lists the imports and declarations of its file a read may name).`) +
+                  `\`reads-only\` gate lists the imports a read may name).`) +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -2137,8 +2137,8 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  * The names from outside `fn` that it refers to and that are not inert (`readsNothing`'s allow-list), or null when it
  * does something no name can excuse: names a global off the allow-list (`fetch`, `process`), names an import under
  * another name than its exported one or a whole namespace, or uses a class, `import()`, `import.meta`, `using` or a
- * `constructor`/`__proto__` member. An import counts by its exported name (a default import by its local one), a
- * declaration of this file by its own name. What a `reads-only` gate (`Gate`) matches against: a read that names
+ * `constructor`/`__proto__` member, or names a value of the route's own file (other than a primitive const). An import
+ * counts by its exported name (a default import by its local one). What a `reads-only` gate (`Gate`) matches against: a read that names
  * nothing outside it but inert values and the names the gate lists.
  */
 function outsideNamesOf(
@@ -2173,19 +2173,17 @@ function outsideNamesOf(
         )
     }
     const names = new Set<string>()
-    /** The file's own `const`s counted by name, by symbol: each must be used by this handler alone (below). */
-    const local = new Map<ts.Symbol, string>()
     let refusal: string | null = null
     const refuse = (why: string): false => {
         refusal ??= why
         return false
     }
     /**
-     * Counts a non-inert declaration from outside the handler under its name, or refuses it. An import counts under its
-     * exported name (a default import under its local one). A declaration of the route's own file counts only as a
-     * `const NAME = <literal value>` (an object or array of literals: a headers object) that the file does not export
-     * or declare ambiently; anything else of the file (a function, a destructured binding, a `let`, a class) is code or
-     * data the scan would have to follow, and is refused: put it in a module and list the import.
+     * Counts a non-inert declaration from outside the handler under its name, or refuses it. Only an IMPORT counts: under
+     * its exported name (a default import under its local one). Nothing of the route's own file does (but the primitive
+     * consts reading nothing allows): an object, a function or any other value there can be filled or changed by code
+     * of the file the scan does not walk, the handler's own callers included, as four rounds of review showed. A shared
+     * value goes in a module, and the gate lists its import.
      */
     const count = (decl: ts.Declaration, id: ts.Identifier): boolean => {
         const imported = valueImportOf(decl)
@@ -2202,26 +2200,10 @@ function outsideNamesOf(
             return refuse(`\`${id.text}\` is an \`import … = require(…)\`, a whole module`)
         }
         if (isAmbient(decl)) return refuse(`\`${id.text}\` is declared with \`declare\`, so its value is out of sight`)
-        const literal =
-            ts.isVariableDeclaration(decl) &&
-            ts.isIdentifier(decl.name) &&
-            isConst(decl) &&
-            decl.initializer !== undefined &&
-            isLiteralValue(src, decl.initializer) &&
-            (ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Export) === 0
-        if (!literal) {
-            return refuse(
-                `\`${id.text}\` is a declaration of this file other than an unexported \`const\` bound to a literal ` +
-                    'value, so what it reads is out of sight; import it from a module and list the import',
-            )
-        }
-        const symbol = checker.getSymbolAtLocation(decl.name)
-        if (symbol === undefined || (symbol.declarations?.length ?? 0) > 1) {
-            return refuse(`\`${id.text}\` has more than one declaration`)
-        }
-        local.set(symbol, id.text)
-        names.add(id.text)
-        return true
+        return refuse(
+            `\`${id.text}\` is a declaration of the route's own file, which code of the file can change; put it in a ` +
+                'module and list the import',
+        )
     }
     /** The symbol an identifier refers to, through a shorthand property and an export specifier. */
     const symbolAt = (id: ts.Identifier): ts.Symbol | undefined => {
@@ -2231,31 +2213,6 @@ function outsideNamesOf(
         }
         if (ts.isExportSpecifier(parent)) return checker.getExportSpecifierLocalTargetSymbol(parent)
         return checker.getSymbolAtLocation(id)
-    }
-    /**
-     * A listed `const` of the file holds what the handler reads only if nothing else can change it: no reference to it
-     * anywhere in the file but in the handler and its own declaration (a type position aside). So a top-level
-     * `cache.db = db`, another handler's `cache.set(…)` or an `export { cache }` refuses it, and so does a second
-     * handler sharing it: give each its own, or import it.
-     */
-    const usedByHandlerAlone = (): void => {
-        const declarations = new Map([...local.keys()].map((symbol) => [symbol, symbol.declarations?.[0]]))
-        const check = (node: ts.Node): void => {
-            if (refusal !== null || ts.isTypeNode(node)) return
-            if (ts.isIdentifier(node) && !within(node, fn)) {
-                const symbol = symbolAt(node)
-                const name = symbol === undefined ? undefined : local.get(symbol)
-                const decl = symbol === undefined ? undefined : declarations.get(symbol)
-                if (name !== undefined && !(decl !== undefined && within(node, decl))) {
-                    const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1
-                    return void refuse(
-                        `\`${name}\` is used outside the handler too (line ${line}), where it can be changed`,
-                    )
-                }
-            }
-            ts.forEachChild(node, check)
-        }
-        check(sf)
     }
     /** Records what `id` refers to; false when no name can excuse it. */
     const reference = (id: ts.Identifier): boolean => {
@@ -2301,7 +2258,6 @@ function outsideNamesOf(
         ts.forEachChild(node, visit)
     }
     visit(fn)
-    if (refusal === null && local.size > 0) usedByHandlerAlone()
     return refusal === null ? { names, refusal: null } : { names: null, refusal }
 }
 
