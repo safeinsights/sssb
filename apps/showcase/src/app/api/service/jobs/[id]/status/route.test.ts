@@ -139,7 +139,7 @@ describe('POST /api/service/jobs/[id]/status', () => {
         expect(h.record).not.toHaveBeenCalled()
     })
 
-    test('a denied machine gets the same 403 for a job that exists as for one that does not (safeinsights/sssb#137)', async () => {
+    test('a denied machine gets the same 403 whether or not the job exists (safeinsights/sssb#137)', async () => {
         h.authorize.mockImplementation(() => {
             throw new ForbiddenError('cannot update Job')
         })

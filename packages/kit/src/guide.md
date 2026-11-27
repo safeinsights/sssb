@@ -108,8 +108,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
   neither does a `.then(...)` chained after it.
 - The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
-  comes before the mutation. Call it before the mutation and before any `try` (but the one below, whose `catch`
-  rethrows), on a path every request takes: after `auth.requireUser()` and the lookups that give it the org, never
+  comes before the mutation. Call it before the mutation and before any `try` (except one whose `catch` always
+  rethrows, as in the next rule), on a path every request takes: after `auth.requireUser()` and the lookups that give it the org, never
   inside a condition or a loop.
 - A person who may not act gets the same answer, status and body, whether or not a thing the request names exists:
   a row by its id in the path, an org by a slug in the body, anything a lookup keyed by request input finds. So no such

@@ -11,8 +11,7 @@ import { requireUuidParam, withPortErrors } from '../../../respond'
  * create ability (finalizing one's own upload) FIRST, against the active org, so a person who may not
  * finalize gets the same 403 whether or not the id exists; then resolve the row org-scoped (a foreign
  * org's id is indistinguishable from a missing one — jobForOrg doctrine, safeinsights/sssb#137); then
- * VERIFY the object actually
- * landed in storage before recording its true size and flipping status to ready. Verifying here is
+ * VERIFY the object actually landed in storage before recording its true size and flipping status to ready. Verifying here is
  * what stops a caller minting + confirming without ever uploading, which would leave a dead download
  * link. Real-mode note: existence+size come from a GetObject (the storage port has no head); a
  * HeadObject optimization is a cutover nicety, not correctness.

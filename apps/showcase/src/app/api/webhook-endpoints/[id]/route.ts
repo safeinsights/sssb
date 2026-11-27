@@ -12,8 +12,9 @@ import { readJsonObject, requireUuidParam, withPortErrors } from '../../respond'
  * Enable/disable (PATCH) or remove (DELETE) one of the active org's webhook endpoints — both
  * authorize()-gated (WebhookEndpoint update/delete = canManageOrg && sameOrg). Each authorizes FIRST,
  * against the active org, so a person who may not manage endpoints gets the same 403 whether or not the
- * id exists; only then must the endpoint belong to the active org (endpointForOrg → 404 otherwise, so
- * ids can't be probed — the jobForOrg doctrine, safeinsights/sssb#137). Deleting an endpoint cascades
+ * id exists; only then must the endpoint belong to the active org (endpointForOrg → 404 otherwise: another
+ * org's endpoint is indistinguishable from a missing one, the jobForOrg doctrine, safeinsights/sssb#137).
+ * Deleting an endpoint cascades
  * its deliveries (migration 0010).
  */
 async function activeOrg(user: AuthUser): Promise<{ tenantId: string; orgId: string }> {

@@ -11,8 +11,8 @@ import { readJsonObject, requireUuidParam, withPortErrors } from '../../../respo
  * The receiving team decides an escalation (accept/reject). The request must have the active org
  * as one of its two sides — a foreign request is indistinguishable from a missing one (404, the jobForOrg
  * doctrine). Only an org MANAGER on the RESPONDER side may respond (authorize with the row's REAL org ids,
- * so after the lookup), and anyone else gets that same 404, so no id can be probed. The transition is validated by the state machine; deciding
- * an already-decided request (double-accept, accept-after-cancel) surfaces as 409 via withPortErrors.
+ * so after the lookup), and anyone else gets that same 404, so no id can be probed. The transition is validated
+ * by the state machine; deciding an already-decided request (double-accept, accept-after-cancel) surfaces as 409 via withPortErrors.
  */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
     return withPortErrors(async () => {
