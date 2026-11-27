@@ -8113,3 +8113,80 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
   scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
+
+## Lost CodeBuild builds, and schedules that keep failing (2026-11-27, `fix/lost-builds-and-failing-schedules`)
+
+Two fixes in one change. safeinsights/sssb#231: a CodeBuild job whose build died without posting its webhook stayed
+queued for ever, and since #135 a kind that retries never retried it. safeinsights/sssb#215: a schedule whose spawn
+failed inside its transaction stayed due and took a turn every tick.
+
+- **The CodeBuild runner records each build, and judges a job by its build's state, not its age.** Migration
+  `0020_job_runner_ref` adds `jobs.runner_ref`. `start` writes `starting` before it calls StartBuild, and the build's
+  id once StartBuild returns. The sweep the tick already calls (`JobsPort.sweep`) asks BatchGetBuilds, at most 100 ids a
+  call, about every job of the runner's still queued or running whose last status change is more than five minutes
+  old (`CODEBUILD_LOST_AFTER_MS`, the tick's default period, so a webhook in flight is not taken for lost). Lost means:
+    - **its build ended that long ago** with any status but IN_PROGRESS, the job still open. That includes SUCCEEDED:
+      the job's result was never recorded, so a kind that retries runs again;
+    - **CodeBuild has no record of the build** (`buildsNotFound`);
+    - **it was left `starting` that long**: StartBuild never returned, or the build id was never written.
+
+    A build still IN_PROGRESS is never judged, however long it runs: CodeBuild's own timeout ends it, and a later sweep
+    sees the result. A lost job is failed through `recordJobStatus`, which arms a retry, and its end notifies as the jobs
+    webhook route's does. A job whose webhook lands between the sweep's read and its write is already terminal, and the
+    state machine refuses the failure.
+
+    Rejected:
+    - **An age limit alone**, as the in-process sweep uses. A CodeBuild build may wait in CodeBuild's own queue and run
+      up to the project's timeout, so no one limit fits.
+    - **An EventBridge rule on the build's state change.** It is the faster signal, but it needs infrastructure
+      (`@sssb/cdk`) and a new route, where a sweep reuses the tick and needs one IAM action.
+
+- **Failing the job is the registry's, handed in.** `createRealJobs(project, region, db, failLost)` imports no job
+  module: the real ports load it while the adapter registry is still being evaluated, and `sssb check-real-env`
+  bundles it as CommonJS, which the seam's handlers (reached through `recordJobStatus`) cannot be part of. The registry
+  supplies `failLostJobFromRegistry`, built from lazy imports as the in-process runner's notifier is. A caller that
+  builds the real ports itself without the hook gets a runner with no sweep, as before.
+- **Jobs written before 0020 are never judged.** They have no `runner_ref`. Builds in flight at the deploy that brings
+  this would otherwise be failed as never started.
+- **What only a deployment can show.** The tests drive the runner against a fake CodeBuild client
+  (`adapters/real/jobs.test.ts`), so these stay a cutover proof (row `job-runner`):
+    - that the server's role may call `codebuild:BatchGetBuilds` (without it, each tick logs that the sweep could not
+      read builds, and fails nothing);
+    - the statuses and end times CodeBuild really reports;
+    - how long a real webhook takes after its build ends.
+- **A schedule's spawn failure is counted, and either backs the schedule off or turns it off.** Migration
+  `0021_schedule_failures` adds `job_schedules.failure_count` and `last_error`. On a failure inside the spawn
+  transaction, a transaction of its own (under the row lock, and only while the schedule is still enabled and due)
+  counts it and keeps the message.
+    - **A spec that does not parse can never spawn, so the schedule is DISABLED,** with a `schedule.disabled` audit event
+      holding the error. Someone must fix the spec and enable it again.
+    - **Any other failure may be passing (an insert the database refused for a moment), so the schedule BACKS OFF:**
+      `next_run_at` moves to the failure plus the webhook deliveries' backoff for that many failures in a row (one
+      minute, five, thirty, two hours, then six hours on). A schedule that fails every time therefore takes a bounded,
+      shrinking share of its tenant's turns. It stops holding the oldest due slot, so the per-tenant listing (#97) reaches
+      the healthy schedules behind it however many such rows the tenant holds.
+    - **The next spawn that commits resets both columns.** A failure after the spawn committed (the audit write, the
+      runner's start) is not a spawn failure, and is counted nowhere new.
+
+    Rejected:
+    - **Disabling after N failures of any kind**, which would turn off a schedule over an outage it would have outlived.
+    - **A notification to the org's admins.** A schedule belongs to no person, and the audit event and the Simulator's
+      schedule view (`failureCount`, `lastError`) are where an operator looks. Left open for an app that wants more.
+    - **Leaving a backed-off schedule's phase unchanged.** A weekly or daily spec finds its next slot from the time it
+      fired, so it keeps its phase. An interval spec counts from the backed-off time, a shift of at most the backoff,
+      which is accepted.
+
+- **Proofs.**
+    - `adapters/real/jobs.test.ts` covers: a build that ended unreported, for each ended status; one still running; one
+      that ended within the grace; one CodeBuild no longer knows; a start that never recorded a build; a job too recent to
+      judge, one without a ref, and one already reported; a webhook racing the sweep; a sweep that cannot read builds;
+      batches of 100; and a lost build of a kind that retries whose next attempt starts a new build and completes.
+    - `real/index.test.ts` pins the registry handing the runner its database and handler.
+    - `db/schedules.test.ts` covers: an unparseable spec turned off with its audit event; a failing insert backed off for
+      one minute, then five, then cleared by a spawn that commits; a healthy schedule spawning beside more stuck ones than
+      the listing takes, both disabled and backed off; and a failure after the commit left uncounted.
+    - Removing the IN_PROGRESS skip, the webhook grace, the not-found or `starting` rules, the quiet filter, the batching,
+      or the build id's recording turns them red. So does removing the disabling, the backoff, its escalation, the reset
+      on success, or the failure policy itself.
+    - The failure recorder's re-check under the lock (a schedule another tick fired or turned off meanwhile) is argued
+      here, not tested.

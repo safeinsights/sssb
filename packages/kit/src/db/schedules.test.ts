@@ -154,7 +154,7 @@ describe('runDueSchedules', () => {
         expect(firedFor(jobs.calls, bad)).toBe(0)
         expect(firedFor(jobs.calls, good)).toBe(1)
         expect(failed).toBeGreaterThanOrEqual(1)
-        // The bad row's next_run_at never advanced — it stays due and will retry (and re-fail) next tick.
+        // The bad row's next_run_at never advanced: its spec cannot parse, so it was turned off rather than backed off.
         expect((await nextRunAt(bad)).getTime()).toBeLessThanOrEqual(now.getTime())
     })
 

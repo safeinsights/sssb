@@ -38,9 +38,10 @@ export interface ScheduledTickResult {
     /** Jobs spawned from due schedules. */
     spawned: number
     /**
-     * Due schedules whose spawn failed. One that failed inside the spawn transaction is retried on the next tick (its
-     * next_run_at never advanced); one that failed after it committed (the audit write, the runner's start) is not:
-     * its job is already queued and the schedule has moved to its next slot (../db/schedules.ts, "Fault isolation").
+     * Due schedules whose spawn failed. One that failed inside the spawn transaction is backed off, or turned off when
+     * its spec does not parse (safeinsights/sssb#215); one that failed after it committed (the audit write, the
+     * runner's start) is not retried: its job is already queued and the schedule has moved to its next slot
+     * (../db/schedules.ts, "Fault isolation").
      */
     failed: number
     /** Due schedules this tick listed and left for the next one (a lower bound: ../db/drain-budget.ts). */
