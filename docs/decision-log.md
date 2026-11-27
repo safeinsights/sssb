@@ -7662,6 +7662,7 @@ waited behind every other tenant's backlog. Both drains now go through `packages
   whose POSTs each take ten seconds of the tick's clock, and another tenant's single row still served in the same tick,
   with what was left served once in later ticks); `db.contract.test.ts` runs the bounded schedules drain on real
   Postgres under RLS. Removing the round-robin, the shuffle of tenants or of rows, or the deadline check turns tests red.
+
 ## An SSL mode for the pg transport (2026-11-27, `fix/pg-ssl-mode`)
 
 `safeinsights/sssb#96`: neither the server's `pg` adapter nor the Migrator set TLS, so a connection was encrypted only
