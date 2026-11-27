@@ -7624,6 +7624,7 @@ Notification`, self-only), the preferences (`read NotificationPref`, self-only) 
 - **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
   who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
   of this fix.
+
 ## An SSL mode for the pg transport (2026-11-27, `fix/pg-ssl-mode`)
 
 `safeinsights/sssb#96`: neither the server's `pg` adapter nor the Migrator set TLS, so a connection was encrypted only
