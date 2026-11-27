@@ -88,7 +88,9 @@ export default defineConfig({
         {
             command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
             url: BASE_URL,
-            reuseExistingServer: !process.env.CI,
+            // Never reused with more than one world: the servers below serve the build this one makes, so a server adopted
+            // here (a dev server, or an earlier run's build) would leave them serving an older one.
+            reuseExistingServer: !process.env.CI && E2E_WORKERS === 1,
             // `pnpm dev` ticks the scheduler on a timer when DEV_TICK_SECONDS is set (`sssb dev-tick`). The e2e suite expects a
             // scheduler that does nothing until a test asks, so whatever is in the caller's shell, the server it starts is not ticked.
             env: { DEV_TICK_SECONDS: '' },

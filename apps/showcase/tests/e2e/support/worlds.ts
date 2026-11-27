@@ -16,8 +16,9 @@ import { E2E_BUILD } from './budgets'
  *   own, emptied when its server starts. The config lists those servers after the first, and Playwright starts them
  *   in order, each once the one before it answers: so every server has copied its static assets before any test runs.
  * - **A worker finds its own** by `TEST_PARALLEL_INDEX`, which Playwright sets in each worker process (0 up to
- *   `workers - 1`, kept by a worker that replaces one that failed) before that process loads this config: `baseURL`
- *   in the config, and `worldPath(...)` for a spec that reads or writes its world on disk.
+ *   `workers - 1`; a worker that replaces one takes the index of the slot it fills, so two never share one) before that
+ *   process loads this config: `baseURL` in the config, and `worldPath(...)` for a spec that reads or writes its world
+ *   on disk. A retry may run in another worker's world, which a test that sets up its own state already allows.
  *
  * Only on a production build (`E2E_BUILD=1`): `next dev` refuses a second server for the same app directory whatever
  * the port ("Another next dev server is already running", safeinsights/sssb#113), so under it there is one worker.
@@ -55,6 +56,15 @@ export function worldIndex(): number {
     return Number(process.env['TEST_PARALLEL_INDEX'] ?? 0)
 }
 
+// A worker past the last world (`--workers=4` on the command line with E2E_WORKERS unset, say) would drive a port no
+// server listens on, or one an earlier run left: refuse it here, in the worker, where the config is loaded again.
+if (worldIndex() >= E2E_WORKERS) {
+    throw new Error(
+        `worker ${worldIndex()} has no world: this run has ${E2E_WORKERS}. Raise workers with E2E_WORKERS (and ` +
+            'E2E_BUILD=1), not --workers, so each one gets a server of its own (tests/e2e/support/worlds.ts)',
+    )
+}
+
 /**
  * Where world `index` keeps its state: the app's `.data` for world 0, as every server and every helper has always
  * assumed, and a directory under the system's temp directory for the others, named for this checkout so two checkouts'
@@ -74,13 +84,14 @@ export function worldPath(...segments: string[]): string {
 /**
  * The origin of world `index`'s server: `base` itself for world 0, and for the others a port in a band of
  * MAX_WORKERS ports derived from `base`'s port, so each checkout (whose app port `@sssb/tools/ports` already derives)
- * has a band of its own: 30000 to 48406, clear of the app ports (3000-3599), the custom slots (20000-29999), contract
- * Postgres (5439 and up), Ladle (61000 and up) and the ports the OS hands out on its own (49152 and up).
+ * has a band of its own: 10000 to 19999, clear of the app ports (3000-3599), contract Postgres (5439-5639), the custom
+ * slots (20000-29999), Ladle (61000 and up) and the ports the OS hands out on its own (Linux from 32768, macOS from
+ * 49152). The main checkout's 3000 and every derived 3200-3598 land on bands of their own (14000, 15600 to 18784).
  */
 export function worldOrigin(base: string, index = worldIndex()): string {
     if (index === 0) return base
     const url = new URL(base)
-    url.port = String(30_000 + (Number(url.port) % 2300) * MAX_WORKERS + index)
+    url.port = String(10_000 + (Number(url.port) % 1250) * MAX_WORKERS + index)
     return url.origin
 }
 
@@ -93,7 +104,8 @@ export function workerServers(base: string, count = E2E_WORKERS) {
         const index = i + 1
         const origin = worldOrigin(base, index)
         return {
-            command: `rm -rf '${worldRoot(index)}' && pnpm run start:e2e`,
+            // Emptied by the server's own APP_DATA_DIR, so no path is written into the shell command.
+            command: `node -e "require('node:fs').rmSync(process.env.APP_DATA_DIR, { recursive: true, force: true })" && pnpm run start:e2e`,
             url: origin,
             reuseExistingServer: false,
             env: { DEV_TICK_SECONDS: '', PORT: new URL(origin).port, APP_DATA_DIR: worldRoot(index) },

@@ -8337,7 +8337,8 @@ spec or helper that reads or writes its world on disk).
 
 - **The design: a server per worker over one production build.** Worker 0 is the suite as it was (the config's first
   web server on the app's port, the app's `.data`), so one worker changes nothing. Worker `k` gets another
-  `start:e2e` (`sssb serve-standalone`) of the same build, on a port in a per-checkout band (30000 to 48406) and with
+  `start:e2e` (`sssb serve-standalone`) of the same build, on a port in a per-checkout band (10000 to 19999, below the
+  ports Linux hands out from 32768) and with
   `APP_DATA_DIR` at an emptied directory under the system's temp directory. The config lists those servers after the
   first; Playwright starts them in order, and every worker loads the config with `TEST_PARALLEL_INDEX` set, so
   `baseURL` and `worldPath(...)` follow the worker with no change to a spec's imports (`docs/build-notes.md`, "A world
@@ -8368,6 +8369,12 @@ spec or helper that reads or writes its world on disk).
   3 min at any worker count, so more workers save runner time and no one's wait. When e2e becomes the slowest job, the
   switch is `E2E_WORKERS` on the e2e job, plus dropping `--workers=1` from `sssb ci e2e --project destructive` for an
   app whose config gives each worker a world (an adopter's app does not, so that flag must stay for them).
+- **Guards, from review:** with more than one world the first server is never reused (a dev server or an earlier
+  build adopted on the app's port would leave the others serving an older build); a worker past the last world
+  (`--workers` above `E2E_WORKERS`) fails at once, naming `E2E_WORKERS`, rather than driving a port nothing listens on;
+  and each world is emptied by its server's own `APP_DATA_DIR`, with no path in a shell command. A port in a worker's band that another
+  program holds (this machine's Dropbox listens on 17600 and 17603) fails that server's start loudly, as a port taken in
+  `@sssb/tools/ports`' own bands does.
 - **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
   ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
   changes but a comment in `serve-standalone.js` (an empty changeset).
