@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
-import type { SimulatorMail, SimulatorSchedules, SimulatorSummary } from './simulator-api'
+import type {
+    SimulatorAgreements,
+    SimulatorFlags,
+    SimulatorMail,
+    SimulatorSchedules,
+    SimulatorSnapshots,
+    SimulatorSummary,
+} from './simulator-api'
 
 // The Simulator's server host against SSSB's OWN seam (the fixture's seed world). Same throwaway data directory and
 // mocked cookie jar as ./demo-presets.test.ts, and the `server-only` registry replaced by the simulated-mode one it
@@ -29,6 +36,12 @@ vi.mock('../adapters/index', async () => ({
     auth: (await import('../adapters/fake/auth')).fakeAuth,
     db: (await import('../adapters/fake/db')).fakeDb,
     jobs: (await import('../adapters/fake/jobs')).fakeJobs,
+    email: (await import('../adapters/fake/email')).fakeEmail,
+    analytics: (await import('../adapters/fake/analytics')).fakeAnalytics,
+}))
+// A preset's invite email is rendered with the server translator; its copy is not what is under test here.
+vi.mock('next-intl/server', () => ({
+    getTranslations: async () => (key: string) => key,
 }))
 
 const ORIGIN = 'http://localhost:3000/api/simulator'
@@ -56,6 +69,10 @@ describe('dispatch', () => {
         mode.simulated = false
         expect((await call('summary')).status).toBe(404)
         expect((await call('mail/clear', { json: {} })).status).toBe(404)
+        expect((await call('snapshots')).status).toBe(404)
+        expect((await call('reset', { json: {} })).status).toBe(404)
+        expect((await call('presets', { json: { name: 'busy-harbor', locale: 'en' } })).status).toBe(404)
+        expect(cookieStore.size).toBe(0)
     })
 
     test('a path it does not serve is 404, a prototype key included', async () => {
@@ -80,6 +97,18 @@ describe('dispatch', () => {
         expect(response.status).toBe(415)
         expect(cookieStore.size).toBe(0)
     })
+
+    test.each(['reset', 'snapshots', 'snapshots/restore', 'flags', 'agreements/bump', 'presets'])(
+        'a %s POST that is not JSON is refused before it runs',
+        async (path) => {
+            const response = await call(path, {
+                method: 'POST',
+                headers: { 'content-type': 'text/plain' },
+                body: JSON.stringify({ name: 'busy-harbor', locale: 'en', flag: 'jobs-held', enabled: true }),
+            })
+            expect(response.status).toBe(415)
+        },
+    )
 })
 
 describe('people', () => {
@@ -233,5 +262,127 @@ describe('jobs and the clock', () => {
         expect((await call('clock', { json: { action: 'advance', deltaMs: 1 } })).status).toBe(400)
         expect(await (await call('clock', { json: { action: 'reset' } })).json()).toMatchObject({ clockOffsetMs: 0 })
         expect(await (await call('schedules/run-due', { json: {} })).json()).toMatchObject({ ok: true, spawned: 0 })
+    })
+})
+
+// Last, because a reset, a restore and a preset each rewrite the whole world under the tests above.
+describe('snapshots, flags, agreements and presets', () => {
+    beforeAll(async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        await fakeDb.ready()
+    }, 120_000)
+
+    async function flagOn(flag: string): Promise<boolean | undefined> {
+        const body = (await (await call('flags')).json()) as SimulatorFlags
+        return body.flags.find((candidate) => candidate.flag === flag)?.enabled
+    }
+
+    test('flags lists every known flag and sets one, and refuses one it does not know', async () => {
+        const { KNOWN_FLAGS } = await import('../adapters/fake/analytics')
+        const body = (await (await call('flags')).json()) as SimulatorFlags
+        expect(body.flags.map((flag) => flag.flag)).toEqual(KNOWN_FLAGS)
+        expect(await flagOn('jobs-held')).toBe(false)
+
+        expect(await (await call('flags', { json: { flag: 'jobs-held', enabled: true } })).json()).toEqual({ ok: true })
+        expect(await flagOn('jobs-held')).toBe(true)
+
+        expect((await call('flags', { json: { flag: 'no-such-flag', enabled: true } })).status).toBe(400)
+        expect((await call('flags', { json: { flag: 'jobs-held', enabled: 'yes' } })).status).toBe(400)
+        expect((await call('flags', { json: [] })).status).toBe(400)
+    })
+
+    test('a reset puts the world back to the seed', async () => {
+        await call('flags', { json: { flag: 'jobs-held', enabled: true } })
+        expect((await call('reset', { json: {} })).status).toBe(204)
+        expect(await flagOn('jobs-held')).toBe(false)
+    })
+
+    test('a snapshot saves the world, restores it, and is deleted', async () => {
+        await call('flags', { json: { flag: 'demo-banner', enabled: true } })
+        expect((await call('snapshots', { json: { name: 'harbor-noon' } })).status).toBe(204)
+        const listed = (await (await call('snapshots')).json()) as SimulatorSnapshots
+        expect(listed.snapshots).toEqual([{ name: 'harbor-noon', at: expect.any(String) }])
+
+        await call('flags', { json: { flag: 'demo-banner', enabled: false } })
+        expect((await call('snapshots/restore', { json: { name: 'harbor-noon' } })).status).toBe(204)
+        expect(await flagOn('demo-banner')).toBe(true)
+
+        expect((await call('snapshots/delete', { json: { name: 'harbor-noon' } })).status).toBe(204)
+        expect(((await (await call('snapshots')).json()) as SimulatorSnapshots).snapshots).toEqual([])
+        expect((await call('snapshots/restore', { json: { name: 'harbor-noon' } })).status).toBe(404)
+        expect((await call('snapshots/delete', { json: { name: 'harbor-noon' } })).status).toBe(404)
+    })
+
+    test.each([
+        [{}, 400],
+        [{ name: 7 }, 400],
+        // A name outside the world-start pattern, and one a tour reads as another start: the reset, or a preset.
+        [{ name: 'Harbor Noon' }, 403],
+        [{ name: '../escape' }, 403],
+        [{ name: 'reset' }, 403],
+        [{ name: 'busy-harbor' }, 403],
+    ])('saving a snapshot as %j is refused with %i', async (json, status) => {
+        expect((await call('snapshots', { json })).status).toBe(status)
+        expect(((await (await call('snapshots')).json()) as SimulatorSnapshots).snapshots).toEqual([])
+    })
+
+    test("agreements lists every tenant's, and a bump moves one to its next version", async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        // A reset above closed the world's database; it opens again on first use.
+        await fakeDb.ready()
+        const raw = fakeDb.getDb()
+        const tenant = await raw
+            .selectFrom('tenants')
+            .select('id')
+            .where('slug', '=', 'harbor')
+            .executeTakeFirstOrThrow()
+        const { id } = await raw
+            .insertInto('agreements')
+            .values({
+                tenant_id: tenant.id,
+                kind: 'tos',
+                title: 'Harbor rules',
+                body_md: 'Mind the lines.',
+                gating: 'block-all',
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+
+        const before = (await (await call('agreements')).json()) as SimulatorAgreements
+        expect(before.agreements).toEqual([
+            expect.objectContaining({
+                id,
+                tenantSlug: 'harbor',
+                version: 1,
+                currentAcceptances: 0,
+                totalAcceptances: 0,
+            }),
+        ])
+        expect(await (await call('agreements/bump', { json: { agreementId: id } })).json()).toEqual({ version: 2 })
+        const after = (await (await call('agreements')).json()) as SimulatorAgreements
+        expect(after.agreements[0]?.version).toBe(2)
+
+        expect((await call('agreements/bump', { json: {} })).status).toBe(400)
+        const unknown = await call('agreements/bump', { json: { agreementId: '00000000-0000-4000-8000-000000000000' } })
+        expect(unknown.status).toBe(404)
+    })
+
+    test('a preset replays its script and signs this browser in as its viewpoint', async () => {
+        const response = await call('presets', { json: { name: 'busy-harbor', locale: 'es' } })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ redirectTo: '/es/dashboard' })
+        const summary = (await (await call('summary')).json()) as SimulatorSummary
+        expect(summary).toMatchObject({ signedIn: true, viewpoint: 'person:fixture-hand' })
+        // Its `flag` step, through the fixture's own half of that kind.
+        expect(await flagOn('jobs-held')).toBe(true)
+    })
+
+    test.each([
+        [{ name: 'no-such-preset', locale: 'en' }, 404],
+        [{ name: 'Busy Harbor', locale: 'en' }, 400],
+        [{ locale: 'en' }, 400],
+        [{ name: 'busy-harbor', locale: 'xx' }, 400],
+    ])('a preset load of %j is refused with %i', async (json, status) => {
+        expect((await call('presets', { json })).status).toBe(status)
     })
 })

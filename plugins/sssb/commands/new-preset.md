@@ -12,10 +12,10 @@ marketplace to (in SSSB's own repository, read its local showcase app instead).
 
 A demo preset is a named starting world: the seed plus a script of operations. Every host replays it its own way:
 the server through the same code the product runs (`@sssb/kit/server-lib/demo-presets`), the single-file `file://`
-demo through its in-memory twin (`@sssb/kit/demo-static/world`). A tour can start from it. In a generated app the
-only Snapshots tab is the static demo's, so a preset loads from **Simulator → Snapshots → Start from a preset** there
-(`pnpm build:demo-static`); the Simulator on `pnpm dev` has People, Mail and Jobs but no Snapshots tab (the reference
-app's own panel has one), and the server replay is exercised by the conformance suite instead (step 8). The contract and every operation kind's rules
+demo through its in-memory twin (`@sssb/kit/demo-static/world`). A tour can start from it. A preset loads from
+**Simulator → Snapshots → Start from a preset** on both: the Simulator on the app's own `pnpm dev` (SSSB's host, behind
+`src/app/api/simulator/[...path]/route.ts`) and the static demo's (`pnpm build:demo-static`); the conformance suite
+holds the server replay to the registry as well (step 8). The contract and every operation kind's rules
 are in `@sssb/kit/core/presets`; the reference app's presets are the worked examples
 (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app-config/presets`).
 

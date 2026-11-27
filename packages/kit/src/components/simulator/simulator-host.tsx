@@ -1,20 +1,39 @@
 'use client'
 
+import { presets } from '@sssb/app-config/presets'
 import { useTranslations } from 'next-intl'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { SimulatorJobs, SimulatorMail, SimulatorSchedules, SimulatorSummary } from '../../server-lib/simulator-api'
+import type {
+    SimulatorAgreements,
+    SimulatorFlags,
+    SimulatorJobs,
+    SimulatorMail,
+    SimulatorSchedules,
+    SimulatorSnapshots,
+    SimulatorSummary,
+} from '../../server-lib/simulator-api'
+import { resolveWorldStart } from '../../core/presets'
 import { sameOriginPath } from '../../core/same-origin-path'
+import { useTours } from '../../demo-static/tour/use-tours'
 import { SimulatorPanel, type SimulatorNotice } from './simulator-panel'
 
 const EMPTY_SUMMARY: SimulatorSummary = { viewpoint: null, signedIn: false, people: [] }
 const EMPTY_MAIL: SimulatorMail = { emails: [], mailSeenAt: null, allCount: 0 }
 const EMPTY_JOBS: SimulatorJobs = { jobs: [], held: false }
 const EMPTY_SCHEDULES: SimulatorSchedules = { schedules: [], clockOffsetMs: 0, worldNow: new Date(0).toISOString() }
+const EMPTY_SNAPSHOTS: SimulatorSnapshots = { snapshots: [] }
+const EMPTY_FLAGS: SimulatorFlags = { flags: [] }
+const EMPTY_AGREEMENTS: SimulatorAgreements = { agreements: [] }
 const EXPANDED_POLL_MS = 4_000
 const COLLAPSED_POLL_MS = 15_000
 const NOTICE_MS = 6_000
 const MAIL_SCOPE_KEY = 'app-simulator-mail-scope'
+/**
+ * Left right before a reset, a restore or a preset load reloads the page, so the next mount can say what happened:
+ * the panel's own notice, surviving exactly one navigation.
+ */
+const POST_NOTICE_KEY = 'app-simulator-post-notice'
 const API = '/api/simulator'
 
 /** A POST to the server host. Always JSON, even with no body: the server refuses any other content type. */
@@ -51,6 +70,38 @@ function useTickets() {
     )
 }
 
+/** What a world-start handler answers once it has started a full reload: nothing runs after it on that document. */
+function untilReload(): Promise<never> {
+    return new Promise<never>(() => {})
+}
+
+type PostNotice = { kind: 'reset' } | { kind: 'restore' | 'preset'; name: string }
+
+function writePostNotice(notice: PostNotice) {
+    try {
+        window.sessionStorage.setItem(POST_NOTICE_KEY, JSON.stringify(notice))
+    } catch {
+        // No storage: the reload happens all the same, unannounced.
+    }
+}
+
+/** The marker a reload left, read once and removed. */
+function takePostNotice(): PostNotice | null {
+    try {
+        const stored = window.sessionStorage.getItem(POST_NOTICE_KEY)
+        if (!stored) return null
+        window.sessionStorage.removeItem(POST_NOTICE_KEY)
+        const parsed = JSON.parse(stored) as { kind?: unknown; name?: unknown }
+        if (parsed.kind === 'reset') return { kind: 'reset' }
+        if ((parsed.kind === 'restore' || parsed.kind === 'preset') && typeof parsed.name === 'string') {
+            return { kind: parsed.kind, name: parsed.name }
+        }
+        return null
+    } catch {
+        return null
+    }
+}
+
 function readStoredScope(): 'person' | 'all' | null {
     try {
         const stored = window.localStorage.getItem(MAIL_SCOPE_KEY)
@@ -67,9 +118,12 @@ function readStoredScope(): 'person' | 'all' | null {
  * build loads it.
  *
  * It wires the tabs that host serves: People (switch to anyone, signed in or not), Mail (each person's inbox, or all
- * of it) and Jobs with the world clock (run what is queued, move the clock, run what is due). The panel leaves out
- * every tab it is not given; the rest, the app's own tabs, presets and tours included, are later stages of the same
- * host. An app that needs one of them today keeps a glue of its own instead of this component.
+ * of it), Jobs with the world clock (run what is queued, move the clock, run what is due), Snapshots (reset the world,
+ * save, restore and delete snapshots, flip a feature flag, bump an agreement, load a demo preset) and, when the app
+ * registers any, Tours. A reset, a restore and a preset load each reload the page, since every page shows the world
+ * they replaced; a tour that starts from one of them resumes itself after the reload. The panel leaves out every tab it
+ * is not given; the rest, the app's own tabs included, are later stages of the same host. An app that needs one of
+ * them today keeps a glue of its own instead of this component.
  *
  * Polling, never a stream: the summary (the pill's unread badge) on a slow beat while the panel is collapsed, and
  * the open tab's data on a faster one while it is expanded. Every acknowledgement is a notice inside the panel,
@@ -77,6 +131,8 @@ function readStoredScope(): 'person' | 'all' | null {
  */
 export function SimulatorHost({ locale, children }: { locale: string; children: ReactNode }) {
     const t = useTranslations('simulator')
+    // A demo preset's title is a key into the app's catalog, from its root.
+    const tRoot = useTranslations()
     const [summary, setSummary] = useState<SimulatorSummary>(EMPTY_SUMMARY)
     const [expanded, setExpanded] = useState(false)
     const [activeTab, setActiveTab] = useState('people')
@@ -84,12 +140,30 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     const [mail, setMail] = useState<SimulatorMail>(EMPTY_MAIL)
     const [jobsData, setJobsData] = useState<SimulatorJobs>(EMPTY_JOBS)
     const [schedulesData, setSchedulesData] = useState<SimulatorSchedules>(EMPTY_SCHEDULES)
+    const [snapshotsData, setSnapshotsData] = useState<SimulatorSnapshots>(EMPTY_SNAPSHOTS)
+    const [flagsData, setFlagsData] = useState<SimulatorFlags>(EMPTY_FLAGS)
+    const [agreementsData, setAgreementsData] = useState<SimulatorAgreements>(EMPTY_AGREEMENTS)
+    const [snapshotsBusy, setSnapshotsBusy] = useState(false)
+    const [busySnapshot, setBusySnapshot] = useState<string | null>(null)
+    const [busyPreset, setBusyPreset] = useState<string | null>(null)
+    const [busyAgreement, setBusyAgreement] = useState<string | null>(null)
     const [notices, setNotices] = useState<SimulatorNotice[]>([])
     const noticeSeq = useRef(0)
     const prevUnread = useRef<Map<string, number> | null>(null)
     const summaryTickets = useTickets()
     const mailTickets = useTickets()
     const jobsTickets = useTickets()
+    // The app's tours (`@sssb/app-config/tours`, read by the engine itself). A tour's starting world resolves the same
+    // way on every host (`resolveWorldStart`): a reset, a registered demo preset, or here a saved snapshot. Each reloads
+    // the page, and the engine's resume marker carries the tour across it.
+    const tours = useTours({
+        onSnapshot: (snapshot) => {
+            const start = resolveWorldStart(snapshot, presets)
+            if (start.kind === 'reset') return handleReset()
+            if (start.kind === 'preset') return handleLoadPreset(start.preset.id)
+            return handleRestoreSnapshot(start.name)
+        },
+    })
 
     const personEmail = summary.people.find((person) => person.key === summary.viewpoint)?.email ?? null
     // Signed out, or no viewpoint yet: there is no one's own inbox to show, so the scope is every inbox.
@@ -141,6 +215,23 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         setSchedulesData(nextSchedules)
     }, [jobsTickets])
 
+    // The Snapshots tab is fetched when it opens and after each of its own actions, never polled: nothing else changes
+    // it but a flag, which reloads the page.
+    const refreshSnapshots = useCallback(async () => {
+        const next = await getJson<SimulatorSnapshots>('snapshots')
+        if (next) setSnapshotsData(next)
+    }, [])
+
+    const refreshFlags = useCallback(async () => {
+        const next = await getJson<SimulatorFlags>('flags')
+        if (next) setFlagsData(next)
+    }, [])
+
+    const refreshAgreements = useCallback(async () => {
+        const next = await getJson<SimulatorAgreements>('agreements')
+        if (next) setAgreementsData(next)
+    }, [])
+
     /** The open tab's own data, when the panel is expanded. */
     const refreshOpenTab = useCallback(() => {
         if (!expanded) return
@@ -155,6 +246,12 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         void refresh()
         const storedScope = readStoredScope()
         if (storedScope) setMailScope(storedScope)
+        // What the reload before this mount did, if a reset, a restore or a preset load started it.
+        const posted = takePostNotice()
+        if (posted?.kind === 'reset') pushNotice(t('noticeWorldReset'))
+        if (posted?.kind === 'restore') pushNotice(t('noticeSnapshotRestored', { name: posted.name }))
+        const preset = posted?.kind === 'preset' ? presets.find((candidate) => candidate.id === posted.name) : undefined
+        if (preset) pushNotice(t('noticePresetLoaded', { name: tRoot(preset.titleKey) }))
         // Mount-only.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
@@ -176,6 +273,15 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         // eslint-disable-next-line react-hooks/set-state-in-effect
         refreshOpenTab()
     }, [refreshOpenTab])
+
+    useEffect(() => {
+        if (!expanded || activeTab !== 'snapshots') return
+        // Fetched when the tab opens: the same external-system sync as the mount effect.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void refreshSnapshots()
+        void refreshFlags()
+        void refreshAgreements()
+    }, [expanded, activeTab, refreshSnapshots, refreshFlags, refreshAgreements])
 
     function handleSelect(person: string) {
         void post('viewpoint', { person, locale }).then(async (response) => {
@@ -279,6 +385,108 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         await afterSchedulesChanged(await post('schedules/run-due'), null)
     }
 
+    // The three world-start handlers (reset, restore, preset) answer a promise a tour's start can await: false when the
+    // server refused, and on success one that never settles, because the page is reloading. Awaiting it keeps a tour
+    // from showing its first step on a document about to be replaced.
+    function handleReset(): Promise<boolean> {
+        setSnapshotsBusy(true)
+        const failed = () => {
+            setSnapshotsBusy(false)
+            return false
+        }
+        return post('reset').then((response) => {
+            if (!response.ok) return failed()
+            writePostNotice({ kind: 'reset' })
+            window.location.assign(`/${locale}`)
+            return untilReload()
+        }, failed)
+    }
+
+    function handleRestoreSnapshot(name: string): Promise<boolean> {
+        setBusySnapshot(name)
+        const failed = () => {
+            setBusySnapshot(null)
+            return false
+        }
+        return post('snapshots/restore', { name }).then((response) => {
+            if (!response.ok) return failed()
+            writePostNotice({ kind: 'restore', name })
+            window.location.assign(`/${locale}`)
+            return untilReload()
+        }, failed)
+    }
+
+    /**
+     * The server resets the world, replays the preset and signs this browser in as its viewpoint, then answers where
+     * to land: a full reload, as after a restore. A refused or failed load is said, never only un-busied: the server
+     * may have reset the world before the step that failed, so this page no longer shows what the world holds. No
+     * reload then, so a tour that asked for the preset can still record the miss.
+     */
+    function handleLoadPreset(id: string): Promise<boolean> {
+        setBusyPreset(id)
+        const failed = (): false => {
+            setBusyPreset(null)
+            const preset = presets.find((candidate) => candidate.id === id)
+            pushNotice(t('noticePresetFailedStale', { name: preset ? tRoot(preset.titleKey) : id }))
+            return false
+        }
+        return post('presets', { name: id, locale }).then(async (response) => {
+            // Only ever to a path on this origin: the server answers no other, and this is the client's own check.
+            const path = response.ok
+                ? sameOriginPath(((await response.json()) as { redirectTo?: unknown }).redirectTo)
+                : null
+            if (!path) return failed()
+            writePostNotice({ kind: 'preset', name: id })
+            window.location.assign(path)
+            return untilReload()
+        }, failed)
+    }
+
+    function handleSaveSnapshot(name: string) {
+        setSnapshotsBusy(true)
+        void post('snapshots', { name })
+            .then((response) => {
+                if (!response.ok) return
+                pushNotice(t('noticeSnapshotSaved', { name }))
+                void refreshSnapshots()
+            })
+            // A rejected fetch (the dev server stopped) must not leave the controls disabled until a reload.
+            .catch(() => undefined)
+            .finally(() => setSnapshotsBusy(false))
+    }
+
+    function handleDeleteSnapshot(name: string) {
+        setBusySnapshot(name)
+        void post('snapshots/delete', { name })
+            .then((response) => {
+                if (!response.ok) return
+                pushNotice(t('noticeSnapshotDeleted', { name }))
+                void refreshSnapshots()
+            })
+            .catch(() => undefined)
+            .finally(() => setBusySnapshot(null))
+    }
+
+    function handleToggleFlag(flag: string, enabled: boolean) {
+        // A full reload: what a flag changes (the demo banner, say) is server output, read again only on a new request.
+        void post('flags', { flag, enabled }).then((response) => {
+            if (response.ok) window.location.reload()
+        })
+    }
+
+    function handleBumpAgreement(id: string) {
+        setBusyAgreement(id)
+        void post('agreements/bump', { agreementId: id })
+            .then(async (response) => {
+                if (!response.ok) return
+                const { version } = (await response.json()) as { version: number }
+                pushNotice(t('noticeAgreementBumped', { version }))
+                void refreshAgreements()
+            })
+            .catch(() => undefined)
+            .finally(() => setBusyAgreement(null))
+    }
+
     function handleLocaleChange(next: string) {
         if (next === locale) return
         // Swap the leading /<locale> segment and reload the same page: the theme and the header are per-request
@@ -329,7 +537,25 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
                         onRunDue: handleRunDue,
                     },
                 }}
+                snapshots={{
+                    snapshots: snapshotsData.snapshots,
+                    onReset: () => void handleReset(),
+                    onSave: handleSaveSnapshot,
+                    onRestore: (name) => void handleRestoreSnapshot(name),
+                    onDelete: handleDeleteSnapshot,
+                    busy: snapshotsBusy,
+                    busySnapshot,
+                    flags: flagsData.flags,
+                    onToggleFlag: handleToggleFlag,
+                    agreements: agreementsData.agreements,
+                    onBumpAgreement: handleBumpAgreement,
+                    busyAgreement,
+                    onLoadPreset: (id) => void handleLoadPreset(id),
+                    busyPreset,
+                }}
+                tours={tours.tab}
             />
+            {tours.overlay}
         </div>
     )
 }

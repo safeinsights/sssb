@@ -13,15 +13,14 @@ marketplace to (in SSSB's own repository, read its local showcase app instead).
 A tour is a scripted walkthrough: a ghost cursor drives the REAL screens while a bar narrates, so the single-file
 demo (`pnpm build:demo-static` builds it) can be watched instead of read about. The _engine_ is the framework's
 (`@sssb/kit/demo-static/tour/contracts` and `@sssb/kit/demo-static/tour/use-tours`, with the Simulator's Tours tab);
-each tour is app content. In a generated app the only Tours tab is the static demo's, so that is where its tours
-run: the Simulator on `pnpm dev` has People, Mail and Jobs but no Tours or Snapshots tab (the reference app's own
-panel has them).
+each tour is app content. A tour runs from the Tours tab on both of a generated app's Simulators: on its own `pnpm dev`
+(SSSB's host) and in the static demo.
 
 1. **Register** in `src/app-config/tours.ts`: add a `TourDefinition` (`@sssb/kit/demo-static/tour/contracts`) with
    `id`, `titleKey`, `summaryKey`, usually `snapshot: 'reset'` or the id of a demo preset (`presets` in
    `src/app-config/presets.ts`, written with `/sssb:new-preset`) when the story should open mid-shift. Both work on
-   every host. A saved snapshot's name does not: snapshots are saved on a server, through the server Simulator's
-   Snapshots tab, which a generated app's `pnpm dev` panel does not have, and such a tour fails the `file://` walkthrough gate. Then its
+   every host. A saved snapshot's name does not: snapshots are saved on a server, through the Snapshots tab on
+   `pnpm dev`, the static demo has none, and such a tour fails the `file://` walkthrough gate. Then its
    steps. An app with no tours renders no Tours tab at all, so an empty `tours` is a real off-switch.
 2. **Narration** goes in the APP catalog (`messages/en.json` and `messages/es.json`, a `tours` namespace listed in
    `APP_NAMESPACES` in `src/app-config/messages.ts`), referenced by FULLY-QUALIFIED key (`tours.myTourStep1`). Both
