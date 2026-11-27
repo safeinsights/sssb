@@ -70,7 +70,7 @@ describe('createS3Storage', () => {
     })
 
     test('uploadTarget `put` builds its own client without the default checksum, and a given client that adds one is refused', async () => {
-        const own = createS3Storage({ bucket: 'b', region: 'us-east-1', credentials, uploadTarget: 'put' })
+        const own = createS3Storage({ bucket: 'b', region: 'us-east-1', uploadTarget: 'put', credentials })
         const target = await own.createUploadTarget('k', { contentType: 'text/plain', maxBytes: 10, sizeBytes: 3 })
         expect(target).toMatchObject({ method: 'PUT', headers: { 'Content-Type': 'text/plain' } })
         expect(new URL(target.url).searchParams.has('x-amz-checksum-crc32')).toBe(false)
@@ -86,7 +86,7 @@ describe('createS3Storage', () => {
         ).rejects.toThrow(/carries x-amz-checksum-crc32.*requestChecksumCalculation: 'WHEN_REQUIRED'/)
 
         // And one built for it works, uploadTarget not counting as a client option that would be ignored.
-        const fitted = new S3Client({ region: 'us-east-1', credentials, requestChecksumCalculation: 'WHEN_REQUIRED' })
+        const fitted = new S3Client({ requestChecksumCalculation: 'WHEN_REQUIRED', region: 'us-east-1', credentials })
         const ok = await createS3Storage({ bucket: 'b', client: fitted, uploadTarget: 'put' }).createUploadTarget('k', {
             contentType: 'text/plain',
             maxBytes: 10,
