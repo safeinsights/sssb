@@ -7652,6 +7652,7 @@ both connect with one explicit mode, read by one function (`databaseSsl` in
   libpq's default, `prefer`). Rejected: **a warning when `disable` names a host that is not loopback** (a reviewer's
   suggestion): a compose network's `db` is not loopback either, and the docs and the cutover row already confine
   `disable` to a server with no TLS.
+
 ## The secret scan reads the commits it is asked about, not every branch (2026-11-27, `fix/secret-scan-scope`)
 
 `safeinsights/sssb#106`: `secret-scan` ran `gitleaks git` with no `--log-opts`, which gitleaks 8.30.1 turns into
