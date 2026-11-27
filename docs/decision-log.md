@@ -7589,3 +7589,38 @@ standing rule for these sessions: decide, and record the rejected alternative.
   every app follows. The cutover checklist's `auth-dev` row gains one sentence (a sibling change edits the same row).
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
+
+## The secret scan reads the commits it is asked about, not every branch (2026-11-27, `fix/secret-scan-scope`)
+
+`safeinsights/sssb#106`: `secret-scan` ran `gitleaks git` with no `--log-opts`, which gitleaks 8.30.1 turns into
+`git log -p -U0 --full-history --all`, and the `fetch-depth: 0` checkout puts every branch of the remote in the clone.
+One branch's secret-like string failed the scan on every other open pull request. The range is now picked by
+`.github/scripts/secret-scan-range.sh` from the event, and the generator's workflow and root files carry both.
+
+- **The range.** `pull_request`: `<base sha>..<head sha>` from the event payload, so a commit the pull request added and
+  deleted again is still read. `push` (only `main` triggers `checks.yml`): `HEAD`, the pushed branch's full history, so
+  what reaches `main` is scanned in full. Any other event exits non-zero with no output: a new trigger decides its range
+  in review. Rejected: **a default of `HEAD`**, which would scan a `workflow_dispatch` or merge-queue run's whole
+  history under a name that says it scanned the change; **no default**, which is the bug. Rejected: **the merge
+  commit's parents (`HEAD^1..HEAD^2`)**, which `docs-only.sh` uses and which names the base tip at the time the run
+  started rather than at the event; the issue's design reads the event's shas, and a base that moved on makes the range
+  larger (the commits the branch merged in that the stale base does not reach), never smaller, so it fails toward
+  scanning more. A re-run reads the same payload.
+- **Quoting.** gitleaks splits `--log-opts` on spaces and warns about a value with quotes in it, so the script prints one
+  space-free line and the step passes it as `--log-opts="$range"`, the shell removing the quotes. The step takes the range
+  in a statement of its own (`range=$(...)`): a failed command substitution inside another command's arguments does not
+  stop a `bash -e` step, and gitleaks would run with an empty value, which is `--all` again. `${range:?}` is the second
+  guard. The shas arrive as environment variables, never interpolated into the script text, and the script accepts only
+  a full 40 or 64 digit id that is a commit in the clone (a ref name, an option or a range would otherwise reach
+  `git log` as one).
+- **Scope of the copy.** A generated workspace's `checks.yml` had the same job, so the generator writes the same step and
+  copies the script as it is (`ROOT_FILES`); a changeset for `@sssb/create` (Kind scaffold, optional: the old scan keeps
+  working, with the old bug) says how an existing workspace takes it. `app-checks.yml` and `sssb ci` have no scan.
+- **What is no longer scanned early.** A commit pushed straight to a branch that is not `main` (an `int-*` branch, say)
+  used to fail every pull request's scan; now it is read when it reaches `main`, in the pull request into `main` and
+  then the push. A pull request into that branch does not read it either: it is reachable from the base. With
+  `--log-opts` set, gitleaks 8.30.1 drops its own `--full-history` and `--diff-filter=tuxdb` (debug output:
+  `git log -p -U0 HEAD`, against `git log -p -U0 --full-history --all --diff-filter=tuxdb` without it); a pull request
+  that deletes a file holding a secret already on its base still reports nothing, as before (throwaway repository).
+- **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
+  stopword behaviour (named out of scope in the issue).
