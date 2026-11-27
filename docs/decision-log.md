@@ -8265,20 +8265,28 @@ catchRequests })`), which the conformance check uses so it never touches an app'
 
 `safeinsights/sssb#146` and `safeinsights/sssb#155`, two tooling leftovers.
 
-- **`#146`: a marker is stale when the process at its pid started after the marker was written.** A wrapper killed with
-  SIGKILL leaves `dev-ticker.json`, and once the OS gives its pid to an unrelated process `process.kill(pid, 0)` says
-  "alive", so both Playwright configs refused to load until the file was deleted by hand. The marker's `startedAt` is
-  written by its own process after that process began, so a process at the pid that began later cannot have written it.
-  `liveTickerMarker(file, startOf = processStartedAt)` compares the two, with `ps -o lstart=` for the start (macOS and
-  Linux, to the second; `LC_ALL=C`; two seconds' timeout) and a 2 s tolerance, because `ps` rounds down and Linux reckons
-  a start from the boot time, which drifts by up to a second. Rejected: `/proc/<pid>/stat`, which macOS lacks; the
-  issue's other reading, "did not start at `startedAt`", which a wrapper that is a long-running server (the showcase's
-  dev server writes its marker minutes after it began) would fail by being too early. The start time of a process is
-  later than a marker only when the pid was reused.
-- **When it cannot be told, the marker stays live, as before:** `startedAt` not a date, no `ps` (Windows), a `ps` that
-  fails. A false "stale" would let an e2e run adopt a ticking dev server, which is what the marker exists to stop, and a
-  false "live" is only the old behaviour. **A stale marker is cleared**, and so is one whose process is gone (it was
-  ignored before and left on disk), unless the file changed since it was read (another wrapper wrote its own in between).
+- **`#146`: a marker is stale when the process now at its pid is not the one that wrote it, told by a start token.** A
+  wrapper killed with SIGKILL leaves `dev-ticker.json`, and once the OS gives its pid to an unrelated process
+  `process.kill(pid, 0)` says "alive", so both Playwright configs refused to load until the file was deleted by hand.
+  The marker now carries `startToken`, the writer's own start as the kernel records it (`processStartToken`): on Linux the
+  boot id and the start time in ticks since boot (`/proc/<pid>/stat`, field 22), elsewhere `ps -o lstart=` (macOS keeps it
+  fixed per process), run with `TZ=UTC0` so two processes with other time zones read one string. A reader compares tokens
+  for equality: another token at the pid is another process, and the marker is ignored and cleared. **First written as a
+  date comparison** (`startedAt` against the start `ps` gives, plus a tolerance), and **dropped after review**: on Linux
+  `ps` computes `lstart` from the kernel's boot time plus ticks, so a wall clock stepped forward after the process began
+  (a paused guest resuming, an NTP step) moves every process's start later, past the marker's `startedAt`, and a LIVE
+  ticker's marker was judged stale and deleted, the failure the marker exists to stop; and a `TZ` that libc and V8 read
+  differently shifted it by hours. A token compared for equality has neither. Rejected: the issue's "did not start at
+  `startedAt`", for the same clock reason and because a dev server writes its marker minutes after it began.
+- **What cannot be judged is live, as before:** a marker with no token (written by an older version), a token that cannot
+  be read now (no `/proc` and no `ps`, as on Windows, an unreadable pid, `ps` timing out), tokens of different kinds
+  (another machine's, through a shared directory). A false "stale" would let an e2e run adopt a ticking dev server. A
+  process never judges its own marker, so the Simulator's status poll in a dev server spawns no `ps`. **Only a marker
+  proved stale by a token is cleared**; one whose process is gone is ignored and left, as before (a container's marker read
+  from a host shows a gone or foreign pid, and deleting it would take its ticker's protection away). The clearing re-reads
+  the file and removes it only if it is still the one judged, so a wrapper that wrote its own in between keeps it; one
+  that writes between that re-read and the removal still loses it, microseconds wide, and its ticker restores it on its
+  next start.
 - **`#155`: the vendor ban's two halves read one list through one matcher.** The static half matched the list with the
   `ignore` package (gitignore semantics, case-insensitive), the declarationless half (`import()`, `require()`, a
   type-position `import('…')`) with a hand-written `isVendorSpecifier`, so a bare `pg` banned a local `./pg` and

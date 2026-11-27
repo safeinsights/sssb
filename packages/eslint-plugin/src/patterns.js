@@ -53,7 +53,7 @@ export const vendorSdkPattern = {
 // else (`firebase/app` bans `firebase/app/x`, not `firebase/apple` or `firebase/auth`). These are exactly what BOTH
 // halves of the ban read alike: the declaration half reads gitignore patterns, the dynamic half (import(), require(),
 // a type import('…')) only these shapes, so any other gitignore pattern (`@stripe/**`, `stripe-*`, `stripe/`) banned
-// a declaration and let import() through. Lowercase, as npm names are: the dynamic half is case-sensitive. A leading
+// a declaration and let import() through. Lowercase, as npm names are. A leading
 // `!` (a gitignore negation) is refused with the rest.
 const PACKAGE_NAME = '[a-z0-9~-][a-z0-9._~-]*'
 export const vendorEntrySource = `^(?:@${PACKAGE_NAME}/\\*|(?:@${PACKAGE_NAME}/)?${PACKAGE_NAME}(?:/${PACKAGE_NAME})?(?:/\\*)?)$`

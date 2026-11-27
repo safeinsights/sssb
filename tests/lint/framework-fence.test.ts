@@ -261,6 +261,8 @@ describe('the two halves of the vendor ban read the list the same way', () => {
         ['./posthog-js', false],
         ['posthog-node', true],
         ['posthog-node/lib', true],
+        ['./posthog-node', false],
+        ['x/posthog-node', false],
         ['mailgun.js', true],
         ['mailgun.js/x', true],
         ['./mailgun.js', false],

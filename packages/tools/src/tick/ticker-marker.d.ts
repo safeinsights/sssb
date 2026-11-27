@@ -8,17 +8,21 @@ export declare function writeTickerMarker(file: string, seconds: number): void
 export declare function removeTickerMarker(file: string): void
 
 /**
- * The live ticker a marker records, or null when there is none, its process is gone, or the process now at its pid started
- * after the marker was written (a reused pid): a marker found stale is cleared. `startOf` says when the process at a pid
- * started (default `processStartedAt`).
+ * The live ticker a marker records, or null when there is none, its process is gone, or the process now at its pid is not
+ * the one that wrote the marker (the OS reused the pid): a marker found so is cleared. A marker whose process cannot be
+ * told apart from the one at its pid is live. `tokenOf` gives the start token of the process at a pid
+ * (default `processStartToken`).
  */
 export declare function liveTickerMarker(
     file: string,
-    startOf?: (pid: number) => number | null,
-): { pid: number; seconds: number; startedAt: string } | null
+    tokenOf?: (pid: number) => string | null,
+): { pid: number; seconds: number; startedAt: string; startToken?: string | null } | null
 
-/** When the process at `pid` started, in ms since the epoch, or null when that cannot be told (no `ps`, a gone pid). */
-export declare function processStartedAt(pid: number): number | null
+/**
+ * A token for when the process at `pid` began, to compare for equality: the same for one process, another for a process
+ * that took the pid later, and not moved by a wall clock that is stepped. null when it cannot be told.
+ */
+export declare function processStartToken(pid: number): string | null
 
 /**
  * Throws while a dev ticker is live in this app's data directory: a Playwright config calls it so a ticking dev
