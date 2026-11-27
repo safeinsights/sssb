@@ -17,11 +17,12 @@ name one file under SSSB's `webhooks/` prefix (a provider's verification handsha
 webhook guard). It is stale where its path has no read handler, or where it lists a name no read there uses. An
 exemption key may now name a dynamic segment (`[locale]`) literally.
 
-**Also changed: a route group is not part of the path.** The check matches a route by the URL Next serves it at, so a
-route group's `(name)` segment is dropped from the path exemptions and required gates are matched against, and from an
-exemption key. Before, `src/app/api/(internal)/service/x/route.ts`, served at `/api/service/x`, escaped the `service/`
-gate, and a route under `src/app/(app)/api/` read as one outside `src/app/api`. An app with such a route may now fail
-where it passed: its handler is judged by the rule its URL falls under. Nothing else that passed before fails.
+**Also changed: the path is the URL.** The check matches a route by the URL Next serves it at, so a route group's
+`(name)` and a parallel route's `@slot` segment are dropped from the path exemptions and required gates are matched
+against, and from an exemption key. Before, `src/app/api/(internal)/service/x/route.ts`, served at `/api/service/x`,
+escaped the `service/` gate, and a route under `src/app/(app)/api/` read as one outside `src/app/api`. A route under an
+intercepting segment (`(.)x`, `(..)x`, `(...)x`) now fails outright, since Next also serves it at the URL it intercepts.
+An app with such a route may now fail where it passed. Nothing else that passed before fails.
 
 **To adopt.** Run the conformance suite (`pnpm test:unit`): a route in a route group under `src/app/api` that it now
 names is judged as its URL is (a `service/` route must be wrapped by `withServiceCaller`, as at any other path there).

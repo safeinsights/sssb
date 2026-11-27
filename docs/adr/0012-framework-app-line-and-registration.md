@@ -1092,12 +1092,18 @@ function the file neither exports, declares ambiently (`declare`, `declare globa
 it: what it names counts too, so `const corsHeaders = db` or `function posts() { return db.all() }` also needs `db`
 listed. A listed import is not read (a helper in another module is out of the scan's sight, as always), so listing a
 function that reads org data is a claim the reason makes, which review judges, as it judges a `calls` gate's port
-call. A listed name no read handler at the path uses is a problem, so a list cannot pre-approve one. The handler
-naming itself (`GET.load`) is refused whatever is listed.
+call. A listed declaration of the file is refused if anything else in the file refers to it (a top-level
+`cache.db = db`, another handler's `cache.set(…)`, an `export { cache }`), or it has more than one declaration: what the
+read sees must be all there is. A listed name no read handler the entry governs uses is a problem, so a list cannot
+pre-approve one. The handler naming itself (`GET.load`) is refused whatever is listed.
 
-**Route groups.** The scan matches a route by its URL: a `(name)` segment is dropped from a route's path, and from an
-app's exemption key, before either is matched. Before this addendum, `api/(internal)/service/x/route.ts` escaped the
-`service/` required gate, a hole older than reads being judged, which a reads-only entry would have widened.
+**Route groups and slots.** The scan matches a route by its URL: a route group's `(name)` segment and a parallel
+route's `@slot` segment are dropped from a route's path, and from an app's exemption key, before either is matched, as
+Next drops them; two keys that name one route are both refused. Before this addendum, `api/(internal)/service/x` and
+`api/@slot/service/x`, served at `/api/service/x`, escaped the `service/` required gate, a hole older than reads being
+judged, which a reads-only entry would have widened. A route under an intercepting segment (`(.)x`, `(..)x`, `(...)x`),
+which Next also serves at the URL it intercepts on a header the client sends, is refused outright: no path-keyed rule
+can tell which URL it answers.
 
 **Rejected:** treating `process.env` as inert (the app's lint, `sssb/no-process-env`, keeps it out of routes; a value
 from the environment arrives through `config/params.ts`, an import a `reads-only` gate can name); treating a frozen

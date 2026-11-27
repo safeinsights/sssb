@@ -8025,8 +8025,10 @@ settle:
   import, a helper reading the database, a `declare`d `fetch`): the scan now reads a listed `const` or function and
   counts its names, and refuses an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
   under `simulator/` too, which the issue did not ask for and whose 404-in-real guarantee such a read does not keep:
-  `webhooks/` only. A listed name nobody reads is a problem. Review also found route groups escaping path-keyed
-  rules (`api/(g)/service/…` past the `service/` gate), older than this change; the scan now matches by URL, which can
-  fail an app that passed, hence `minor`, Action required.
+  `webhooks/` only. A listed name nobody reads is a problem. The second round found a listed `const` that the file
+  fills elsewhere (`cache.set(…)` in a POST): a listed declaration used anywhere outside the read is now refused.
+  Review also found route groups and parallel-route slots escaping path-keyed rules (`api/(g)/service/…`,
+  `api/@s/service/…` past the `service/` gate), older than this change; the scan now matches by URL, and refuses an
+  intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
 - **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
   own, in its own PR.

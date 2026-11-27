@@ -156,7 +156,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   entry applies to reads only (a mutation at its path keeps the gate it had), and it is the one kind that may sit
   outside `src/app/api`, under `outsideApi: { files, prefixes }` with keys relative to `src/app`, or name one file
   under SSSB's `webhooks/` prefix (a provider's verification handshake). A key names a dynamic segment literally
-  (`[locale]/feed.xml/route.ts`), and a route group's `(name)` is not part of it, as it is not part of the URL.
+  (`[locale]/feed.xml/route.ts`), and a route group's `(name)` or a slot's `@name` is not part of it, as it is not
+  part of the URL. A listed `const` or function of the file must be used nowhere else in it. A route under an
+  intercepting segment (`(.)x`, `(..)x`) fails the check: serve the handler from a route that does not intercept.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.
