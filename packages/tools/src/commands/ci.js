@@ -329,7 +329,8 @@ export async function run(args) {
         const project = takeOption(rest, '--project')
         if (rest.length > 0) throw new UsageError('usage: sssb ci e2e --app <dir> [--project <name>]')
         if (project === undefined) return sh(appDir, ['pnpm', 'run', 'test:e2e'])
-        const extra = project === 'destructive' ? ['--workers=1', '--no-deps'] : []
+        // TEMPORARY (safeinsights/sssb#99): measuring the destructive shard with its config's workers; reverted before review.
+        const extra = project === 'destructive' ? (process.env['E2E_WORKERS'] ? ['--no-deps'] : ['--workers=1', '--no-deps']) : []
         return sh(appDir, ['pnpm', 'exec', 'playwright', 'test', `--project=${project}`, ...extra])
     }
     if (job === 'demo-static') {
