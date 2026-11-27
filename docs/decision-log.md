@@ -7614,6 +7614,7 @@ them. Decisions the issue left open:
   call is one of its readers.
 - **No `tours` or `presets` registration is needed for the tab to be right**: an app with none gets no Tours tab and
   no presets section (both are the seam's off-switches already), and a reset is the one world start every host has.
+
 ## The upload target's PUT form (2026-11-27, `feat/storage-put-upload`, `safeinsights/sssb#134`)
 
 `UploadTarget` becomes `PostUploadTarget | PutUploadTarget`, `STORAGE_UPLOAD_TARGET` gains `put`, and the showcase
