@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import { originFor } from '@sssb/tools/ports'
 import { assertNoLiveDevTicker } from '@sssb/tools/ticker-marker'
+import { DESTRUCTIVE_EXPECT_TIMEOUT, DESTRUCTIVE_TEST_TIMEOUT, E2E_BUILD } from './tests/e2e/support/budgets'
 
 // A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
 // suite; the ticker leaves a marker while it runs, and this refuses to load past it (@sssb/tools/ticker-marker).
@@ -12,17 +13,15 @@ assertNoLiveDevTicker()
 const BASE_URL = originFor('showcase')
 
 /**
- * Run against a PRODUCTION build instead of `next dev`. CI sets this; local does not.
- *
- * Every inflated timeout in this repo — 15s expect, 60s here, 120s destructive, the 90s gotos —
- * exists to absorb `next dev`'s on-demand compilation, and CI pays roughly 3x for it. A production
- * build removes the compile entirely. It also closes a real gap: without this, CI never runs
- * `next build` at all, so a change that breaks the production build ships green.
+ * `E2E_BUILD=1` (CI sets it; local does not) runs against a PRODUCTION build instead of `next dev`
+ * (./tests/e2e/support/budgets.ts reads it). A production build removes the on-demand compile that
+ * the dev budgets absorb, and it closes a real gap: without it, CI never runs `next build` at all,
+ * so a change that breaks the production build ships green.
  *
  * Local stays on dev deliberately: `reuseExistingServer` keeps a warm server across runs, and a
- * build per attempt would cost more than the compiles it saves.
+ * build per attempt would cost more than the compiles it saves. The destructive project's budgets
+ * are re-derived for the production build (#100); the chromium project's below are still the dev ones.
  */
-const E2E_BUILD = process.env.E2E_BUILD === '1'
 
 export default defineConfig({
     testDir: './tests/e2e',
@@ -88,16 +87,13 @@ export default defineConfig({
             use: { ...devices['Desktop Chrome'] },
             testDir: './tests/e2e/destructive',
             dependencies: ['chromium'],
-            // Because `pnpm test:e2e` runs this as its OWN playwright invocation (see above), and CI
-            // sets reuseExistingServer:false, this pass starts against a COLD dev server — every route
-            // it touches pays a full Next dev compile on first hit instead of inheriting the warm
-            // server the main pass left behind. The default 30s test timeout is marginal for that on a
-            // CI runner and fails intermittently on whichever spec happens to hit an uncompiled route.
-            // Measured 2026-07-31: this project takes 2.2 min locally and ~6.7 min on a CI runner for the
-            // same 14 tests — 3x. At that ratio a 20s local test lands exactly on a 60s budget, which is
-            // why the failures were intermittent, always a bare waitForURL timeout, and never locally
-            // reproducible (three ordering experiments, all green). 120s is that measurement, not a guess.
-            timeout: 120_000,
+            // Its own budgets, one pair for each server it runs against (./tests/e2e/support/budgets.ts says how each
+            // was derived): a production build's, from CI's measured durations, and `next dev`'s, sized for a cold dev
+            // server. Because `pnpm test:e2e` runs this as its OWN playwright invocation (see above), and CI sets
+            // reuseExistingServer:false, this pass starts against a COLD server, every route of which compiles on its
+            // first hit under `next dev`.
+            timeout: DESTRUCTIVE_TEST_TIMEOUT,
+            expect: { timeout: DESTRUCTIVE_EXPECT_TIMEOUT },
         },
     ],
     webServer: {
@@ -108,7 +104,7 @@ export default defineConfig({
         // scheduler that does nothing until a test asks, so whatever is in the caller's shell, the server it starts is not ticked.
         env: { DEV_TICK_SECONDS: '' },
         // A production build has to compile before it can serve; dev serves immediately and compiles
-        // per-route as tests hit it.
-        timeout: E2E_BUILD ? 420_000 : 120_000,
+        // per-route as tests hit it. Build and start took 26 to 39 s on CI (five runs, 2026-11-27): 180 s is 4.6x that.
+        timeout: E2E_BUILD ? 180_000 : 120_000,
     },
 })
