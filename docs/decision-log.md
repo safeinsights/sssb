@@ -7839,6 +7839,118 @@ One branch's secret-like string failed the scan on every other open pull request
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
 
+## Job retries with backoff, a new row per attempt (2026-11-27, `fix/job-retries`)
+
+safeinsights/sssb#135: a job was tried once, and `failed` ended it for good, whether the handler threw, a build failed
+or the in-process runner lost it. A kind may now opt in to retries. The issue listed its open questions in order; each
+is answered here.
+
+- **A retry is a new job row, not the same row.** The issue asked for the new-row sketch to be tried first, and it was
+  kept. Framework migration `0019_job_attempts` gives `jobs` an `attempt` (from 1), a `retry_of` (the FIRST attempt's
+  id, so every attempt points at one key) and a `run_after` (set only while a retry waits out its delay). `failed` stays
+  terminal: `jobStatusMachine` is unchanged, and so is the idempotency `recordWebhookCompletion` stands on. A
+  redelivered failure finds the row already `failed`, answers `idempotent`, and arms nothing more. Each attempt keeps its
+  own timeline, and the first attempt's error is never overwritten by a later one. The cost is several rows for one piece
+  of work in a job list; the views now carry `attempt` and `retryOf` so a screen can group them. Rejected: **the same
+  row going `failed -> queued`**, or a new `retrying` status. That loosens the one rule the webhook's idempotency and the
+  timeline's meaning rest on, and leaves a status a dashboard and a service poller would both have to learn.
+- **Opt in per kind, default none, in the seam beside `jobNotify`.** The optional `jobRetry` export holds
+  `Partial<Record<AppJobKind, JobRetry>>`, with `JobRetry = { attempts, delaysMs? }`. It is read through the seam's
+  namespace, as `jobNotify` is, so an app without the export builds and runs every kind once.
+    - An entry SSSB will not honour (`isJobRetry`: attempts not a whole number from 1 to `MAX_JOB_ATTEMPTS`, 10, or a
+      delay that is negative or not finite) counts as absent. A typo must never become a hundred runs of a failing job.
+    - The framework's own kinds never retry.
+    - With no `delaysMs`, the delays are the webhook deliveries' backoff (`backoffDelayMs`), reusing what already exists.
+      The last delay repeats when the list is shorter than the attempts.
+- **Arming happens at the failure, in its transaction.** `recordJobStatus`, the one choke point every runner's failure
+  goes through, inserts the next attempt in the SAME transaction that records `failed`. That covers a handler's throw
+  (`runJobInProcess`), the in-process sweep's lost job, a build's failure webhook, and a start the drain could not make.
+  The new row is queued, with `run_after` set to the failure plus the delay, and copies the kind, org, payload and
+  requester. Its opening timeline entry reads `attempt N of M, after: <error>`, and the failed entry reads
+  `retry armed: …`. So no failure can happen without its retry being durable, and none can arm twice.
+    - The clock is the caller's (`extra.now`): the simulated runner passes the world clock and the sweep passes the tick's.
+      That way a demo that moved its clock reaches a retry by moving it again.
+    - Rejected: **arming in a separate step after the failure commits**, which a crash between the two would lose.
+- **The scheduled tick starts the next attempt.** A retry cannot wait inside the invocation that failed. It gets a
+  third drain, `runDueRetries`, built on #97's machinery: listed per tenant under `withTenant`, taken in fair turns, and
+  bounded by its own window, so the tick's windows are now schedules 6 s, retries 10 s and deliveries 16 s, re-divided
+  inside the same 30-second limit.
+    - It claims a row the way the delivery drain claims a delivery: lock it, check it is still waiting and due, and clear
+      `run_after`. Only after that commits does it call `jobs.start` with the attempt and the first attempt's id. From the
+      claim on, the row is an ordinary queued job, so every runner treats it as it treats a submitted one.
+    - A start that throws (StartBuild refused) records the attempt failed, which arms the next.
+    - The tick's period is the floor under any delay; the guide says so where a kind sets one.
+    - Rejected: **a timer in the process**, which a Lambda does not have; and **retrying inside the failing invocation**,
+      which shares its limit and may be what died.
+- **Idempotency is the handler's.** SSSB tells a handler `ctx.attempt` and `ctx.firstJobId`, the key it deduplicates its
+  side effects on, and passes both to a CodeBuild build as `JOB_ATTEMPT` and `JOB_FIRST_ID`. The guide states the
+  requirement.
+    - Both context fields are optional in the type, though SSSB's runners always set them. A required field would break
+      every adopter test that calls a handler with a hand-built context (the showcase's export test does).
+    - A time-budgeted handler that returns having done part of its work has succeeded, and is not retried.
+- **Lost jobs.** The in-process sweep leaves a waiting retry alone (`run_after` is set), since it is the tick's to start,
+  not lost. A job the sweep fails as lost arms its retry like any other failure.
+    - The simulated world loses no jobs and has no sweep.
+    - CodeBuild has no lost-build detection at all: a build that dies without posting its webhook is never noticed, so it
+      is never retried. Closing that gap is its own change: safeinsights/sssb#231.
+- **Notifications are about the job's end.** `notifyJobTerminal` skips a failure that armed a retry: it checks for a
+  later attempt of the same work, so every caller (the runners, the webhook route, the sweep) gets it without a
+  parameter. `jobNotify`'s `failure` therefore means a failure with no attempts left. The payload gains `attempts` when
+  the attempt is above 1, and the catalog says "did not finish after N attempts". Whether a retry writes an
+  `audit_events` row is #156's question, left with it. The timeline is the record here.
+- **The Simulator.**
+    - "Run pending jobs" and the builder actor's pool skip a retry still waiting: an operator must not jump a backoff by a
+      click.
+    - The clock advance and run-due also run `runDueRetries` (`simulator-api.ts` and the showcase's two routes). Advancing
+      past a delay is how a demo reaches a retry.
+    - The static demo's twin gets the same map through `useDemoWorld({ jobRetry })`, plus a `jobOutcome` hook, the twin
+      of a handler that throws, since it could only complete a job before.
+- **safeinsights/sssb#215 is not covered.** A schedule whose spawn fails inside its transaction creates no job row, so
+  there is nothing for a job retry to retry. What it needs is a policy for the schedule row itself (disable an
+  unparseable spec, back off a transient failure), with its own question of who sees it. It stays open.
+- **Proofs.** `db/job-retries.test.ts` runs every server runner through the issue's cases, each checking the rows, the
+  timeline, the notification and, for CodeBuild, the redelivered webhook:
+    - succeeds first time; fails then succeeds; fails every attempt; and, on the in-process runner, is lost then succeeds;
+    - a kind that does not retry;
+    - two drains racing one retry;
+    - a start that throws;
+    - the Simulator skipping a waiting retry.
+
+    Removing the arming, the notifier's skip, the sweep's or run-pending's exclusion, the drain's under-lock re-check,
+    the delay, or the first job id's hand-off each turns them red. `core/jobs.test.ts` covers the seam reader;
+    `db.contract.test.ts` arms and drains a retry on real Postgres under RLS; `demo-static/world-job-retries.test.tsx`
+    runs the twin through the same cases and holds its copy of the policy to core's answers.
+
+- **What review changed** (two review rounds on Opus, then a check of the second round's fixes as a diff).
+    - **A waiting retry is hidden from a service caller.** `listServiceJobs` lists a job a service may run, and a
+      waiting retry is not one yet; the Simulator's service actor would otherwise have run every armed retry at once.
+      `listServiceJobs` therefore leaves it out, and the twin's service driver too.
+    - **Any hop out of `queued` clears `run_after`.** A path that reached the retry anyway (a caller that knew its id, a
+      webhook) takes it out of the drain's list.
+    - **A last attempt that could not start notifies.** A start that throws is recorded failed. Before review, the drain
+      then told no one, even when that was the job's end. `runDueRetries` now takes an `onFailed`. The tick and the
+      Simulator's clock and run-due controls pass `notifyRetryEnd`, which calls `notifyJobTerminal`, and that skips a
+      failure that armed a further attempt.
+    - **A delay over 30 days (`MAX_JOB_RETRY_DELAY_MS`) is refused.** A delay past JavaScript's date range would
+      otherwise throw inside the failure's transaction and leave the job unrecordable. The twin's copy of the check
+      carries the same cap.
+    - **The twin honours the jobs-held knob** for a due retry: it is left queued for Run pending, as `fakeJobs.start`
+      holds one on the server.
+    - **The views' new fields are optional** (`JobView.attempt`, `.retryOf`, the same on `ServiceJobView`), so a story or
+      test that builds a view by hand still compiles. The list functions always set them.
+- **Limitations accepted.**
+    - **A StartBuild that throws after the build really started** records that attempt failed and arms the next. The
+      build's own `completed` webhook is then refused with a 409, `failed -> completed`, and the work may run twice.
+      `submitJob` leaves a job queued when its start throws, but the drain cannot: on CodeBuild a queued job with no build
+      is lost for good (safeinsights/sssb#231). A failure the next attempt repairs costs less.
+    - **In a simulated world, a retry armed through the jobs webhook or the service status route uses the real clock.**
+      Those routes pass no `now`. After the world clock has been moved forward, such a retry is due at once. The runners'
+      own failures and the sweep use the world clock.
+    - **The static demo's twin** delivers a webhook a retry enqueued during a clock advance at the next drain, not in the
+      same advance, as the server's tick does.
+    - **The showcase's static bundle has about 11 KB of its size budget left** after this change (`pnpm check:demo-size`
+      passes with a warning).
+
 ## One answer for a missing id and a refused one (2026-11-27, `fix/id-existence-oracle`)
 
 safeinsights/sssb#137. The showcase's mutating `[id]` routes looked the row up, answered 404 when it was missing, and
