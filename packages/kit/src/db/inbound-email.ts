@@ -22,8 +22,9 @@ export interface ResolvedInboundOrg {
  * Resolve an org slug to its (tenant, org) GLOBALLY — the recipient address (`<org-slug>+<handler>@…`)
  * names only the org, not the tenant. Org slugs are unique across the seed, and a request cannot create one another
  * tenant holds (0018_organizations_write), so a single match yields the tenant too; the gaps are
- * safeinsights/sssb#211. ZERO matches (unknown slug) OR more than one (the same slug reused in two tenants — the
- * schema permits it, though the seed never does) both return null: an address alone can't disambiguate
+ * safeinsights/sssb#211. ZERO matches (unknown slug) OR more than one (the same slug reused in two tenants — no
+ * constraint forbids it, and the table owner, a concurrent insert or a later grant can still make one; the seed never
+ * does) both return null: an address alone can't disambiguate
  * a collision, so it's treated as unresolved rather than filed under an arbitrary tenant. A real
  * MULTI-domain instance resolves the tenant from the recipient DOMAIN first (see the decision log).
  * Reads the `organizations`/`tenants` infra tables, readable across tenants — the orgIdForSlug precedent.
