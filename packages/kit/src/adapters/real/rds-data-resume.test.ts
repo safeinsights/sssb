@@ -414,9 +414,10 @@ describe('a probe that does not answer', () => {
             })
         }
         const done = sql.raw('select 2').execute(database(send))
-        await vi.advanceTimersByTimeAsync(10_000)
+        // The first probe (1 s) never answered; the second (5 s) did, and ended the wait with the first still out: 2 s
+        // before its own abort (7 s), which has not come.
+        await vi.advanceTimersByTimeAsync(5500)
         await done
-        // The first probe (1 s) never answered; the second (5 s) did, and ended the wait with the first still out.
         expect(probes).toBe(2)
         expect(aborted).toBe(1)
     })
