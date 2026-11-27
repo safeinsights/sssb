@@ -174,6 +174,31 @@ describe('the schedules drain with due hints', () => {
         )
     })
 
+    test("the tick's own advance of a schedule leaves the hint alone; moving one earlier lowers it", async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { runDueSchedules } = await import('./schedules')
+        const now = new Date('2041-01-05T00:00:00.000Z')
+        const due = await insertSchedule(tenantId, orgId, new Date(now.getTime() - MINUTE))
+        const before = await hint(tenantId, 'schedules')
+        const jobs = stubJobs()
+        await runDueSchedules(fakeDb, jobs, now, HINTED)
+        expect(jobs.calls.map((c) => (c.payload as { scheduleId: string }).scheduleId)).toContain(due)
+        // The spawn moved the schedule a week on: a later due time takes no hint row (so the tick waits on no
+        // tenant transaction that holds one).
+        expect(String((await hint(tenantId, 'schedules'))!.version)).toBe(String(before!.version))
+
+        // Moving a schedule earlier by an update does lower it.
+        const far = await insertSchedule(tenantId, orgId, new Date(now.getTime() + 30 * 24 * 60 * MINUTE))
+        await fakeDb
+            .getDb()
+            .updateTable('due_hints')
+            .set({ list_after: new Date(now.getTime() + 20 * 60 * MINUTE) })
+            .execute()
+        const soon = new Date(now.getTime() + 10 * MINUTE)
+        await fakeDb.getDb().updateTable('job_schedules').set({ next_run_at: soon }).where('id', '=', far).execute()
+        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(soon.getTime())
+    })
+
     test('re-enabling a schedule lowers the hint, so its work is not hidden', async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { runDueSchedules } = await import('./schedules')

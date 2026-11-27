@@ -70,30 +70,47 @@ export async function up(db: Kysely<any>): Promise<void> {
     await sql`REVOKE ALL ON FUNCTION sssb_note_due() FROM PUBLIC`.execute(db)
     await sql`REVOKE ALL ON FUNCTION sssb_note_due() FROM app_user`.execute(db)
 
-    await sql`
-        CREATE TRIGGER job_schedules_note_due
-        AFTER INSERT OR UPDATE OF next_run_at, enabled ON job_schedules
-        FOR EACH ROW WHEN (NEW.enabled)
-        EXECUTE FUNCTION sssb_note_due('schedules')
-    `.execute(db)
-    await sql`
-        CREATE TRIGGER webhook_deliveries_note_due
-        AFTER INSERT OR UPDATE OF next_attempt_at, status ON webhook_deliveries
-        FOR EACH ROW WHEN (NEW.status IN ('pending', 'failed'))
-        EXECUTE FUNCTION sssb_note_due('deliveries')
-    `.execute(db)
-    await sql`
-        CREATE TRIGGER jobs_note_due
-        AFTER INSERT OR UPDATE OF run_after, status ON jobs
-        FOR EACH ROW WHEN (NEW.run_after IS NOT NULL AND NEW.status = 'queued')
-        EXECUTE FUNCTION sssb_note_due('retries')
-    `.execute(db)
+    // INSERT and UPDATE apart, so an update fires only when it can make work due SOONER: a row becoming eligible, or
+    // its due time moving earlier. One that moves an eligible row later (the tick's own advance of a schedule, its claim
+    // of a delivery) cannot hide work from a raise (whatever a raise saw of the row, it was no later than now), so it
+    // leaves the hint row alone, and the tick never waits on a tenant's transaction that holds it.
+    for (const statement of [
+        sql`CREATE TRIGGER job_schedules_note_due_insert AFTER INSERT ON job_schedules
+            FOR EACH ROW WHEN (NEW.enabled) EXECUTE FUNCTION sssb_note_due('schedules')`,
+        sql`CREATE TRIGGER job_schedules_note_due_update AFTER UPDATE OF next_run_at, enabled ON job_schedules
+            FOR EACH ROW WHEN (NEW.enabled AND (NOT OLD.enabled OR NEW.next_run_at < OLD.next_run_at))
+            EXECUTE FUNCTION sssb_note_due('schedules')`,
+        sql`CREATE TRIGGER webhook_deliveries_note_due_insert AFTER INSERT ON webhook_deliveries
+            FOR EACH ROW WHEN (NEW.status IN ('pending', 'failed')) EXECUTE FUNCTION sssb_note_due('deliveries')`,
+        sql`CREATE TRIGGER webhook_deliveries_note_due_update AFTER UPDATE OF next_attempt_at, status ON webhook_deliveries
+            FOR EACH ROW WHEN (
+                NEW.status IN ('pending', 'failed')
+                AND (OLD.status NOT IN ('pending', 'failed') OR NEW.next_attempt_at < OLD.next_attempt_at)
+            ) EXECUTE FUNCTION sssb_note_due('deliveries')`,
+        sql`CREATE TRIGGER jobs_note_due_insert AFTER INSERT ON jobs
+            FOR EACH ROW WHEN (NEW.run_after IS NOT NULL AND NEW.status = 'queued')
+            EXECUTE FUNCTION sssb_note_due('retries')`,
+        sql`CREATE TRIGGER jobs_note_due_update AFTER UPDATE OF run_after, status ON jobs
+            FOR EACH ROW WHEN (
+                NEW.run_after IS NOT NULL AND NEW.status = 'queued'
+                AND (OLD.run_after IS NULL OR OLD.status <> 'queued' OR NEW.run_after < OLD.run_after)
+            ) EXECUTE FUNCTION sssb_note_due('retries')`,
+    ]) {
+        await statement.execute(db)
+    }
 }
 
 export async function down(db: Kysely<any>): Promise<void> {
-    await sql`DROP TRIGGER jobs_note_due ON jobs`.execute(db)
-    await sql`DROP TRIGGER webhook_deliveries_note_due ON webhook_deliveries`.execute(db)
-    await sql`DROP TRIGGER job_schedules_note_due ON job_schedules`.execute(db)
+    for (const [trigger, table] of [
+        ['jobs_note_due_update', 'jobs'],
+        ['jobs_note_due_insert', 'jobs'],
+        ['webhook_deliveries_note_due_update', 'webhook_deliveries'],
+        ['webhook_deliveries_note_due_insert', 'webhook_deliveries'],
+        ['job_schedules_note_due_update', 'job_schedules'],
+        ['job_schedules_note_due_insert', 'job_schedules'],
+    ] as const) {
+        await sql`DROP TRIGGER ${sql.id(trigger)} ON ${sql.id(table)}`.execute(db)
+    }
     await sql`DROP FUNCTION sssb_note_due()`.execute(db)
     await sql`DROP TABLE due_hints`.execute(db)
 }
