@@ -127,7 +127,7 @@ export declare class SssbApp extends Construct {
      * (`x-forwarded-host`, `x-forwarded-port`) and the address they connect from (`x-sssb-viewer-address`),
      * overwriting what the viewer sent. The server is told to believe them (`SSSB_EDGE=cloudfront`, read by
      * `@sssb/kit`'s `publicOrigin` and `clientAddress`), so associate it with every behavior of your own that reaches
-     * the server: a behavior without it lets a viewer write both.
+     * the server: synth fails a behavior, of any distribution in this stack, that reaches it without the function.
      */
     readonly forwardedHost: cdk.aws_cloudfront.Function
     /**

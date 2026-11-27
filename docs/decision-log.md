@@ -7605,7 +7605,9 @@ left a choice open; the maintainer's standing instruction is to decide and recor
   wins over the header because a deployment served on two origins (its custom domain and `*.cloudfront.net`, both in
   `CLERK_AUTHORIZED_PARTIES`) should mail one. Outside a request with no `PUBLIC_ORIGIN`, and behind `SssbApp` on a
   request that never crossed the distribution (the scheduled tick invokes the server directly), it throws, naming the
-  setting. Rejected: **the header alone**, which a job cannot read; **the setting alone**, which a first deploy on
+  setting. "Crossed" needs proof (both reviews of round 1 found it): Next fills a missing `x-forwarded-host` from `Host`
+  (`next/dist/server/base-server.js`), the Function URL's own on the tick's request, so the forwarded host is taken only
+  beside a valid `x-sssb-viewer-address`, which nothing but the function writes, and only when it is not `Host`. Rejected: **the header alone**, which a job cannot read; **the setting alone**, which a first deploy on
   `*.cloudfront.net` cannot set (the server's environment cannot name the distribution's host without a dependency
   cycle, as the authorized-parties entry above found); and **`NEXT_PUBLIC_PUBLIC_ORIGIN`**: nothing on the client needs
   it, and a client bundle's value is fixed at build, not per deployment.
@@ -7614,7 +7616,12 @@ left a choice open; the maintainer's standing instruction is to decide and recor
   client cannot choose the answer. Rejected: **believing them whenever `!isSimulated`**, which would trust headers any
   client writes on a real-mode server that is not behind `SssbApp`; and **believing them always**, the dev-mode hole
   #131's fallback would otherwise have. Any other value of `SSSB_EDGE` is refused, at boot by `assertRealEnv` (cutover
-  row `domains-and-certs`) and on first use, rather than read as on or off.
+  row `domains-and-certs`) and on first use, rather than read as on or off; so is `SSSB_EDGE` off Lambda (no
+  `AWS_LAMBDA_FUNCTION_NAME`), where a deployment's environment copied into `dev:real` would otherwise trust any client.
+  Rejected: **letting an adopter set it behind a proxy of their own** (the first cut), a promise SSSB cannot check.
+  The promise it does make is checked at synth: `SssbApp` fails a behavior of any distribution in its stack, an origin
+  group's included, that reaches the server without the function. A distribution in another stack names the Function
+  URL by an import, which the check does not follow; it would also need its own origin access grant.
 - **The address comes from a header of SSSB's own, `x-sssb-viewer-address`, written by the CloudFront Function from
   `event.viewer.ip` (#132's open question).** CloudFront's docs say neither whether a viewer's own
   `CloudFront-Viewer-Address` is overwritten nor, by name, that `AllViewerExceptHostHeader` forwards it; and counting
@@ -7626,10 +7633,21 @@ left a choice open; the maintainer's standing instruction is to decide and recor
 - **A lint rule, `sssb/no-raw-request-origin`, not a conformance check.** It flags a visitor header named as a string
   in `.get`/`.has`/`.getAll` or a computed key (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `Forwarded`,
   `Host`, `CloudFront-Viewer-Address`, `x-sssb-viewer-address` and the other `X-Forwarded-*`, in any case), and the
-  `origin`, `host` or `hostname` of `new URL(<x>.url)` or `<x>.nextUrl`, in every module of an app's `src/` but its
-  tests, and in the framework but the module itself. A name held in a variable gets past, as any alias does. Path and
-  search parameters stay allowed. Rejected: **a conformance check**, which would re-implement the same syntax match at
+  `origin`, `host`, `hostname` or `href` of `new URL(<x>.url)` or `<x>.nextUrl` (by member or destructuring),
+  `new URL(path, <x>.url)` and `baseUrl: <x>.url`, in every module of an app's `src/` but its tests, and in the framework
+  but the module itself. A header read counts only on something plainly a request's headers (`<x>.headers`,
+  `headers()`, a variable named for headers), so `searchParams.get('host')` and `process.env['HOST']` pass. In the app's
+  proxy alone, `new URL(path, request.url)` handed straight to a `redirect` or `rewrite` passes too: Next relativizes a
+  same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`), so a route handler's would
+  send the visitor to `https://localhost:3000` (round 2). A name held in a variable gets past, as any alias does. Path
+  and search parameters stay allowed. Rejected: **a conformance check**, which would re-implement the same syntax match at
   test time; the lint preset is where the other syntax fences are, and `sssb check-fences` probes it.
 - **Live proof is a cutover row, not this change's.** Both issues ask for it; no SSSB session deploys. The
   `domains-and-certs` row now names the proof: forged headers through the distribution's domain, and what the server
   and the helpers see.
+- **Accepted, not fixed.** A real-mode server off `SssbApp` with no `PUBLIC_ORIGIN` builds links on `request.url`'s
+  origin, the bind address, as before this change: Next names it `localhost` either way, so the helper cannot tell a
+  local `dev:real` from a host of the adopter's own, and SSSB deploys only through `SssbApp`. The adopting reference
+  tells such a host to set `PUBLIC_ORIGIN`. And in `next dev`, `X-Forwarded-Proto` still flips `request.url`'s scheme
+  (Next reads it), so a peer on the developer's network can make `publicOrigin` say `https://localhost:<port>`: one bit,
+  on a developer's machine.

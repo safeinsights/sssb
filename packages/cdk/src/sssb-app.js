@@ -725,7 +725,7 @@ export class SssbApp extends Construct {
             functionName: accountUniqueName(),
             runtime: aws_cloudfront.FunctionRuntime.JS_2_0,
             code: aws_cloudfront.FunctionCode.fromInline(FORWARDED_HOST_SOURCE),
-            comment: `${slug}: x-forwarded-host and x-forwarded-port from the viewer's request`,
+            comment: `${slug}: the forwarded host and port, and the viewer's address, from the viewer's request`,
         })
 
         // ---- the response's security headers (response headers policy) -----------------------

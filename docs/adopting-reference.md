@@ -953,15 +953,18 @@ addendum of that date.
       the server's `PUBLIC_ORIGIN` when you set it, then `https://` and `x-forwarded-host` behind `SssbApp`, then
       `request.url`'s origin anywhere else (`pnpm dev`). Set `PUBLIC_ORIGIN` (`https://app.example.org`, a bare origin)
       once the deployment has a custom domain, so links name it rather than whichever host the visitor came in on, and
-      wherever you build a link outside a request, in a job say: there it throws without one. A redirect needs neither:
-      Next's `redirect('/path')` and a relative URL are right as they are.
+      wherever you build a link outside a request: a job, or the cron route the scheduled tick calls, which invokes the
+      server without crossing the distribution. There it throws without one. A redirect needs neither: Next's
+      `redirect('/path')`, a relative URL, and in your proxy a `NextResponse.redirect(new URL(path, request.url))`
+      (Next relativizes a redirect the proxy answers, and no other) are right as they are.
     - **`clientAddress(request)`**, for what keys on the visitor's address: a rate limit, a lockout, an audit record's
       "from". It is `undefined` off `SssbApp` (in `pnpm dev`, or on a host of your own) and on a request that did not
       cross the distribution; treat that as unknown, never as a free pass. It never reads `X-Forwarded-For`,
       `X-Real-IP`, `CF-Connecting-IP` or `Forwarded`.
 
-    `SSSB_EDGE` promises that every request crossed that function. On a host of your own, set it only behind a proxy
-    that overwrites `x-forwarded-host` and `x-sssb-viewer-address` on every request.
+    `SSSB_EDGE` is `SssbApp`'s: the server refuses it off Lambda (with no `AWS_LAMBDA_FUNCTION_NAME`), so a deployment's
+    environment copied into a local `dev:real` does not make it believe headers any client writes. On a host of your
+    own, leave it unset and set `PUBLIC_ORIGIN`; `clientAddress` is then `undefined`.
 
 - **HTTPS and security headers.** Every behavior redirects HTTP to HTTPS and carries AWS's managed
   SecurityHeadersPolicy:
@@ -982,8 +985,9 @@ addendum of that date.
 - **A behavior you add.** A behavior you add to `sssbApp.distribution` gets none of this unless you give it all three:
     - `viewerProtocolPolicy: REDIRECT_TO_HTTPS`;
     - `responseHeadersPolicy: sssbApp.responseHeadersPolicy`;
-    - for one that reaches the server, `sssbApp.forwardedHost` on `viewer-request`: without it, a visitor writes the
-      host and address the server believes.
+    - for one that reaches the server, `sssbApp.forwardedHost` on `viewer-request`, or `cdk synth` fails: without it, a
+      visitor would write the host and address the server believes. The check covers every distribution in the
+      construct's stack, and an origin group with the server among its members.
 
 ## Upgrading, step by step
 
