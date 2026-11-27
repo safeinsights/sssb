@@ -132,7 +132,6 @@ export function createS3Storage(options: S3StorageOptions): StoragePort {
     }
     // A presigned PUT has to be signed without the SDK's default checksum (see `S3StorageOptions.uploadTarget`).
     if (uploadTarget === 'put' && config.requestChecksumCalculation === undefined && !given) {
-        config.requestChecksumCalculation = 'WHEN_REQUIRED'
         configured.push(['requestChecksumCalculation', 'WHEN_REQUIRED'])
     }
     const client = given ?? new S3Client(Object.fromEntries(configured) as S3ClientConfig)
