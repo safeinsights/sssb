@@ -14,8 +14,8 @@ const BASE_URL = originFor('showcase')
 
 /**
  * `E2E_BUILD=1` (CI sets it; local does not) runs against a PRODUCTION build instead of `next dev`
- * (./tests/e2e/support/budgets.ts reads it). A production build removes the on-demand compile the
- * dev budgets below absorb, and it closes a real gap: without it, CI never runs `next build` at all,
+ * (./tests/e2e/support/budgets.ts reads it). A production build removes the on-demand compile that
+ * the dev budgets absorb, and it closes a real gap: without it, CI never runs `next build` at all,
  * so a change that breaks the production build ships green.
  *
  * Local stays on dev deliberately: `reuseExistingServer` keeps a warm server across runs, and a
