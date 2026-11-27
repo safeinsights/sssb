@@ -22,7 +22,9 @@ import {
 import {
     a11yLiteralSelector,
     PROXY_FILE,
+    isWholeRequestUrl,
     proxyRequestOriginSelector,
+    requestUrlSentOn,
     requestOriginSelector,
     visitorHeaderSelector,
     appCodePatterns,
@@ -143,11 +145,29 @@ const rawRequestOriginInProxy = syntaxBan({
     selectors: { header: visitorHeaderSelector, origin: proxyRequestOriginSelector },
 })
 // One rule, two selector sets: only in the app's proxy may a URL on the request go straight to a redirect or rewrite
-// (./patterns.js says why).
+// (./patterns.js says why). Beside the selectors, a variable initialised to the request's whole URL (a `const`, or a
+// `let` never written again) is followed to its uses, which a selector cannot reach: `const u = new URL(request.url)`,
+// `u.pathname = '/x'`, `return Response.redirect(u)`. Outside the proxy a `nextUrl.clone()` is reported where it is
+// made, so a variable holding one is not followed there.
 const rawRequestOrigin = {
     meta: rawRequestOriginOutsideProxy.meta,
-    create: (context) =>
-        (PROXY_FILE.test(context.filename) ? rawRequestOriginInProxy : rawRequestOriginOutsideProxy).create(context),
+    create(context) {
+        const inProxy = PROXY_FILE.test(context.filename)
+        const visitors = (inProxy ? rawRequestOriginInProxy : rawRequestOriginOutsideProxy).create(context)
+        return {
+            ...visitors,
+            VariableDeclarator(node) {
+                if (node.id.type !== 'Identifier' || !isWholeRequestUrl(node.init, inProxy)) return
+                const [variable] = context.sourceCode.getDeclaredVariables(node)
+                if (!variable || variable.references.some((ref) => ref.isWrite() && !ref.init)) return
+                for (const ref of variable.references) {
+                    if (ref.init) continue
+                    const use = requestUrlSentOn(ref.identifier, inProxy)
+                    if (use) context.report({ node: use, messageId: 'origin' })
+                }
+            },
+        }
+    },
 }
 const a11yLiteral = syntaxBan({
     description: 'Accessible names, placeholders, titles and alt text come from the catalog, never a literal.',

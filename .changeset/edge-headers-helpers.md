@@ -22,6 +22,14 @@ wrote. A new rule in the app preset, `sssb/no-raw-request-origin`, fails a modul
   `src/proxy.ts` (or `src/middleware.ts`), where Next relativizes a same-origin redirect or rewrite and nowhere else: a
   route handler's `NextResponse.redirect(new URL('/en/dashboard', request.url))` sends the visitor to the server's bind
   address;
+- hands the request's whole URL to a redirect or rewrite (`Response.redirect(request.url)`,
+  `NextResponse.redirect(request.nextUrl)`, `NextResponse.rewrite(new URL(request.url))`, `redirect(request.url)`), or
+  clones it (`request.nextUrl.clone()`, Next's idiom for a redirect with a new path), but in the app's proxy, as above;
+- turns that whole URL into a string: `String(new URL(request.url))`, `.toString()` or `.toJSON()` on it, or
+  `` `${request.nextUrl}` ``, in the proxy too;
+- does any of these through a variable that holds it: `const url = new URL(request.url)`, then
+  `url.pathname = '/x'` and `Response.redirect(url)`, `String(url)`, `url.origin`, `new URL('/x', url)` or
+  `baseUrl: url`. Reading `url.pathname` or `url.searchParams` stays allowed;
 - passes `baseUrl: request.url`.
 
 **To adopt.** Run `pnpm lint` after upgrading. For each finding:
@@ -37,10 +45,11 @@ const from = clientAddress(request)
 ```
 
 A redirect needs neither: `redirect('/path')` (from `next/navigation`) and a relative `Location` are right as they are; in
-a route handler, write `NextResponse.redirect(new URL('/en/dashboard', publicOrigin(request)))`. Reading `pathname` or
-`searchParams` from the request's URL is still allowed. Outside a request (a job), `publicOrigin()` needs the server's
-`PUBLIC_ORIGIN` (the operator entry of this release). In `pnpm dev`, `publicOrigin` is the dev server's own origin and
-`clientAddress` is `undefined`.
+a route handler, write `NextResponse.redirect(new URL('/en/dashboard', publicOrigin(request)))`, and in place of a
+`nextUrl.clone()` with a new path, `new URL('/en/dashboard' + request.nextUrl.search, publicOrigin(request))`. Reading
+`pathname` or `searchParams` from the request's URL is still allowed. Outside a request (a job), `publicOrigin()` needs
+the server's `PUBLIC_ORIGIN` (the operator entry of this release). In `pnpm dev`, `publicOrigin` is the dev server's own
+origin and `clientAddress` is `undefined`.
 
 **Now deletable.** A helper that builds the app's origin from `x-forwarded-host` and `x-forwarded-proto`, or from
 `request.url`; one that takes the client's address from `X-Forwarded-For`, `X-Real-IP` or `CF-Connecting-IP`; and a

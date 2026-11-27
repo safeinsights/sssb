@@ -33,6 +33,25 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
         { code: 'const { pathname } = request.nextUrl' },
         { code: "const link = new URL('/x', publicOrigin(request))" },
         { code: 'sendOrgInvite({ baseUrl: publicOrigin(request) })' },
+        // A variable holding the request's whole URL, read only for its path and search parameters.
+        { code: "const u = new URL(request.url); const q = u.searchParams.get('x'); const p = u.pathname" },
+        { code: "const u = request.nextUrl; if (u.pathname === '/x') f(u.searchParams.get('y'))" },
+        // ... or written again before it is sent on: the rule follows only a variable that keeps its first value.
+        { code: "let u = new URL(request.url); u = new URL('/x', publicOrigin(request)); Response.redirect(u)" },
+        // A redirect to a URL that is not the request's: a payment session's, the path alone.
+        { code: 'NextResponse.redirect(session.url, 303)' },
+        { code: "redirect('/en/dashboard')" },
+        // The string request.url, stringified: already a string, and nearly always a log line.
+        { code: 'log(`failed: ${request.url}`)' },
+        { code: 'const where = `${request.nextUrl.pathname}?${request.nextUrl.searchParams}`' },
+        // In the app's proxy, the request's own URL, or a clone of it with a new path, handed to a redirect or rewrite.
+        ...[
+            "const u = request.nextUrl.clone(); u.pathname = '/en'; return NextResponse.redirect(u)",
+            "const u = new URL(request.url); u.pathname = '/en'; return NextResponse.rewrite(u)",
+            "const u = request.nextUrl.clone(); return NextResponse.redirect(new URL('/en', u))",
+            'NextResponse.redirect(request.url)',
+            'NextResponse.rewrite(request.nextUrl)',
+        ].map((code) => ({ code: `function f(request) { ${code} }`, filename: 'apps/any-app/src/proxy.ts' })),
         // Headers that name nothing about the visitor's host or address.
         { code: "request.headers.get('content-type')" },
         { code: "request.headers.get('x-forwarded-hostname')" },
@@ -93,6 +112,46 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
             filename: 'apps/any-app/src/app/api/callback/route.ts',
             errors: [{ messageId: 'origin' }],
         })),
+        // ... nor a redirect or rewrite of the request's whole URL, or of a variable that holds it, with a new path or
+        // without one: Next's documented `nextUrl.clone()` idiom included.
+        ...[
+            "const u = request.nextUrl.clone(); u.pathname = '/x'; return Response.redirect(u)",
+            'const { nextUrl } = request; return NextResponse.redirect(nextUrl.clone())',
+            'return Response.redirect(request.url)',
+            'return NextResponse.redirect(req.url, 307)',
+            'return NextResponse.redirect(ctx.request.url)',
+            'return NextResponse.redirect(request.nextUrl)',
+            'return NextResponse.rewrite(request.url)',
+            'return NextResponse.rewrite(new URL(request.url))',
+            'redirect(request.url)',
+            'permanentRedirect(request.nextUrl)',
+            "const u = new URL(request.url); u.pathname = '/x'; return Response.redirect(u)",
+            'let u = request.nextUrl; return NextResponse.rewrite(u, { headers: h })',
+        ].map((code) => ({
+            code: `function f(request, req, ctx) { ${code} }`,
+            filename: 'apps/any-app/src/app/api/callback/route.ts',
+            errors: [{ messageId: 'origin' }],
+        })),
+        // The request's whole URL as a string, directly or through a variable, anywhere (the proxy below too).
+        ...[
+            'const s = String(new URL(request.url))',
+            'const s = String(request.nextUrl)',
+            'const s = new URL(request.url).toString()',
+            'const s = request.nextUrl.toString()',
+            'const s = new URL(req.url).toJSON()',
+            'const s = `${request.nextUrl}`',
+            'const s = `${new URL(request.url)}`',
+            'const s = `${request.nextUrl.clone()}`',
+            'const u = new URL(request.url); const s = String(u)',
+            'const u = new URL(request.url); const s = u.toString()',
+            'const u = request.nextUrl; const s = `${u}/x`',
+            // ... and, through a variable, the forms the rule takes from the request itself.
+            'const u = new URL(request.url); const o = u.origin',
+            "const u = new URL(request.url); u.pathname = '/x'; const h = u.href",
+            'const u = request.nextUrl; const { host } = u',
+            "const u = new URL(request.url); const l = new URL('/x', u)",
+            'const u = new URL(request.url); sendOrgInvite({ baseUrl: u })',
+        ].map((code) => ({ code, errors: [{ messageId: 'origin' }] })),
         // A file named like the proxy that is not Next's proxy: a route handler's wrapper, the framework's own.
         ...[
             'apps/any-app/src/lib/auth/middleware.ts',
@@ -114,6 +173,15 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
             filename: 'apps/any-app/src/proxy.ts',
             errors: [{ messageId: 'header' }],
         },
+        // ... and a string of the request's whole URL, a clone's included, or a URL built on one that is not handed
+        // straight to a redirect.
+        ...[
+            'const s = request.nextUrl.clone().toString()',
+            'const s = `${request.nextUrl}`',
+            'const u = request.nextUrl.clone(); const s = String(u)',
+            "const u = request.nextUrl.clone(); const l = new URL('/x', u)",
+            'const u = request.nextUrl.clone(); const o = u.origin',
+        ].map((code) => ({ code, filename: 'apps/any-app/src/proxy.ts', errors: [{ messageId: 'origin' }] })),
     ],
 })
 
@@ -139,5 +207,23 @@ describe("where the repo's config runs sssb/no-raw-request-origin", () => {
         'packages/kit/src/adapters/edge-headers.ts',
     ])('does not fire in %s', async (path) => {
         expect(await fired(path)).toBe(false)
+    })
+
+    // Through the repo's TypeScript parser and its scope analysis, as an app's route handler is linted.
+    const CLONED =
+        "import type { NextRequest } from 'next/server'\n" +
+        'export function GET(request: NextRequest): Response {\n' +
+        '    const url = request.nextUrl.clone()\n' +
+        "    url.pathname = '/en/dashboard'\n" +
+        '    return Response.redirect(url)\n' +
+        '}\n'
+    const REBUILT = CLONED.replace('request.nextUrl.clone()', 'new URL(request.url)')
+    it.each([
+        ['a clone', `${APP}/src/app/api/things/route.ts`, CLONED, 1],
+        ['a new URL', `${APP}/src/app/api/things/route.ts`, REBUILT, 1],
+        ['a clone', `${APP}/src/proxy.ts`, CLONED, 0],
+        ['a new URL', `${APP}/src/proxy.ts`, REBUILT, 0],
+    ])('counts a redirect to %s of the request URL in %s', async (_, path, code, times) => {
+        expect((await lint(path, code)).filter((f) => f.rule === rule)).toHaveLength(times)
     })
 })
