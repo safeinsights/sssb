@@ -1,4 +1,5 @@
 import { RuleTester } from 'eslint'
+import tseslint from 'typescript-eslint'
 import { describe, expect, it } from 'vitest'
 import sssb from '@sssb/eslint-plugin'
 import { APP, lint } from './lint-text'
@@ -179,7 +180,7 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
             'const s = request.nextUrl.clone().toString()',
             'const s = `${request.nextUrl}`',
             'const u = request.nextUrl.clone(); const s = String(u)',
-            "const u = request.nextUrl.clone(); const l = new URL('/x', u)",
+            "const u = request.nextUrl.clone(); const l = new URL('/x', u); headers.set('x-next', l.href)",
             'const u = request.nextUrl.clone(); const o = u.origin',
         ].map((code) => ({ code, filename: 'apps/any-app/src/proxy.ts', errors: [{ messageId: 'origin' }] })),
     ],
@@ -226,4 +227,83 @@ describe("where the repo's config runs sssb/no-raw-request-origin", () => {
     ])('counts a redirect to %s of the request URL in %s', async (_, path, code, times) => {
         expect((await lint(path, code)).filter((f) => f.rule === rule)).toHaveLength(times)
     })
+})
+
+// The review of the first cut of the redirect forms (each snippet one it reported or missed), and TypeScript's
+// wrappers, which need typescript-eslint's parser.
+const tsRuleTester = new RuleTester({
+    languageOptions: { parser: tseslint.parser, ecmaVersion: 'latest', sourceType: 'module' },
+})
+const ROUTE = 'apps/any-app/src/app/api/callback/route.ts'
+const PROXY = 'apps/any-app/src/proxy.ts'
+const inFunction = (code: string) => `async function f(request, req, ctx) { ${code} }`
+
+tsRuleTester.run('sssb/no-raw-request-origin, followed', sssb.rules['no-raw-request-origin'], {
+    valid: [
+        // A URL that is not the request's, whatever its object is called: `new URL(<x>.url)` is the request's only
+        // when <x> is named like a request.
+        ...[
+            "const url = new URL(row.url); url.searchParams.set('utm', 'x'); return url.toString()",
+            "const u = new URL(webhook.url); await fetch(u.toString(), { method: 'POST' })",
+            "const url = new URL(body.url); if (url.hostname !== 'ok.example') throw 1",
+            'const loc = new URL(response.url); if (loc.origin !== expected) throw 1',
+            'const h = new URL(body.url).hostname',
+            "const loc = new URL(res.headers.get('location'), upstream.url)",
+            'NextResponse.redirect(new URL(session.url))',
+            'const u = new URL(session.url); return NextResponse.redirect(u)',
+            'String(new URL(cfg.url))',
+            'new URL(link.url).toString()',
+            'sendOrgInvite({ baseUrl: config.url })',
+            // A domain object whose name ends in "request" is not one.
+            'redirect(accessRequest.url)',
+            'redirect(pullRequest.url)',
+            'const dataRequest = await load(id); return NextResponse.redirect(dataRequest.url)',
+            // A nextUrl that is not a request's, handed to a redirect.
+            'router.redirect(state.nextUrl)',
+            // A clone used for its query alone.
+            "const u = request.nextUrl.clone(); u.searchParams.delete('x'); const qs = u.searchParams.toString()",
+            // The visitor's origin, the path and the query.
+            "NextResponse.redirect(new URL('/en/dashboard' + request.nextUrl.search, publicOrigin(request)))",
+            'const u = new URL(request.url); return Response.json({ next: u.pathname + u.search })',
+            "const u = (new URL(request.url) as URL)!; if (u!.pathname === '/x') g((u as URL).searchParams)",
+        ].map((code) => ({ code: inFunction(code), filename: ROUTE })),
+        // In the proxy Next relativizes the Location however it was built: a string of the request's URL, and a URL
+        // on it whose every use is a redirect's argument or its path and query.
+        ...[
+            'const u = request.nextUrl.clone(); return NextResponse.redirect(u.toString())',
+            'const u = request.nextUrl; return NextResponse.redirect(u.href)',
+            "return NextResponse.redirect(new URL('/x', request.url).toString())",
+            'return NextResponse.redirect(request.nextUrl.clone().toString())',
+            "const login = new URL('/login', request.url); login.searchParams.set('from', request.nextUrl.pathname); " +
+                'return NextResponse.redirect(login)',
+            "const u = new URL('/x', request.url) as URL; return NextResponse.redirect(u!)",
+        ].map((code) => ({ code: inFunction(code), filename: PROXY })),
+    ],
+    invalid: [
+        ...[
+            // Through TypeScript's wrappers, on the use and on the initial value.
+            'const url = new URL(request.url); return Response.redirect(url!)',
+            'const url = new URL(request.url); return Response.redirect(url as unknown as string)',
+            'const u = request.nextUrl!; return NextResponse.redirect(u)',
+            'const u = new URL(request.url) as URL; return String(u)',
+            'const u = new URL(request.url) satisfies URL; return u.toString()',
+            'const u = request.nextUrl; return (u as URL).href',
+            'const u = request.nextUrl; return u?.origin',
+            // Concatenated with a string.
+            "const url = new URL(request.url); return Response.redirect(url + '')",
+            "const url = new URL(request.url); return new Response(null, { status: 302, headers: { Location: '' + url } })",
+            // A clone that is not a variable's initial value is reported where it is made.
+            'return Response.redirect(request.nextUrl.clone())',
+            // An alias of an alias.
+            'const u = request.nextUrl; const v = u; return Response.redirect(v)',
+            // The string request.url, into a redirect as a string of itself.
+            'redirect(`${request.url}`)',
+            'redirect(String(request.url))',
+        ].map((code) => ({ code: inFunction(code), filename: ROUTE, errors: [{ messageId: 'origin' as const }] })),
+        // In the proxy, a URL on the request with a use that is not a redirect's, and a string of one sent elsewhere.
+        ...[
+            "const login = new URL('/login', request.url); res.headers.set('x-next', login.href)",
+            "const u = request.nextUrl.clone(); res.headers.set('x-url', u.href)",
+        ].map((code) => ({ code: inFunction(code), filename: PROXY, errors: [{ messageId: 'origin' as const }] })),
+    ],
 })

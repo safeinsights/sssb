@@ -21,11 +21,7 @@ import {
 } from './import-ban.js'
 import {
     a11yLiteralSelector,
-    PROXY_FILE,
-    isWholeRequestUrl,
-    proxyRequestOriginSelector,
-    requestUrlSentOn,
-    requestOriginSelector,
+    REQUEST_ORIGIN_MESSAGE,
     visitorHeaderSelector,
     appCodePatterns,
     appRealAdapterDynamicSelector,
@@ -45,6 +41,7 @@ import {
     vendorEntrySource,
     vendorSdkPattern,
 } from './patterns.js'
+import { requestUrlVisitors } from './request-origin.js'
 
 // ---------------------------------------------------------------------------------------------------------------
 // THE APP-SIDE FENCES. Each was a no-restricted-imports pattern or a no-restricted-syntax selector until
@@ -136,38 +133,15 @@ const runModeEnv = syntaxBan({
 })
 const RAW_REQUEST_ORIGIN =
     "The visitor's origin and address come from @sssb/kit/adapters/edge-headers, never the raw request."
-const rawRequestOriginOutsideProxy = syntaxBan({
+const rawRequestHeader = syntaxBan({
     description: RAW_REQUEST_ORIGIN,
-    selectors: { header: visitorHeaderSelector, origin: requestOriginSelector },
+    selectors: { header: visitorHeaderSelector },
 })
-const rawRequestOriginInProxy = syntaxBan({
-    description: RAW_REQUEST_ORIGIN,
-    selectors: { header: visitorHeaderSelector, origin: proxyRequestOriginSelector },
-})
-// One rule, two selector sets: only in the app's proxy may a URL on the request go straight to a redirect or rewrite
-// (./patterns.js says why). Beside the selectors, a variable initialised to the request's whole URL (a `const`, or a
-// `let` never written again) is followed to its uses, which a selector cannot reach: `const u = new URL(request.url)`,
-// `u.pathname = '/x'`, `return Response.redirect(u)`. Outside the proxy a `nextUrl.clone()` is reported where it is
-// made, so a variable holding one is not followed there.
+// One rule, two halves: the forwarded headers by selector, the request's own URL by ./request-origin.js, which follows
+// it through variables and TypeScript wrappers to where it is sent on, and lets the app's proxy hand it to a redirect.
 const rawRequestOrigin = {
-    meta: rawRequestOriginOutsideProxy.meta,
-    create(context) {
-        const inProxy = PROXY_FILE.test(context.filename)
-        const visitors = (inProxy ? rawRequestOriginInProxy : rawRequestOriginOutsideProxy).create(context)
-        return {
-            ...visitors,
-            VariableDeclarator(node) {
-                if (node.id.type !== 'Identifier' || !isWholeRequestUrl(node.init, inProxy)) return
-                const [variable] = context.sourceCode.getDeclaredVariables(node)
-                if (!variable || variable.references.some((ref) => ref.isWrite() && !ref.init)) return
-                for (const ref of variable.references) {
-                    if (ref.init) continue
-                    const use = requestUrlSentOn(ref.identifier, inProxy)
-                    if (use) context.report({ node: use, messageId: 'origin' })
-                }
-            },
-        }
-    },
+    meta: { ...rawRequestHeader.meta, messages: { ...rawRequestHeader.meta.messages, origin: REQUEST_ORIGIN_MESSAGE } },
+    create: (context) => ({ ...rawRequestHeader.create(context), ...requestUrlVisitors(context) }),
 }
 const a11yLiteral = syntaxBan({
     description: 'Accessible names, placeholders, titles and alt text come from the catalog, never a literal.',

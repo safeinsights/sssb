@@ -306,33 +306,14 @@ export const a11yLiteralSelector = {
 // The visitor's origin and address (safeinsights/sssb#131, #132), read only through @sssb/kit/adapters/edge-headers
 // (`publicOrigin`, `clientAddress`). Behind SssbApp, `request.url` and `nextUrl` name the server's own bind address
 // and port, never the visitor's host; the first X-Forwarded-For entry, X-Real-IP and CF-Connecting-IP hold whatever the
-// visitor wrote; and the Forwarded the function drops is the visitor's anywhere else. The obvious forms, never an alias:
+// visitor wrote; and the Forwarded the function drops is the visitor's anywhere else. The forms:
 // - a header that names the visitor's host or address, by its name as a string (any case), read from something that is
 //   plainly a request's headers: `.get`, `.has` or `.getAll` on `<x>.headers`, on `headers()` or `await headers()`
 //   (next/headers), or on a variable whose name says header; or a computed key on `<x>.headers` (Node's
-//   `req.headers[...]`). A `searchParams.get('host')` or `process.env['HOST']` is not a request's header;
-// - the `origin`, `host`, `hostname` or `href` of `new URL(<x>.url)` or of `<x>.nextUrl`, by member or destructuring;
-// - `new URL(path, <x>.url)` (or `<x>.nextUrl`), an absolute URL on the server's own host; in the app's proxy alone
-//   (`proxy.*`, `middleware.*`) it may be handed straight to a `redirect` or `rewrite`, because Next relativizes a
-//   same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`): a route handler's
-//   `NextResponse.redirect(new URL('/en', request.url))` sends the visitor to the server's bind address;
-// - `baseUrl: <x>.url`, the argument SSSB's own `sendOrgInvite` and `applyDemoPreset` take;
-// - the request's whole URL (`<x>.nextUrl`, `new URL(<x>.url)`, `<x>.nextUrl.clone()`, and in a redirect the string
-//   `<req>.url`, its object named like a request) handed to a `redirect`, `rewrite` or `permanentRedirect`, by member
-//   or by name, as their first argument: but in the app's proxy, as above;
-// - `<x>.nextUrl.clone()` (or `nextUrl.clone()`), Next's idiom for a redirect to the same host with a new path, but in
-//   the app's proxy;
-// - that whole URL turned into a string: `String(...)`, `.toString()` or `.toJSON()` on it, or a template literal's
-//   `${...}`, in the proxy too;
-// - and, in ./rules.js, a `const` (or a `let` never reassigned) initialised to that whole URL, by the same uses of the
-//   variable: a redirect's argument (not in the proxy), a string, its `origin`/`host`/`hostname`/`href` read,
-//   `new URL(path, it)`, `baseUrl: it`. Mutating its `pathname` changes nothing: it is the uses that send it on.
-// Still uncaught, as any alias is: a second alias (`const v = u`), a variable reassigned or assigned outside its
-// declaration, one handed to a function of the app's own or returned, a destructured `nextUrl` but for its `clone()`,
-// `JSON.stringify` or `Response.json` of it (its `toJSON` called for you), and the string `<x>.url` but in a
-// redirect, where an object not named like a request is not taken for one (a payment session's `session.url`). The
-// string `request.url` in a template literal or `String()` is left alone: it is already a string, and nearly always a
-// log line.
+//   `req.headers[...]`), never by an alias. A `searchParams.get('host')` or `process.env['HOST']` is not a request's
+//   header;
+// - the request's own URL (`request.url`, `request.nextUrl`) made into an absolute URL a visitor or a third party sees:
+//   ./request-origin.js, which says what it reports and what it cannot see.
 // Path and search parameters of the same URLs are right and stay allowed.
 const VISITOR_HEADER =
     '/^(host|forwarded|x-forwarded-(for|host|proto|port)|x-real-ip|x-client-ip|cf-connecting-ip|true-client-ip|' +
@@ -352,147 +333,17 @@ export const visitorHeaderSelector = {
         '@sssb/kit/adapters/edge-headers, never from a forwarded header: behind CloudFront the first X-Forwarded-For ' +
         "entry, X-Real-IP and CF-Connecting-IP hold what the visitor wrote, and Host is the server's own.",
 }
-const REQUEST_URL_FORMS = (at) => [
-    `[${at}.type="NewExpression"][${at}.callee.name="URL"][${at}.arguments.length=1][${at}.arguments.0.property.name="url"]`,
-    `[${at}.property.name="nextUrl"]`,
-]
-const REQUEST_URL = (at) => `:matches(${REQUEST_URL_FORMS(at).join(', ')})`
-const NEXT_URL_CLONE =
-    'CallExpression[arguments.length=0][callee.property.name="clone"]' +
-    ':matches([callee.object.property.name="nextUrl"], [callee.object.name="nextUrl"])'
-/**
- * The request's whole URL, origin included, at `at`: `new URL(<x>.url)` or `<x>.nextUrl`, and with `clone` its
- * `clone()` too. Outside the proxy a clone is reported where it is made, so a use of one is not reported again.
- */
-const WHOLE_URL = (at, clone) =>
-    `:matches(${[
-        ...REQUEST_URL_FORMS(at),
-        ...(clone
-            ? [
-                  `[${at}.type="CallExpression"][${at}.arguments.length=0][${at}.callee.property.name="clone"]` +
-                      `:matches([${at}.callee.object.property.name="nextUrl"], [${at}.callee.object.name="nextUrl"])`,
-              ]
-            : []),
-    ].join(', ')})`
-/** The string `<req>.url`, its object named like a request (`req`, `request`, `nextRequest`, `ctx.request`). */
-const REQUEST_NAMED = '/^req$|request$/i'
-const REQUEST_URL_STRING = (at) =>
-    `[${at}.type="MemberExpression"][${at}.property.name="url"]` +
-    `:matches([${at}.object.name=${REQUEST_NAMED}], [${at}.object.property.name=${REQUEST_NAMED}])`
-const REDIRECT_NAME = '/^(redirect|rewrite|permanentRedirect)$/'
-const REDIRECT_CALL = `CallExpression:matches([callee.property.name=${REDIRECT_NAME}], [callee.name=${REDIRECT_NAME}])`
-const ORIGIN_PART = '/^(origin|host|hostname|href)$/'
-const URL_ON_REQUEST =
-    'NewExpression[callee.name="URL"][arguments.length=2][arguments.1.property.name=/^(url|nextUrl)$/]'
-const stringified = (clone) => [
-    `CallExpression[callee.name="String"][arguments.length=1]${WHOLE_URL('arguments.0', clone)}`,
-    `CallExpression[callee.property.name=/^(toString|toJSON)$/]${WHOLE_URL('callee.object', clone)}`,
-    // A TemplateLiteral's children are its quasis (TemplateElement) and its expressions.
-    `TemplateLiteral > :matches(NewExpression[callee.name="URL"][arguments.length=1][arguments.0.property.name="url"], ` +
-        `MemberExpression[property.name="nextUrl"]${clone ? `, ${NEXT_URL_CLONE}` : ''})`,
-]
-const requestOriginSelectorWith = (urlOnRequest, inProxy) =>
-    `:matches(MemberExpression[property.name=${ORIGIN_PART}]${REQUEST_URL('object')}, ` +
-    `VariableDeclarator${REQUEST_URL('init')} > ObjectPattern > Property[key.name=${ORIGIN_PART}], ` +
-    `${urlOnRequest}, ` +
-    'Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"], ' +
-    [
-        ...(inProxy
-            ? []
-            : [
-                  `${REDIRECT_CALL}:matches(${WHOLE_URL('arguments.0', false)}, ${REQUEST_URL_STRING('arguments.0')})`,
-                  NEXT_URL_CLONE,
-              ]),
-        ...stringified(inProxy),
-    ].join(', ') +
-    ')'
-// The same forms for ./rules.js, which follows a variable initialised to the request's whole URL to its uses.
-const ORIGIN_PART_RE = /^(origin|host|hostname|href)$/
-const REDIRECT_NAME_RE = /^(redirect|rewrite|permanentRedirect)$/
-const isNamed = (node, name) => node?.type === 'Identifier' && node.name === name
-const propertyNamed = (node, re) =>
-    node?.type === 'MemberExpression' &&
-    !node.computed &&
-    node.property.type === 'Identifier' &&
-    re.test(node.property.name)
-/** `<x>.nextUrl`, a one-argument `new URL(<x>.url)` and, with `clone`, `<x>.nextUrl.clone()` (WHOLE_URL). */
-export const isWholeRequestUrl = (node, clone) =>
-    propertyNamed(node, /^nextUrl$/) ||
-    (node?.type === 'NewExpression' &&
-        isNamed(node.callee, 'URL') &&
-        node.arguments.length === 1 &&
-        propertyNamed(node.arguments[0], /^url$/)) ||
-    (clone &&
-        node?.type === 'CallExpression' &&
-        node.arguments.length === 0 &&
-        propertyNamed(node.callee, /^clone$/) &&
-        (propertyNamed(node.callee.object, /^nextUrl$/) || isNamed(node.callee.object, 'nextUrl')))
-const isRedirectCallee = (callee) =>
-    (callee.type === 'Identifier' && REDIRECT_NAME_RE.test(callee.name)) || propertyNamed(callee, REDIRECT_NAME_RE)
-/**
- * The node to report when the identifier `id`, a reference to a variable holding the request's whole URL, sends it
- * on: a redirect's first argument (not in the proxy), `String(id)`, `id.toString()`/`id.toJSON()`, a template
- * literal's `${id}`, `id.origin` (or `host`, `hostname`, `href`) read or destructured, `new URL(path, id)` (in the proxy,
- * but straight into a redirect) or `baseUrl: id`. Undefined for any other use: `id.pathname = ...`, `id.searchParams`.
- */
-export const requestUrlSentOn = (id, inProxy) => {
-    const parent = id.parent
-    switch (parent.type) {
-        case 'CallExpression':
-            if (parent.arguments[0] !== id) return undefined
-            if (isRedirectCallee(parent.callee)) return inProxy ? undefined : parent
-            return isNamed(parent.callee, 'String') && parent.arguments.length === 1 ? parent : undefined
-        case 'MemberExpression': {
-            if (parent.object !== id) return undefined
-            const call = parent.parent
-            if (propertyNamed(parent, /^(toString|toJSON)$/))
-                return call.type === 'CallExpression' && call.callee === parent ? call : undefined
-            const written = call.type === 'AssignmentExpression' && call.left === parent
-            return propertyNamed(parent, ORIGIN_PART_RE) && !written ? parent : undefined
-        }
-        case 'VariableDeclarator':
-            return parent.init === id && parent.id.type === 'ObjectPattern'
-                ? parent.id.properties.find(
-                      (p) => p.type === 'Property' && !p.computed && ORIGIN_PART_RE.test(p.key.name ?? p.key.value),
-                  )
-                : undefined
-        case 'TemplateLiteral':
-            return id
-        case 'NewExpression': {
-            if (!isNamed(parent.callee, 'URL') || parent.arguments.length !== 2 || parent.arguments[1] !== id)
-                return undefined
-            const call = parent.parent
-            const intoRedirect =
-                call.type === 'CallExpression' && call.arguments[0] === parent && isRedirectCallee(call.callee)
-            return inProxy && intoRedirect ? undefined : parent
-        }
-        case 'Property':
-            return parent.value === id && !parent.computed && (parent.key.name ?? parent.key.value) === 'baseUrl'
-                ? parent
-                : undefined
-        default:
-            return undefined
-    }
-}
 /**
  * The file Next runs as the app's proxy, where a same-origin redirect or rewrite is relativized: `proxy.*` or
  * `middleware.*` in a directory named `src`, as the app's `src/proxy.ts` is (the rule runs on the app's `src/` alone). A `middleware.ts` elsewhere, a route
  * handler's wrapper say, is not Next's proxy, and its redirect is not relativized.
  */
 export const PROXY_FILE = /(^|[\\/])src[\\/](proxy|middleware)\.[cm]?[jt]sx?$/
-const REQUEST_ORIGIN_MESSAGE =
+/** The message for the request's own URL, which ./request-origin.js finds and follows (no selector can). */
+export const REQUEST_ORIGIN_MESSAGE =
     'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
     "request's own URL names the server's bind address and port, not the app's. Its path and " +
     'search parameters are right as they are.'
-export const requestOriginSelector = {
-    selector: requestOriginSelectorWith(URL_ON_REQUEST, false),
-    message: REQUEST_ORIGIN_MESSAGE,
-}
-/** The same, in the app's proxy, where a URL on the request handed straight to a redirect or rewrite is right. */
-export const proxyRequestOriginSelector = {
-    selector: requestOriginSelectorWith(`${URL_ON_REQUEST}:not(${REDIRECT_CALL} > NewExpression)`, true),
-    message: REQUEST_ORIGIN_MESSAGE,
-}
 
 // Every pattern frozen, its lists included: the rules read them when they run, and an app's config is code that could
 // reach this module by its file path.
@@ -516,8 +367,6 @@ for (const pattern of [
     appRealAdapterDynamicSelector,
     a11yLiteralSelector,
     visitorHeaderSelector,
-    requestOriginSelector,
-    proxyRequestOriginSelector,
 ]) {
     if (pattern.group) Object.freeze(pattern.group)
     Object.freeze(pattern)
