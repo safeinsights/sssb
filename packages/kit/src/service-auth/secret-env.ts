@@ -6,8 +6,8 @@ const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/
 
 /**
  * `name`, if it can name a server-only secret; otherwise a TypeError, since a bad name is a programming error, never
- * a 401. `NEXT_PUBLIC_*` is refused: Next copies those into the browser bundle wherever they are read by name, so a
- * secret under one is not a secret. `option` names the option in the message.
+ * a 401. `NEXT_PUBLIC_*` is refused: Next inlines those into the browser bundle wherever client code reads them, so a
+ * secret under one is a single reference away from being public. `option` names the option in the message.
  */
 export function serverSecretEnvName(name: string, option: string): string {
     if (!ENV_NAME.test(name) || name.startsWith('NEXT_PUBLIC_')) {

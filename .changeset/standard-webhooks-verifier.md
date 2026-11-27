@@ -12,7 +12,7 @@
 Webhooks (the scheme Svix signs with): the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers, or Svix's
 `svix-*` names, over the exact body. `withStandardWebhookSignature(handler, { secretEnv })` refuses a timestamp more
 than five minutes from the server's clock either way, a signature that does not match one of the configured `whsec_…`
-secrets in constant time, and the same signed message a second time, with the same opaque 401 the other webhook
+secrets (keys of at least 16 bytes) in constant time, and the same signed message a second time, with the same opaque 401 the other webhook
 wrappers answer. Several secrets, in one variable or several, verify side by side for a rotation. The `webhooks/`
 exemption of the authorization scan accepts a handler that is this call, as it accepts `withWebhookSecret(…)`. It adds
 nothing to the required environment.
@@ -33,8 +33,9 @@ export const POST = withStandardWebhookSignature(
 )
 ```
 
-With several server instances, pass `replayStore` (`claim` and `release` over a shared table) so a replayed message is
-refused on every instance, not only the one that saw it.
+Make the handler idempotent on `webhook.id` even so: the guard against a replayed message is in memory, and a deployment
+runs on Lambda, where each concurrent execution environment keeps its own. Pass `replayStore` (`claim` and `release`
+over a shared table) to make the guard hold across them.
 
 **Now deletable.** A hand-rolled Standard Webhooks or Svix signature check (an HMAC over `id.timestamp.body`), and the
 `svix` package where it was only used to verify.

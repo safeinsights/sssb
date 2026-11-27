@@ -16,11 +16,14 @@ import { serverSecretEnvName } from './secret-env'
  *
  * WHAT A REQUEST MUST CARRY to pass: all three headers of one family; a timestamp of whole Unix seconds within
  * `toleranceMs` (5 minutes by default) of the server's clock, in either direction; and at least one `v1` signature
- * equal, compared in constant time, to the HMAC of the exact body bytes under one of the configured secrets. Anything
- * else is the same opaque AuthRequiredError (a 401 from the wrapper), whichever check refused it.
+ * equal, compared in constant time, to the HMAC of the exact body bytes under one of the configured secrets. A request
+ * that fails any of these gets the same opaque AuthRequiredError (a 401 from the wrapper), whichever check refused it;
+ * one the headers alone condemn is refused before its body is read. What is a programming error instead throws a
+ * TypeError: options that cannot work (a `secretEnv` that names no server-only variable, a `toleranceMs` that is not
+ * positive and finite), when the wrapper is built, and a request whose body something already read.
  *
  * SECRETS AND ROTATION. A secret is the sender's value as it gives it: `whsec_` and the base64 of the key (the prefix
- * is optional; a value that is not base64 never verifies). `secretEnv` names one variable or several, and each
+ * is optional; a value that is not base64, or whose key is shorter than 16 bytes, never verifies). `secretEnv` names one variable or several, and each
  * variable may hold several secrets separated by whitespace; a signature made with any of them passes. So a rotation
  * adds the new secret beside the old (`PARTNER_WEBHOOK_SECRET="whsec_new whsec_old"`, or a second variable), waits
  * for the sender to switch, and removes the old one. A sender mid-rotation may itself send several signatures,
@@ -30,18 +33,30 @@ import { serverSecretEnvName } from './secret-env'
  * REPLAY. The timestamp window is the stateless guard: a captured request stops verifying once it is older than the
  * tolerance, and the sender cannot be impersonated with a fresh timestamp without the secret. Inside the window the
  * replay store refuses a second request with the same id AND timestamp, which is what a replay is: the same signed
- * message sent again. A sender's RETRY is not one: Standard Webhooks senders re-sign each attempt with a new
- * timestamp, so a retry passes, and the handler must treat `webhook.id` as the idempotency key the spec says it is
- * (a delivery it already processed is answered 2xx, not processed twice). The default store is an in-process Map,
- * as Mailgun's token guard is: a deployment that runs several server instances needs a shared one
- * (`replayStore`, a small table keyed by the claim key) to make the guard global. When the handler throws or answers
- * 5xx the claim is released, so a sender that resends the very same message after a failure is processed, not
- * refused. Like the other verifiers this ships in REAL builds; never add `runtime = 'edge'` upstream (node:crypto).
+ * message sent again. The key also names the sender (the variables its secret is read from), so two senders' ids
+ * never collide. A sender's RETRY is not a replay: a retry schedule runs for hours, past any tolerance window, so a
+ * sender signs each attempt afresh with a new timestamp, and it passes. The handler must therefore treat `webhook.id` as the
+ * idempotency key the specification makes it (the same id on every attempt at one message): a delivery it already
+ * processed is answered 2xx, not processed twice. A claim is kept a minute past the moment the signature stops
+ * verifying, to cover a shared store's latency and clock skew. When the handler throws or answers 5xx the claim is
+ * released, so the sender's resend of the very same message is processed; it also means anyone holding a captured copy
+ * of a message whose handler fails can run the handler again until it succeeds or the window closes, one more reason
+ * for the handler to be idempotent on `webhook.id`.
+ *
+ * THE DEFAULT STORE IS PER PROCESS, as Mailgun's token guard is. A deployment `SssbApp` produces runs the server on
+ * Lambda, where each concurrent execution environment has its own memory, so there the default guard holds only within
+ * one environment, and the handler's idempotency is the defence across them. `replayStore` takes a shared store (a
+ * small table keyed by the claim key); the kit does not ship one yet (safeinsights/sssb#205). Like the other verifiers
+ * this ships in REAL builds; never add `runtime = 'edge'` upstream (node:crypto).
  *
  * THE SIGNED STRING'S SEPARATOR. `{id}.{timestamp}.{body}` is not unambiguous when an id contains a dot, a property of
- * the scheme, not of this code: a signed message whose body begins with digits and a dot could be re-presented with a
- * longer id and a different timestamp. The timestamp must still be a fresh one, so the body would have to begin with
- * a current Unix time and a dot. A Standard Webhooks payload is a JSON object, which begins with `{`, so it cannot.
+ * the scheme, not of this code: digits can move across a dot between the id and the timestamp, or between the
+ * timestamp and the body, and the same signature then covers a different (id, timestamp, body). Since the timestamp
+ * must be fresh, that takes a signed message whose body begins with a current Unix time and a dot (re-presented with a
+ * longer id), or whose id ends with a dot and a current Unix time (re-presented with a shorter id, and a body that
+ * begins with the old timestamp and a dot). The first cannot happen to a Standard Webhooks payload, a JSON object,
+ * which begins with `{`; the second needs a sender whose ids end that way, and hands the handler a body that is not
+ * JSON. Dotted ids are accepted, as the specification allows them.
  */
 
 /** The Standard Webhooks header names. */

@@ -376,7 +376,7 @@ describe('replay', () => {
         expect((await guarded(signed(devSecret(), { id: 'msg_4xx', timestamp }))).status).toBe(401)
     })
 
-    test('a replay store the app passes is the one consulted, keyed by id and timestamp', async () => {
+    test('a replay store the app passes is the one consulted, keyed by sender, id and timestamp', async () => {
         const claims: Array<[string, number]> = []
         const store: StandardWebhookReplayStore = {
             claim: async (key, expiresAtMs) => {

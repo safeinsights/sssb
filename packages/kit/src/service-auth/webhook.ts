@@ -81,8 +81,8 @@ export function withWebhookSecret(
     handler: (request: Request) => Promise<Response>,
     options?: WebhookSecretOptions,
 ): (request: Request) => Promise<Response> {
-    // Checked here, when the route module loads, so a mistyped name fails the build's page-data step and every
-    // request, never only the first one in production.
+    // Checked here, when the route module loads, so a mistyped name fails at once and on every request, rather than
+    // as a 401 that looks like a wrong secret.
     const secretOptions = { secretEnv: webhookSecretEnv(options) }
     return async (request) => {
         try {
