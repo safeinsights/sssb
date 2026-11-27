@@ -53,35 +53,45 @@ async function waitForReload(page: Page) {
     })
 }
 
-test('the Simulator turns a world knob and resets the world to the seed', async ({ page }) => {
-    // A reset closes the world's database, and the next request migrates and seeds it again.
-    test.setTimeout(120_000)
-    // From the seed, so a retry after a failure part-way does not start with the knob already turned.
-    expect((await page.request.post('/api/simulator/reset', { data: {} })).ok()).toBe(true)
-    await page.goto('/en/signin')
-    await openPanel(page)
+test.describe('the world knobs', () => {
+    // Whatever happens part-way, the shared world is left with its jobs running: the other specs share it.
+    test.afterEach(async ({ request }) => {
+        await request.post('/api/simulator/flags', { data: { flag: 'jobs-held', enabled: false } })
+    })
 
-    // Hold every job at queued: a flag, which reloads the page, since what it changes is server output.
-    await page.getByTestId('simulator-tab-snapshots').click()
-    await expect(page.getByTestId('simulator-snapshots')).toBeVisible()
-    await stampDocument(page)
-    await page.getByTestId('flag-toggle-jobs-held').click()
-    await waitForReload(page)
-    await openPanel(page)
-    await page.getByTestId('simulator-tab-jobs').click()
-    await expect(page.getByTestId('simulator-jobs-held')).toBeVisible()
+    test('the Simulator turns a world knob and resets the world to the seed', async ({ page }) => {
+        // A reset closes the world's database, and the next request migrates and seeds it again.
+        test.setTimeout(120_000)
+        // From the seed, so a retry after a failure part-way does not start with the knob already turned.
+        expect((await page.request.post('/api/simulator/reset', { data: {} })).ok()).toBe(true)
+        await page.goto('/en/signin')
+        await openPanel(page)
 
-    // Reset, a two-step confirm: the page reloads onto the welcome page and the panel says what happened.
-    await page.getByTestId('simulator-tab-snapshots').click()
-    await stampDocument(page)
-    await page.getByTestId('snapshots-reset').click()
-    await page.getByTestId('snapshots-reset-confirm').click()
-    await waitForReload(page)
-    await openPanel(page)
-    await expect(page.getByTestId('simulator-notice').filter({ hasNotText: '@' })).toBeVisible()
+        // Hold every job at queued: a flag, which reloads the page, since what it changes is server output.
+        await page.getByTestId('simulator-tab-snapshots').click()
+        await expect(page.getByTestId('simulator-snapshots')).toBeVisible()
+        await stampDocument(page)
+        await page.getByTestId('flag-toggle-jobs-held').click()
+        await waitForReload(page)
+        await openPanel(page)
+        await page.getByTestId('simulator-tab-jobs').click()
+        await expect(page.getByTestId('simulator-jobs-held')).toBeVisible()
 
-    // The knob is back where the seed has it.
-    await page.getByTestId('simulator-tab-jobs').click()
-    await expect(page.getByTestId('simulator-clock-now')).toBeVisible()
-    await expect(page.getByTestId('simulator-jobs-held')).toHaveCount(0)
+        // Reset, a two-step confirm: the page reloads onto the welcome page and the panel says what happened.
+        await page.getByTestId('simulator-tab-snapshots').click()
+        await stampDocument(page)
+        await page.getByTestId('snapshots-reset').click()
+        await page.getByTestId('snapshots-reset-confirm').click()
+        await waitForReload(page)
+        await openPanel(page)
+        await expect(page.getByTestId('simulator-notice').filter({ hasNotText: '@' })).toBeVisible()
+
+        // The knob is back where the seed has it: the server says so, and the Snapshots tab, once it has loaded its flags.
+        const flags = (await (await page.request.get('/api/simulator/flags')).json()) as {
+            flags: { flag: string; enabled: boolean }[]
+        }
+        expect(flags.flags.find((flag) => flag.flag === 'jobs-held')?.enabled).toBe(false)
+        await page.getByTestId('simulator-tab-snapshots').click()
+        await expect(page.getByTestId('flag-toggle-jobs-held')).not.toBeChecked()
+    })
 })

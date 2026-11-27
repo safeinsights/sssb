@@ -59,6 +59,11 @@ async function call(path: string, init: RequestInit & { json?: unknown } = {}): 
     return simulatorApi(request, { params: Promise.resolve({ path: segments }) })
 }
 
+// The module and everything it imports load once, here, not inside the first test's own timeout.
+beforeAll(async () => {
+    await import('./simulator-api')
+}, 120_000)
+
 beforeEach(() => {
     mode.simulated = true
     cookieStore.clear()
@@ -98,7 +103,7 @@ describe('dispatch', () => {
         expect(cookieStore.size).toBe(0)
     })
 
-    test.each(['reset', 'snapshots', 'snapshots/restore', 'flags', 'agreements/bump', 'presets'])(
+    test.each(['reset', 'snapshots', 'snapshots/restore', 'snapshots/delete', 'flags', 'agreements/bump', 'presets'])(
         'a %s POST that is not JSON is refused before it runs',
         async (path) => {
             const response = await call(path, {
@@ -291,6 +296,16 @@ describe('snapshots, flags, agreements and presets', () => {
         expect((await call('flags', { json: [] })).status).toBe(400)
     })
 
+    test('a refused POST changes nothing', async () => {
+        const refused = await call('flags', {
+            method: 'POST',
+            headers: { 'content-type': 'text/plain' },
+            body: JSON.stringify({ flag: 'jobs-held', enabled: false }),
+        })
+        expect(refused.status).toBe(415)
+        expect(await flagOn('jobs-held')).toBe(true)
+    })
+
     test('a reset puts the world back to the seed', async () => {
         await call('flags', { json: { flag: 'jobs-held', enabled: true } })
         expect((await call('reset', { json: {} })).status).toBe(204)
@@ -363,6 +378,7 @@ describe('snapshots, flags, agreements and presets', () => {
         expect(after.agreements[0]?.version).toBe(2)
 
         expect((await call('agreements/bump', { json: {} })).status).toBe(400)
+        expect((await call('agreements/bump', { json: { agreementId: 'a1' } })).status).toBe(400)
         const unknown = await call('agreements/bump', { json: { agreementId: '00000000-0000-4000-8000-000000000000' } })
         expect(unknown.status).toBe(404)
     })

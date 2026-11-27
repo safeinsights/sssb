@@ -105,6 +105,8 @@ export interface SimulatorAgreements {
     agreements: SnapshotAgreement[]
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** A clock move is capped at a year per call: a demo control, not a time machine. */
 const MAX_ADVANCE_MS = 366 * 86_400_000
 /** And the world at a century ahead in all, so repeated moves never leave the range a `Date` can hold. */
@@ -420,7 +422,8 @@ async function agreements(): Promise<Response> {
  */
 async function agreementBump(request: Request): Promise<Response> {
     const agreementId = (await jsonObject(request))?.['agreementId']
-    if (typeof agreementId !== 'string' || !agreementId) return badRequest('invalid-agreement')
+    // An agreement's id is a uuid: anything else could only fail the database's cast.
+    if (typeof agreementId !== 'string' || !UUID_PATTERN.test(agreementId)) return badRequest('invalid-agreement')
     const result = await bumpWorldAgreement(agreementId)
     if (!result) return Response.json({ error: 'unknown agreement' }, { status: 404 })
     return Response.json({ version: result.version })

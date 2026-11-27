@@ -430,16 +430,21 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
             pushNotice(t('noticePresetFailedStale', { name: preset ? tRoot(preset.titleKey) : id }))
             return false
         }
-        return post('presets', { name: id, locale }).then(async (response) => {
-            // Only ever to a path on this origin: the server answers no other, and this is the client's own check.
-            const path = response.ok
-                ? sameOriginPath(((await response.json()) as { redirectTo?: unknown }).redirectTo)
-                : null
-            if (!path) return failed()
-            writePostNotice({ kind: 'preset', name: id })
-            window.location.assign(path)
-            return untilReload()
-        }, failed)
+        return (
+            post('presets', { name: id, locale })
+                .then(async (response) => {
+                    // Only ever to a path on this origin: the server answers no other, and this is the client's own check.
+                    const path = response.ok
+                        ? sameOriginPath(((await response.json()) as { redirectTo?: unknown }).redirectTo)
+                        : null
+                    if (!path) return failed()
+                    writePostNotice({ kind: 'preset', name: id })
+                    window.location.assign(path)
+                    return untilReload()
+                })
+                // A rejected fetch, or an answer that is not JSON (a proxy's error page), is a failed load too.
+                .catch(failed)
+        )
     }
 
     function handleSaveSnapshot(name: string) {
