@@ -38,21 +38,50 @@ export interface CopyOptions {
 
 /** Constraints the storage backend must enforce on a browser upload (mirrored on both adapters). */
 export interface UploadConstraints {
-    /** Exact content-type the upload must declare (S3: an `eq $Content-Type` policy condition). */
+    /** Exact content-type the upload must declare (S3: an `eq $Content-Type` policy condition; a PUT: a signed header). */
     contentType: string
-    /** Hard ceiling on the object size in bytes (S3: a `content-length-range` policy condition). */
+    /** Hard ceiling on the object size in bytes (S3 POST: a `content-length-range` policy condition). */
     maxBytes: number
+    /**
+     * The EXACT size in bytes of the file the browser will send. A PUT has no size policy, so its target signs this
+     * exact `Content-Length` into the URL, and an adapter that mints a PUT refuses a call without it (or with one
+     * that is not an integer from 0 to `maxBytes`) with a plain `Error`. A POST target ignores it, so pass it
+     * whenever the client says the size: which form a store gives is the deployment's setting, never the caller's
+     * guess. It is the CLIENT's claim: the store holds the upload to it, the app takes it first and refuses one
+     * over `maxBytes` before minting.
+     */
+    sizeBytes?: number
 }
 
 /**
- * A browser-direct upload target. The browser POSTs `multipart/form-data` to `url` with every entry
- * of `fields` appended first, then the file as the final `file` part — the exact shape S3's presigned
- * POST expects, so the client code is identical whichever adapter minted it.
+ * A browser-direct upload target of the POST form: the browser POSTs `multipart/form-data` to `url` with every entry
+ * of `fields` appended first, then the file as the final `file` part, the exact shape S3's presigned POST expects.
+ * `method` is absent on a target an adapter minted before the PUT form existed: absent means POST.
  */
-export interface UploadTarget {
+export interface PostUploadTarget {
+    method?: 'POST'
     url: string
     fields: Record<string, string>
 }
+
+/**
+ * A browser-direct upload target of the PUT form, for a store without presigned POST (Cloudflare R2): the browser
+ * PUTs the file as the request BODY (never multipart) to `url`, sending every entry of `headers` and no other
+ * header the signature does not cover. It also sends `Content-Length`, which a browser derives from the body: the
+ * body must be exactly the `sizeBytes` the target was minted for, or the store refuses it. The signature covers the
+ * key, the content type and that length, so a changed one is refused too.
+ */
+export interface PutUploadTarget {
+    method: 'PUT'
+    url: string
+    headers: Record<string, string>
+}
+
+/**
+ * A browser-direct upload target, in one of two forms. The browser code switches on `method`
+ * (`target.method === 'PUT'`; anything else is a POST), so it is identical whichever adapter minted the target.
+ */
+export type UploadTarget = PostUploadTarget | PutUploadTarget
 
 export interface StoragePort {
     put(key: string, body: Uint8Array | string, contentType: string): Promise<void>
@@ -62,9 +91,17 @@ export interface StoragePort {
     /**
      * Mint a target the browser uploads a file to directly (never through the app server). `key` is
      * ALWAYS server-built by the caller (an upload route builds `<prefix>/<tenant>/<uuid>/<name>`);
-     * the browser cannot choose it. Real adapter = an S3 presigned POST; fake adapter = a local
-     * multipart endpoint that verifies the same constraints. The size ceiling is `constraints.maxBytes`
-     * above, which the app owns — only the app knows what it accepts.
+     * the browser cannot choose it. Real adapter = an S3 presigned POST, or a presigned PUT for a store that has no
+     * POST (`STORAGE_UPLOAD_TARGET`, `UploadTarget`); fake adapter = a local endpoint that verifies the same
+     * constraints. The size ceiling is `constraints.maxBytes` above, which the app owns: only the app knows what
+     * it accepts.
+     *
+     * What holds the ceiling differs by form, and the port says so rather than promise one thing. A POST's
+     * `content-length-range` policy is the store's own: an oversize body is refused before a byte is stored. A PUT
+     * has no such policy, so its URL signs the EXACT size (`constraints.sizeBytes`, at most `maxBytes`): the
+     * store refuses a body of another length IF it honours a signed `Content-Length` (AWS S3 does; a store that
+     * does not stores the bytes). So a caller that must hold the ceiling whatever the store runs `head` on the
+     * object before it trusts it, and `delete`s one over `maxBytes`; `head` reports what was stored.
      */
     createUploadTarget(key: string, constraints: UploadConstraints): Promise<UploadTarget>
     /**

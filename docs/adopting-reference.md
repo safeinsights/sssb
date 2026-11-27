@@ -806,13 +806,22 @@ first value, which is what real mode required before the switches existed.
   applies. Whatever the store, `getSignedDownloadUrl`, `put`, `get`, `head`, `list`, `copy` (with `ifMatch`) and `delete` are
   S3's calls, so what the store implements of them decides what works: run the cutover row `storage-compatible-live`
   against a real bucket before you rely on it.
-  **What it cannot do yet: a browser upload on a store without presigned POST.** `createUploadTarget` mints an S3
-  presigned POST, which Cloudflare documents R2 as not supporting (MinIO accepts one). So `STORAGE_UPLOAD_TARGET` is
-  required, never guessed from the endpoint: `post` if the store accepts a presigned POST, `none` if it does not, and
-  with `none` `createUploadTarget` fails with an error that names the setting, while every other method works. An app
-  that must take browser uploads into R2 waits for a PUT form of the upload target (an open SSSB issue,
-  [safeinsights/sssb#134](https://github.com/safeinsights/sssb/issues/134)); until then it sends the file through
-  its own server and calls `put`. Switching a deployed stack from `s3` to `s3-compatible` takes the bucket out of the
+  **A browser upload on a store without presigned POST.** `createUploadTarget` mints an S3 presigned POST, which
+  Cloudflare documents R2 as not supporting (MinIO accepts one), and a presigned PUT, which R2 does. So
+  `STORAGE_UPLOAD_TARGET` is required, never guessed from the endpoint: `post` if the store accepts a presigned POST,
+  `put` if it takes a presigned PUT instead (R2), `none` if the app takes no browser upload, and with `none`
+  `createUploadTarget` fails with an error that names the setting, while every other method works. The target is
+  an `UploadTarget` (`@sssb/kit/ports/storage`), a POST of `fields` then the file, or a PUT of the file as the body
+  with the `headers` it names, and the browser code switches on `target.method` (the showcase's
+  `send-to-upload-target.ts` is the whole of it). **A PUT has no size policy**, so its URL signs the file's exact
+  `Content-Length` and `Content-Type` instead: the app passes the client's claimed size as `sizeBytes` beside
+  `maxBytes` (refusing one over `maxBytes` first, as the showcase's mint route does), and the store refuses a body of
+  another length if it honours a signed length (AWS S3 does; for R2 that is for the cutover row
+  `storage-compatible-live` to measure, and is not assumed). So a route that must hold the ceiling whatever the
+  store does runs `head` on the object when it confirms the upload and `delete`s one over `maxBytes`, as the showcase's
+  confirm route does. The bucket's CORS rules must allow a browser `PUT` from the app's origin with the `Content-Type`
+  header, which a presigned URL does not grant by itself (R2: the bucket's CORS policy, `AllowedMethods: ["PUT"]`,
+  `AllowedHeaders: ["content-type"]`). Switching a deployed stack from `s3` to `s3-compatible` takes the bucket out of the
   stack, as `none` does (above); copy the objects to the new store first.
 - **`jobs: 'in-process'` needs no CodeBuild project.** Each job's handler runs in the server, from the request or the
   scheduled tick that started it, and its status is recorded before that call returns. It shares that invocation's

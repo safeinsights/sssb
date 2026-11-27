@@ -16,8 +16,9 @@
  *   do. `s3-compatible` is a choice of its own, not `s3` reading an endpoint when one is set: which settings happen
  *   to be set never picks behaviour (below). Beyond the required settings it reads `STORAGE_FORCE_PATH_STYLE`
  *   (`true` or `false`; unset leaves the SDK's own, virtual-hosted addressing), and requires `STORAGE_UPLOAD_TARGET`:
- *   `post` if the store accepts a presigned POST, which `createUploadTarget` is, or `none` if it does not (R2 does
- *   not), so that `createUploadTarget` fails naming the setting. Explicit and with no default, because either default
+ *   `post` if the store accepts a presigned POST, `put` if it takes a presigned PUT instead (R2 does not accept a
+ *   POST), or `none` for an app that takes no browser upload, so that `createUploadTarget` fails naming the setting.
+ *   A PUT upload target signs the file's exact size into the URL (`UploadConstraints.sizeBytes`). Explicit and with no default, because either default
  *   would be a guess that fails on some store only when a browser first uploads.
  *
  * `AWS_REGION` is required by the choices that call AWS (`s3`, `codebuild`) and by the Data API transport

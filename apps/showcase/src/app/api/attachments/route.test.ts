@@ -85,11 +85,12 @@ describe('POST /api/attachments (mint)', () => {
         expect(h.createUploadTarget).toHaveBeenCalledWith(passedKey, {
             contentType: 'text/csv',
             maxBytes: 5 * 1024 * 1024,
+            sizeBytes: 12,
         })
     })
 
     test('defaults content-type to octet-stream and kind to attachment', async () => {
-        await post({ filename: 'blob' })
+        await post({ filename: 'blob', sizeBytes: 1 })
         expect(h.createAttachment).toHaveBeenCalledWith(
             {},
             expect.objectContaining({
@@ -106,18 +107,39 @@ describe('POST /api/attachments (mint)', () => {
         expect(h.createAttachment).not.toHaveBeenCalled()
     })
 
+    test('400 invalid-size unless sizeBytes is a whole number of bytes: a PUT target signs exactly it', async () => {
+        for (const sizeBytes of [undefined, '12', -1, 1.5, null]) {
+            const response = await post({ filename: 'x', ...(sizeBytes === undefined ? {} : { sizeBytes }) })
+            expect(response.status, String(sizeBytes)).toBe(400)
+            expect(await response.json()).toEqual({ error: 'invalid-size' })
+        }
+        expect(h.createUploadTarget).not.toHaveBeenCalled()
+    })
+
+    test('passes a size of exactly the ceiling, and refuses one byte over', async () => {
+        expect((await post({ filename: 'x', sizeBytes: 5 * 1024 * 1024 })).status).toBe(201)
+        expect((await post({ filename: 'x', sizeBytes: 5 * 1024 * 1024 + 1 })).status).toBe(400)
+    })
+
+    test('returns a PUT target as the store minted it', async () => {
+        const target = { method: 'PUT', url: 'https://store/k?sig=1', headers: { 'Content-Type': 'text/csv' } }
+        h.createUploadTarget.mockResolvedValue(target)
+        const response = await post({ filename: 'report.csv', contentType: 'text/csv', sizeBytes: 12 })
+        expect(await response.json()).toEqual({ attachmentId: 'art-1', upload: target })
+    })
+
     test('403 when a restricted member tries to upload', async () => {
         h.requireUser.mockResolvedValue(user({ role: 'restricted', restricted: true }))
-        const response = await post({ filename: 'report.csv', contentType: 'text/csv' })
+        const response = await post({ filename: 'report.csv', contentType: 'text/csv', sizeBytes: 12 })
         expect(response.status).toBe(403)
         expect(h.createAttachment).not.toHaveBeenCalled()
     })
 
     test('404 when the tenant or org is unknown', async () => {
         h.tenantIdForSlug.mockResolvedValueOnce(null)
-        expect((await post({ filename: 'x' })).status).toBe(404)
+        expect((await post({ filename: 'x', sizeBytes: 1 })).status).toBe(404)
         h.orgIdForSlug.mockResolvedValueOnce(null)
-        expect((await post({ filename: 'x' })).status).toBe(404)
+        expect((await post({ filename: 'x', sizeBytes: 1 })).status).toBe(404)
         expect(h.createAttachment).not.toHaveBeenCalled()
     })
 })

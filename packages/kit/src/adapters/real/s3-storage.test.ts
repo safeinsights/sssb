@@ -69,6 +69,44 @@ describe('createS3Storage', () => {
         expect((command as PutObjectCommand).input).toMatchObject({ Bucket: 'b', Key: 'k', ContentType: 'text/plain' })
     })
 
+    test('uploadTarget `put` builds its own client without the default checksum, and a given client that adds one is refused', async () => {
+        const own = createS3Storage({ bucket: 'b', region: 'us-east-1', credentials, uploadTarget: 'put' })
+        const target = await own.createUploadTarget('k', { contentType: 'text/plain', maxBytes: 10, sizeBytes: 3 })
+        expect(target).toMatchObject({ method: 'PUT', headers: { 'Content-Type': 'text/plain' } })
+        expect(new URL(target.url).searchParams.has('x-amz-checksum-crc32')).toBe(false)
+
+        // A client the caller built with the SDK's own default signs an empty body's checksum into the URL.
+        const given = new S3Client({ region: 'us-east-1', credentials })
+        await expect(
+            createS3Storage({ bucket: 'b', client: given, uploadTarget: 'put' }).createUploadTarget('k', {
+                contentType: 'text/plain',
+                maxBytes: 10,
+                sizeBytes: 3,
+            }),
+        ).rejects.toThrow(/carries x-amz-checksum-crc32.*requestChecksumCalculation: 'WHEN_REQUIRED'/)
+
+        // And one built for it works, uploadTarget not counting as a client option that would be ignored.
+        const fitted = new S3Client({ region: 'us-east-1', credentials, requestChecksumCalculation: 'WHEN_REQUIRED' })
+        const ok = await createS3Storage({ bucket: 'b', client: fitted, uploadTarget: 'put' }).createUploadTarget('k', {
+            contentType: 'text/plain',
+            maxBytes: 10,
+            sizeBytes: 3,
+        })
+        expect(ok.method).toBe('PUT')
+    })
+
+    test('the default form is a POST, and says so', async () => {
+        const target = await createS3Storage({ bucket: 'b', region: 'us-east-1', credentials }).createUploadTarget(
+            'k',
+            {
+                contentType: 'text/plain',
+                maxBytes: 10,
+            },
+        )
+        expect(target.method).toBe('POST')
+        expect(target).toHaveProperty('fields')
+    })
+
     test('refuses client options beside a client, which would be ignored, and a missing bucket', () => {
         const client = new S3Client({ region: 'us-east-1' })
         expect(() => createS3Storage({ bucket: 'b', client, endpoint: 'http://127.0.0.1:9000' })).toThrow(
