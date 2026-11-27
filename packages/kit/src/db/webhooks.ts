@@ -378,8 +378,9 @@ export async function createEndpoint(
 /**
  * Resolves an endpoint id to its owning org ONLY when it belongs to `orgId` within `tenantId` — null
  * both when absent and when it belongs to another org (a foreign endpoint is indistinguishable from a
- * missing one, so ids can't be probed; the same doctrine as jobForOrg). The route uses
- * this to 404 before authorize().
+ * missing one, so another org's endpoint ids can't be probed; the same doctrine as jobForOrg). The route calls it
+ * after authorize(), so a person who may not manage endpoints gets the same 403 whether or not the id exists
+ * (safeinsights/sssb#137).
  */
 export async function endpointForOrg(
     db: DbPort,

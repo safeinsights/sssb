@@ -117,8 +117,21 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
   neither does a `.then(...)` chained after it.
 - The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
-  comes before the mutation. Call it before the mutation and before any `try`, on a path every request takes: after
-  `auth.requireUser()` and the lookups that give it the org, never inside a condition or a loop.
+  comes before the mutation. Call it before the mutation and before any `try` (except one whose `catch` always
+  rethrows, as in the next rule), on a path every request takes: after `auth.requireUser()` and the lookups that give it the org, never
+  inside a condition or a loop.
+- A person who may not act gets the same answer, status and body, whether or not a thing the request names exists:
+  a row by its id in the path, an org by a slug in the body, anything a lookup keyed by request input finds. So no such
+  lookup answers before `authorize` when the session alone can decide: authorize on the active org the session
+  resolves to first, then look the thing up, scoped to the active org (another org's row is missing too). When the
+  decision needs the row itself (a two-sided subject, whose requester and responder orgs only the row knows), the
+  lookup comes first, and a missing row and a refusal are the one error:
+  `if (!row) throw new NotFoundError()`, then
+  `try { authorize(…) } catch (error) { throw error instanceof ForbiddenError ? new NotFoundError() : error }`, both
+  errors from `@sssb/kit/ports/errors`, so `withPortErrors` gives both one answer. That `catch` always rethrows, so the
+  check still counts the call. The check cannot see the order of a lookup and an `authorize`, so this rule is kept by
+  hand; pin it with a route test that sends an existing id and a missing one as a person who may not act, and expects
+  identical answers.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
   app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named

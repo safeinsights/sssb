@@ -96,13 +96,21 @@ describe('POST /api/escalations/[id]/respond', () => {
         expect(h.transitionEscalation).not.toHaveBeenCalled()
     })
 
-    test('403 when the responder-side actor is a plain member (respond needs a manager)', async () => {
-        h.requireUser.mockResolvedValue(user({ role: 'member' }))
+    // safeinsights/sssb#137: a person who may not decide learns nothing about whether the id exists.
+    test.each([
+        ['a plain member of the responder side (respond needs a manager)', user({ role: 'member' })],
+        ['a person with no standing (none)', user({ role: 'none', restricted: true })],
+        ['a manager of the requester side', user({ orgSlug: 'frontline' })],
+    ])('%s gets the same 404 for an existing id as for a missing one', async (_, who) => {
+        h.requireUser.mockResolvedValue(who)
+        const existing = await post({ decision: 'accept' })
+        h.escalationForActiveOrg.mockResolvedValue(null)
+        const missing = await post({ decision: 'accept' })
 
-        const response = await post({ decision: 'accept' })
-
-        expect(response.status).toBe(403)
+        expect(existing.status).toBe(404)
+        expect([existing.status, await existing.json()]).toEqual([missing.status, await missing.json()])
         expect(h.transitionEscalation).not.toHaveBeenCalled()
+        expect(h.recordAuditEvent).not.toHaveBeenCalled()
     })
 
     test("404 when the active org is not a party to the escalation (or it's absent)", async () => {
