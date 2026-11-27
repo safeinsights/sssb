@@ -7616,5 +7616,11 @@ One branch's secret-like string failed the scan on every other open pull request
 - **Scope of the copy.** A generated workspace's `checks.yml` had the same job, so the generator writes the same step and
   copies the script as it is (`ROOT_FILES`); a changeset for `@sssb/create` (Kind scaffold, optional: the old scan keeps
   working, with the old bug) says how an existing workspace takes it. `app-checks.yml` and `sssb ci` have no scan.
+- **What is no longer scanned early.** A commit pushed straight to a branch that is not `main` (an `int-*` branch, say)
+  used to fail every pull request's scan; now it is read when it reaches `main`, in the pull request into `main` and
+  then the push. A pull request into that branch does not read it either: it is reachable from the base. With
+  `--log-opts` set, gitleaks 8.30.1 drops its own `--full-history` and `--diff-filter=tuxdb` (debug output:
+  `git log -p -U0 HEAD`, against `git log -p -U0 --full-history --all --diff-filter=tuxdb` without it); a pull request
+  that deletes a file holding a secret already on its base still reports nothing, as before (throwaway repository).
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).

@@ -10,7 +10,7 @@ import { makeTestTmpDir } from '../support/tmp-dir'
  * `.github/scripts/secret-scan-range.sh`, which says which commits checks.yml's `secret-scan` job hands gitleaks, driven
  * against a real repository. The failure it exists to end: with no range, gitleaks reads `git log --all`, every branch
  * on the remote, so one branch's secret-like string failed every other pull request. Each case asks the script for a
- * range and reads the commits git then walks for it (`git log <range>`, which is what gitleaks runs), because a range
+ * range and reads the commits git then walks for it (`git log <range>`: gitleaks 8.30.1 runs `git log -p -U0 <range>`, the same walk with the diffs added), because a range
  * that parses is not a range that excludes the right branch.
  */
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
