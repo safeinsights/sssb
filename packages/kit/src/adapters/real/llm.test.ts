@@ -480,3 +480,148 @@ describe('createRealLlm: what ends a stream, and which refusals are repeated', (
         expect(() => createRealLlm('key', { maxRetries: 0 })).not.toThrow()
     })
 })
+
+describe('createRealLlm: a dropped connection (safeinsights/sssb#230)', () => {
+    /** What undici gives a body that ends early, and the SDK 1.8.0 wraps: pinned against the SDK's own wrapping. */
+    const terminated = () =>
+        Object.assign(new TypeError('terminated'), {
+            cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+        })
+    const sse = (event: string, data: object) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    const opening = (text?: string) =>
+        sse('message_start', {
+            type: 'message_start',
+            message: { ...messageBody([]), content: [], stop_reason: null },
+        }) +
+        (text === undefined
+            ? ''
+            : sse('content_block_start', {
+                  type: 'content_block_start',
+                  index: 0,
+                  content_block: { type: 'text', text: '' },
+              }) +
+              sse('content_block_delta', {
+                  type: 'content_block_delta',
+                  index: 0,
+                  delta: { type: 'text_delta', text },
+              }))
+    /** A streamed response that sends `first`, then dies the way a dropped socket does. */
+    const dyingStream = (first: string) => () =>
+        new Response(
+            new ReadableStream<Uint8Array>({
+                start(controller) {
+                    if (first) controller.enqueue(new TextEncoder().encode(first))
+                    setTimeout(() => controller.error(terminated()), 5)
+                },
+            }),
+            { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        )
+    const dyingStreamWith = (error: Error) =>
+        new Response(
+            new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(opening()))
+                    setTimeout(() => controller.error(error), 5)
+                },
+            }),
+            { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        )
+    const consume = async (llm: ReturnType<typeof createRealLlm>) => {
+        const chunks: string[] = []
+        const error = await rejection(
+            (async () => {
+                for await (const chunk of llm.stream(request)) chunks.push(chunk)
+            })(),
+        )
+        return { text: chunks.join(''), error }
+    }
+
+    it('the SDK reports a streamed body that dies as a plain AnthropicError, which is why the adapter looks at its cause', async () => {
+        stubFetch(dyingStream(opening()))
+        const { error } = await consume(createRealLlm('key', { maxRetries: 0 }))
+        // The shape the adapter relies on: not an APIError, `terminated` on a TypeError cause with a transport code.
+        expect(error).toBeInstanceOf(LlmUnavailableError)
+        const raw = (error as LlmUnavailableError).cause as Error
+        expect(raw).toBeInstanceOf(Anthropic.AnthropicError)
+        expect(raw).not.toBeInstanceOf(Anthropic.APIError)
+        expect(raw.message).toBe('terminated')
+        expect((raw.cause as Error).message).toBe('terminated')
+        expect(((raw.cause as Error).cause as { code?: string }).code).toBe('UND_ERR_SOCKET')
+    })
+
+    it('maps a stream that dies before any text to connection-lost once its retry has died too', async () => {
+        const fetchMock = stubFetch(dyingStream(opening()))
+        const { text, error } = await consume(createRealLlm('key'))
+        expect(text).toBe('')
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'connection-lost', retryAfterSeconds: 10 })
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('starts a stream that died before any text again, and delivers the answer the second time', async () => {
+        const answer = opening('hello') + sse('message_stop', { type: 'message_stop' })
+        const fetchMock = stubFetch((_init, call) =>
+            call === 1
+                ? dyingStream(opening())()
+                : new Response(answer, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+        )
+        const chunks: string[] = []
+        for await (const chunk of createRealLlm('key').stream(request)) chunks.push(chunk)
+        expect(chunks.join('')).toBe('hello')
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('never starts a stream again once it has delivered text, and says connection-lost', async () => {
+        const fetchMock = stubFetch(dyingStream(opening('partial ')))
+        const { text, error } = await consume(createRealLlm('key'))
+        expect(text).toBe('partial ')
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'connection-lost' })
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("maps a non-streaming body that dies (undici's bare TypeError) and a fetch that rejects", async () => {
+        stubFetch(
+            () =>
+                new Response(new ReadableStream({ start: (c) => setTimeout(() => c.error(terminated()), 5) }), {
+                    status: 200,
+                }),
+        )
+        expect(await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))).toMatchObject({
+            name: 'LlmUnavailableError',
+            reason: 'connection-lost',
+        })
+        stubFetch(() => Promise.reject(terminated()))
+        const error = await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))
+        expect(error).toMatchObject({ reason: 'connection-lost' })
+        expect(((error as LlmUnavailableError).cause as Error).constructor.name).toBe('APIConnectionError')
+    })
+
+    it('repeats a non-streaming call whose body died, once', async () => {
+        const fetchMock = stubFetch((_init, call) =>
+            call === 1
+                ? new Response(new ReadableStream({ start: (c) => setTimeout(() => c.error(terminated()), 5) }), {
+                      status: 200,
+                  })
+                : json(200, textMessage('ok')),
+        )
+        expect(await createRealLlm('key').complete(request)).toEqual({ text: 'ok' })
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('leaves an error that carries no transport cause as it is: not every failed body is a dropped connection', async () => {
+        const failing = () =>
+            new Response(
+                new ReadableStream({
+                    start: (c) => setTimeout(() => c.error(new Error('the body was not what it said')), 5),
+                }),
+                {
+                    status: 200,
+                },
+            )
+        stubFetch(failing)
+        const error = await rejection(createRealLlm('key', { maxRetries: 0 }).complete(request))
+        expect(error).not.toBeInstanceOf(LlmUnavailableError)
+        stubFetch(() => dyingStreamWith(new Error('the stream was not what it said')))
+        const streamed = (await consume(createRealLlm('key', { maxRetries: 0 }))).error
+        expect(streamed).not.toBeInstanceOf(LlmUnavailableError)
+    })
+})

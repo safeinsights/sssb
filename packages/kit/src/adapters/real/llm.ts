@@ -290,6 +290,37 @@ function providerWaitMs(error: APIError): number | undefined {
     return wait > 0 ? wait : undefined
 }
 
+/** System and undici codes that say the transport failed, not the provider (undici's `UND_ERR_*` are matched by prefix). */
+const CONNECTION_CODES = new Set([
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ECONNABORTED',
+    'EPIPE',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'ENETUNREACH',
+    'EHOSTUNREACH',
+])
+
+/**
+ * Whether `error` is the connection to the provider failing, however the SDK 1.8.0 reports it (`safeinsights/sssb#230`):
+ * `fetch` rejecting, which it wraps in an `APIConnectionError`; a streamed body dying while it is read, which it wraps
+ * in a plain `AnthropicError('terminated')`; a non-streaming body dying, which it passes on as undici's own
+ * `TypeError('terminated')`. The last two are told apart from the SDK's other plain errors (a request it refuses to
+ * send) by what they carry: `terminated`, or a transport code (`UND_ERR_SOCKET`, `ECONNRESET`...) somewhere in the cause chain.
+ */
+function isConnectionDrop(error: unknown): boolean {
+    if (error instanceof Anthropic.APIConnectionError) return true
+    let cause: unknown = error
+    for (let depth = 0; depth < 5 && cause instanceof Error; depth++) {
+        const code = (cause as { code?: unknown }).code
+        if (cause instanceof TypeError && cause.message === 'terminated') return true
+        if (typeof code === 'string' && (code.startsWith('UND_ERR_') || CONNECTION_CODES.has(code))) return true
+        cause = cause.cause
+    }
+    return false
+}
+
 /**
  * How long to wait before repeating a call that failed with `error`, or `undefined` when it is not worth repeating: the
  * provider's own wait, else 0.5 s doubling to 8 s. Worth repeating is what the SDK's own policy repeats: 408, 409, 429
@@ -300,7 +331,7 @@ function retryWaitMs(error: unknown, retry: number, deadline: Deadline): number 
     if (error instanceof Anthropic.APIUserAbortError || deadline.expired) return undefined
     const backoff = Math.min(500 * 2 ** retry, 8000)
     // The SDK reports any connect or socket timeout as a timeout too; only the deadline's own is not worth repeating.
-    if (error instanceof Anthropic.APIConnectionError) return backoff
+    if (isConnectionDrop(error)) return backoff
     if (!(error instanceof Anthropic.APIError)) return undefined
     if (error.headers?.get('x-should-retry') === 'false') return undefined
     const status = error.status
@@ -316,7 +347,7 @@ function retryWaitMs(error: unknown, retry: number, deadline: Deadline): number 
 /**
  * The port's error for what ended a call: a rate limit and an overloaded provider by their status or type, a deadline
  * (the adapter's own signal, however the SDK or the platform reports the abort, or the SDK's per-attempt timeout) as
- * `timed-out`. Anything else, the app's own `execute` throwing among it, is returned as it is: an abort that the
+ * `timed-out`, a failed connection as `connection-lost`. Anything else, the app's own `execute` throwing among it, is returned as it is: an abort that the
  * deadline did not cause is not a timeout.
  */
 function portError(error: unknown, deadline: Deadline): unknown {
@@ -329,6 +360,9 @@ function portError(error: unknown, deadline: Deadline): unknown {
         return new LlmUnavailableError('timed-out', `llm call did not finish within ${deadline.ms} ms`, {
             cause: error,
         })
+    }
+    if (isConnectionDrop(error)) {
+        return new LlmUnavailableError('connection-lost', 'llm connection to the provider was lost', { cause: error })
     }
     if (error instanceof Anthropic.APIError) {
         const reason = reasonOf(error)
