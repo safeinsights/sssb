@@ -28,6 +28,13 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   real adapter only with `import()`, a fake, and the real adapter in `adapters/real/`, the one directory that imports
   the SDK. Nothing imports `adapters/real/` statically, and a fake never imports it at all. Add the SDK to the ban in
   the app's own `package.json`: `"sssb": { "vendors": ["stripe", "stripe/*"] }`.
+- An LLM call (`llm.complete`, `llm.stream`, `llm.runToolLoop`) has a deadline of 25 s by default, under the 30 s the
+  server function has. A provider rate limit, an overloaded provider and a call past its deadline all arrive as
+  `LlmUnavailableError` (`@sssb/kit/ports/errors`), which `withPortErrors` answers with a 503 and `Retry-After`: let it
+  propagate. A job handler run by the CodeBuild runner, where no person waits and the process lives longer, passes a
+  longer `timeoutMs` on the request; a route, and a job the in-process runner runs inside the server's function, never
+  pass more than that function allows. `stream` throws it from the iteration, so a route that has begun its response cannot
+  change the status.
 - Read `process.env` only in `adapters/real/` (and never the run mode there), in Next's instrumentation hooks, in
   tests and in the app-root tool configs (Playwright, Vite). Every other module imports the resolved value: deployment
   parameters from `config/params.ts`, the run mode from `isSimulated`.

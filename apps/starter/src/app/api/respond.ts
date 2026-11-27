@@ -1,4 +1,10 @@
-import { AuthRequiredError, DatabaseUnavailableError, ForbiddenError, NotFoundError } from '@sssb/kit/ports/errors'
+import {
+    AuthRequiredError,
+    DatabaseUnavailableError,
+    ForbiddenError,
+    LlmUnavailableError,
+    NotFoundError,
+} from '@sssb/kit/ports/errors'
 
 /** Maps port errors to HTTP for this app's route handlers. */
 export async function withPortErrors(fn: () => Promise<Response>): Promise<Response> {
@@ -15,6 +21,15 @@ export async function withPortErrors(fn: () => Promise<Response>): Promise<Respo
             console.warn(`database unavailable (${error.reason}): ${error.message}`)
             return Response.json(
                 { error: 'database-unavailable', reason: error.reason },
+                { status: 503, headers: { 'retry-after': String(error.retryAfterSeconds) } },
+            )
+        }
+        if (error instanceof LlmUnavailableError) {
+            // The model provider's rate limit, its overload, or a call that outran its deadline: logged, and the client
+            // may ask again after the provider's own Retry-After, or ours. A tool loop may have run some tools already.
+            console.warn(`llm unavailable (${error.reason}): ${error.message}`)
+            return Response.json(
+                { error: 'llm-unavailable', reason: error.reason },
                 { status: 503, headers: { 'retry-after': String(error.retryAfterSeconds) } },
             )
         }

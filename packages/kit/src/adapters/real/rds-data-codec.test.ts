@@ -9,6 +9,7 @@ import {
     normalizeDatabaseError,
     RdsDataDatabaseError,
     rewritePlaceholders,
+    sqlSegments,
     toSqlParameter,
     unsupportedStatement,
 } from './rds-data-codec'
@@ -19,6 +20,46 @@ import {
  */
 
 const mark = (sql: string) => rewritePlaceholders(sql, (n) => `<${n}>`)
+
+describe('sqlSegments: the Data API reading of a plain literal (safeinsights/sssb#201)', () => {
+    const codeOf = (sql: string, dataApiReading: boolean) =>
+        sqlSegments(sql, { dataApiReading })
+            .filter((segment) => segment.code)
+            .map((segment) => segment.text)
+            .join('|')
+
+    it("reads `'\\'` as a complete literal by Postgres's rules, and as one that runs on by the Data API's", () => {
+        const sql = String.raw`select 'a' like 'a' escape '\' and :p = 1`
+        expect(codeOf(sql, false)).toBe('select | like | escape | and :p = 1')
+        // the escaped quote does not close it: nothing after `escape` is code, so `:p` is no parameter
+        expect(codeOf(sql, true)).toBe('select | like | escape ')
+        expect(sqlSegments(sql)).toEqual(sqlSegments(sql, {}))
+    })
+
+    it('reads the spellings both agree on the same way: an escaped backslash, an E-string, a doubled quote, no backslash', () => {
+        for (const sql of [
+            String.raw`select '\\' x, :p`,
+            String.raw`select E'\\' x, :p`,
+            String.raw`select E'\'' x, :p`,
+            "select 'it''s' x, :p",
+            'select chr(92) x, :p',
+            String.raw`select '\a\b' x, :p`,
+        ]) {
+            expect(codeOf(sql, true), sql).toBe(codeOf(sql, false))
+        }
+    })
+
+    it('leaves $n and comments as the default reading has them, since only the emulator asks for the other reading', () => {
+        // the dialect rewrites by Postgres's rules: the `$1` after the complete literal is a placeholder
+        expect(mark(String.raw`select '\' $1, $1`)).toBe(String.raw`select '\' <1>, <1>`)
+        expect(sqlSegments(String.raw`select '\' -- :p`).map((segment) => segment.code)).toEqual([
+            true,
+            false,
+            true,
+            false,
+        ])
+    })
+})
 
 describe('rewritePlaceholders: only real `$n` placeholders are rewritten', () => {
     it.each([
