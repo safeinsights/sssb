@@ -28,6 +28,14 @@ const PROBE_DELAYS_MS = [1000, 2000, 4000, 1000] as const
  */
 const PROBE_TIMEOUT_MS = 2000
 
+/**
+ * How long a probe may stay in flight at all, counted from its being sent, before it is aborted (safeinsights/sssb#190):
+ * three turns, so a probe that is merely slow still ends the wait when it answers, and one that never will does not hold
+ * the SDK client's socket. A probe is sent every `PROBE_TIMEOUT_MS` plus the wait before it (three seconds at least), so
+ * at most this many fit in this time: three. Every probe still in flight is aborted when the wait ends.
+ */
+export const PROBE_ABORT_MS = 3 * PROBE_TIMEOUT_MS
+
 /** The Data API's exceptions that mean the database can't serve the call now, by name. */
 const REASONS: Readonly<Record<string, DatabaseUnavailableReason>> = {
     DatabaseResumingException: 'resuming',
@@ -84,6 +92,8 @@ interface Wake {
     lastError: unknown
     /** The database has said it is resuming, where a wait may also have been started by a throttle. */
     resuming: boolean
+    /** The probes sent and not yet settled: aborted when the wait ends, or one has been in flight `PROBE_ABORT_MS`. */
+    readonly inFlight: Set<AbortController>
 }
 
 /**
@@ -91,15 +101,20 @@ interface Wake {
  * that finds it resuming starts a poll of `probe`; every call that joins before the poll ends waits on the same one, each
  * for no longer than its own deadline. The poll ends when the probe answers or fails for another reason (the joined
  * calls then go and get their own answers), or when nobody waits for it any more. A probe that does not answer holds up
- * the next for `PROBE_TIMEOUT_MS`. A poll that has ended, and one nobody waits on, is never joined.
+ * the next for `PROBE_TIMEOUT_MS`, and is aborted after `PROBE_ABORT_MS`, or when the poll ends, whichever is first: a
+ * probe the client never answers does not keep one of its sockets. A poll that has ended, and one nobody waits on, is
+ * never joined.
  */
 export class ResumeWait {
     #current: Wake | undefined
 
-    /** Must be safe to run any number of times: it is repeated after failures of every kind. */
-    private readonly probe: () => Promise<unknown>
+    /**
+     * Must be safe to run any number of times: it is repeated after failures of every kind. It is given a signal to
+     * abort the request with, which is aborted when nothing waits for the answer any more.
+     */
+    private readonly probe: (signal: AbortSignal) => Promise<unknown>
 
-    constructor(probe: () => Promise<unknown>) {
+    constructor(probe: (signal: AbortSignal) => Promise<unknown>) {
         this.probe = probe
     }
 
@@ -147,6 +162,9 @@ export class ResumeWait {
     #finish(wake: Wake): void {
         this.#forget(wake)
         wake.end()
+        // No answer is wanted from a probe still out: end it, and the client's socket with it.
+        for (const probe of wake.inFlight) probe.abort()
+        wake.inFlight.clear()
     }
 
     #start(): Wake {
@@ -154,7 +172,7 @@ export class ResumeWait {
         const ended = new Promise<void>((resolve) => {
             end = resolve
         })
-        const wake: Wake = { ended, end, waiters: 0, lastError: undefined, resuming: false }
+        const wake: Wake = { ended, end, waiters: 0, lastError: undefined, resuming: false, inFlight: new Set() }
         this.#current = wake
         void this.#poll(wake).finally(() => this.#finish(wake))
         return wake
@@ -164,19 +182,33 @@ export class ResumeWait {
     async #poll(wake: Wake): Promise<void> {
         for (let attempt = 0; ; attempt += 1) {
             await sleep(PROBE_DELAYS_MS[Math.min(attempt, PROBE_DELAYS_MS.length - 1)])
-            if (wake.waiters === 0) return
+            if (wake.waiters === 0) {
+                // Nobody waits any more, and the probes left out are nobody's.
+                for (const probe of wake.inFlight) probe.abort()
+                wake.inFlight.clear()
+                return
+            }
             let over = false
             let inTurn = true
+            const controller = new AbortController()
+            wake.inFlight.add(controller)
+            const abortTimer = setTimeout(() => controller.abort(), PROBE_ABORT_MS)
             // Ends the wait also when this probe outlasted its turn and a later one is in flight.
             const finish = (): void => {
                 over = true
                 this.#finish(wake)
             }
             const probed = Promise.resolve()
-                .then(() => this.probe())
+                .then(() => this.probe(controller.signal))
                 .then(finish, (error: unknown) => {
+                    // An abort is ours, from `PROBE_ABORT_MS` or the end of the wait: it says nothing of the database.
+                    if (controller.signal.aborted) return
                     if (!unavailableReason(error)) finish()
                     else if (inTurn) this.#saw(wake, error)
+                })
+                .finally(() => {
+                    clearTimeout(abortTimer)
+                    wake.inFlight.delete(controller)
                 })
             let timer: ReturnType<typeof setTimeout> | undefined
             await Promise.race([

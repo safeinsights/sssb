@@ -6,9 +6,11 @@ import {
 } from '@aws-sdk/client-rds-data'
 import { Kysely, sql } from 'kysely'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DatabaseUnavailableError } from '../../ports/errors'
+import { runWithTenant } from '../../db/with-tenant'
+import type { DB } from '../../db/schema'
+import { DatabaseUnavailableError, ForbiddenError } from '../../ports/errors'
 import { RdsDataDialect, type RdsDataCommand } from './rds-data-dialect'
-import { RESUME_BUDGET_MS, unavailableReason } from './rds-data-resume'
+import { PROBE_ABORT_MS, RESUME_BUDGET_MS, unavailableReason } from './rds-data-resume'
 
 const RESUMING = 'The Aurora DB instance db-1 is resuming after being auto-paused. Please wait a few seconds and retry.'
 
@@ -38,7 +40,9 @@ function kindOf(command: RdsDataCommand): Kind {
     return command.input.sql === PROBE ? 'probe' : 'statement'
 }
 
-function database(send: (command: RdsDataCommand) => Promise<unknown>, resumeBudgetMs?: number) {
+type Send = (command: RdsDataCommand, options?: { abortSignal?: AbortSignal }) => Promise<unknown>
+
+function database(send: Send, resumeBudgetMs?: number) {
     const dialect = new RdsDataDialect({
         client: { send },
         resourceArn: 'r',
@@ -70,6 +74,10 @@ function harness(fail: (call: Call, nth: number) => Error | undefined, resumeBud
             case 'commit':
                 return { transactionStatus: 'Transaction Committed' }
             default:
+                // The dialect's read of a statement's parameter types (one, for the tenant scope's `set_config`).
+                if (call.sql?.includes('format_type(w.oid')) {
+                    return { records: [[{ arrayValue: { stringValues: ['text'] } }]], columnMetadata: [] }
+                }
                 return { records: [], columnMetadata: [] }
         }
     }
@@ -331,6 +339,88 @@ describe('a probe that does not answer', () => {
         expect(await done).toBe(3800)
     })
 
+    /** A client whose probes never answer, as the SDK's does when aborted: it rejects with an AbortError. */
+    function silent() {
+        const counts = { sent: 0, aborted: 0, inFlight: 0, peak: 0, statements: 0 }
+        const send: Send = (command, options) => {
+            if (kindOf(command) !== 'probe') {
+                counts.statements += 1
+                return Promise.reject(resuming())
+            }
+            counts.sent += 1
+            counts.inFlight += 1
+            counts.peak = Math.max(counts.peak, counts.inFlight)
+            return new Promise((_resolve, reject) => {
+                options?.abortSignal?.addEventListener(
+                    'abort',
+                    () => {
+                        counts.aborted += 1
+                        counts.inFlight -= 1
+                        reject(named('AbortError', 'The operation was aborted'))
+                    },
+                    { once: true },
+                )
+            })
+        }
+        return { counts, send }
+    }
+
+    // safeinsights/sssb#190: each probe left behind held a socket of the SDK's client until it settled.
+    it('leaves at most three in flight under continuous traffic, however long no probe answers', async () => {
+        const { counts, send } = silent()
+        const done = outcome(sql.raw('select 2').execute(database(send, 120_000)))
+        await vi.advanceTimersByTimeAsync(130_000)
+        expect((await done).error).toMatchObject({ name: 'DatabaseUnavailableError', reason: 'resuming' })
+        // It kept probing the whole wait (one every three seconds or so), and kept three at most out.
+        expect(counts.sent).toBeGreaterThan(30)
+        expect(counts.peak).toBeLessThanOrEqual(3)
+        // None is left behind once the wait is over.
+        expect(counts.inFlight).toBe(0)
+        expect(counts.aborted).toBe(counts.sent)
+    })
+
+    it('aborts a probe PROBE_ABORT_MS after it was sent, and not before', async () => {
+        const { counts, send } = silent()
+        void outcome(sql.raw('select 2').execute(database(send, 120_000)))
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(counts.sent).toBe(1)
+        await vi.advanceTimersByTimeAsync(PROBE_ABORT_MS - 1)
+        expect(counts.aborted).toBe(0)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(counts.aborted).toBe(1)
+        await vi.advanceTimersByTimeAsync(130_000)
+    })
+
+    it('does not take its own abort for the database answering: the wait goes on to its budget', async () => {
+        const { counts, send } = silent()
+        const done = outcome(sql.raw('select 2').execute(database(send, 30_000)))
+        await vi.advanceTimersByTimeAsync(40_000)
+        expect((await done).error).toMatchObject({ reason: 'resuming' })
+        // The statement was sent once: an abort that ended the wait would have sent it again.
+        expect(counts.statements).toBe(1)
+    })
+
+    it('aborts the probes still out when another answers, so the wait ends with none left', async () => {
+        let probes = 0
+        let aborted = 0
+        const send: Send = (command, options) => {
+            if (kindOf(command) !== 'probe') return probes === 0 ? Promise.reject(resuming()) : Promise.resolve({})
+            if (++probes === 2) return Promise.resolve({})
+            return new Promise((_resolve, reject) => {
+                options?.abortSignal?.addEventListener('abort', () => {
+                    aborted += 1
+                    reject(named('AbortError'))
+                })
+            })
+        }
+        const done = sql.raw('select 2').execute(database(send))
+        await vi.advanceTimersByTimeAsync(10_000)
+        await done
+        // The first probe (1 s) never answered; the second (5 s) did, and ended the wait with the first still out.
+        expect(probes).toBe(2)
+        expect(aborted).toBe(1)
+    })
+
     it('says nothing about the wait when it is refused late', async () => {
         let probes = 0
         const send = (command: RdsDataCommand): Promise<unknown> => {
@@ -533,6 +623,107 @@ describe('what is sent again, and what never is', () => {
         expect(await done).toBe(500)
         expect(h.at('commit')).toEqual([500])
         await vi.advanceTimersByTimeAsync(60_000)
+    })
+})
+
+// safeinsights/sssb#189: a rollback Kysely makes because the work threw must not replace the work's error.
+describe('a rollback that fails after the work threw', () => {
+    const timedOut = () => named('StatementTimeoutException', 'Statement timed out')
+    let warn: ReturnType<typeof vi.spyOn>
+    beforeEach(() => {
+        warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    afterEach(() => warn.mockRestore())
+
+    const failingRollback = (error: () => Error) => harness((call) => (call.kind === 'rollback' ? error() : undefined))
+    const tenant = (h: ReturnType<typeof harness>, fn: Parameters<typeof runWithTenant>[2]) =>
+        outcome(runWithTenant(h.db as unknown as Kysely<DB>, 'tenant-1', fn))
+
+    it.each([
+        ['a throttled', throttled, 'throttled'],
+        ['a timed-out', timedOut, 'timed-out'],
+    ])("keeps the work's error through %s rollback, and the rollback's beside it", async (_label, failure, reason) => {
+        const h = failingRollback(failure)
+        const forbidden = new ForbiddenError('not yours')
+        const done = tenant(h, () => Promise.reject(forbidden))
+        await vi.advanceTimersByTimeAsync(60_000)
+        const { error } = await done
+        expect(error).toBe(forbidden)
+        expect(h.at('rollback')).toHaveLength(1)
+        expect(Object.getOwnPropertyDescriptor(error, 'rollbackError')).toMatchObject({ enumerable: false })
+        expect((error as { rollbackError: unknown }).rollbackError).toBeInstanceOf(DatabaseUnavailableError)
+        expect((error as { rollbackError: DatabaseUnavailableError }).rollbackError.reason).toBe(reason)
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringMatching(/rollback failed after its work threw ForbiddenError.*work's error/),
+        )
+    })
+
+    it("keeps the error of the tenant scope's own statement, when the rollback fails after it", async () => {
+        const failed = named('DatabaseErrorException', 'the scope could not be set')
+        const h = harness((call) =>
+            call.kind === 'rollback' ? throttled() : call.sql?.startsWith('SELECT set_config') ? failed : undefined,
+        )
+        const done = tenant(h, async () => 'never reached')
+        await vi.advanceTimersByTimeAsync(60_000)
+        // The dialect words a statement's failure as its own error, which is what the work threw.
+        const { error } = await done
+        expect(error).toMatchObject({
+            name: 'RdsDataDatabaseError',
+            message: expect.stringContaining('the scope could not be set'),
+        })
+        expect(error).not.toBeInstanceOf(DatabaseUnavailableError)
+        expect((error as { rollbackError: DatabaseUnavailableError }).rollbackError.reason).toBe('throttled')
+    })
+
+    it.each([
+        ['a string', 'plain'],
+        ['a frozen error', Object.freeze(new Error('frozen'))],
+    ])('throws %s the work threw, with nothing attached to it', async (_label, thrown) => {
+        const h = failingRollback(throttled)
+        const done = tenant(h, () => Promise.reject(thrown))
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect((await done).error).toBe(thrown)
+        expect(warn).toHaveBeenCalledTimes(1)
+    })
+
+    it("says nothing when the rollback succeeds, and throws the work's error as before", async () => {
+        const h = harness(() => undefined)
+        const mine = new Error('mine')
+        const { error } = await tenant(h, () => Promise.reject(mine))
+        expect(error).toBe(mine)
+        expect(warn).not.toHaveBeenCalled()
+        expect(Object.hasOwn(mine, 'rollbackError')).toBe(false)
+    })
+
+    it("still throws a commit's failure as it was: nothing the work threw is there to keep", async () => {
+        const h = harness((call) => (call.kind === 'commit' ? throttled() : undefined))
+        const done = tenant(h, async (trx) => sql.raw('select 2').execute(trx))
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect((await done).error).toBeInstanceOf(DatabaseUnavailableError)
+    })
+
+    it('still fails a rollback the caller makes itself, which no work threw behind', async () => {
+        const h = failingRollback(throttled)
+        const done = outcome(
+            (async () => {
+                const trx = await h.db.startTransaction().execute()
+                await sql.raw('select 2').execute(trx)
+                await trx.rollback().execute()
+            })(),
+        )
+        await vi.advanceTimersByTimeAsync(60_000)
+        const { error } = await done
+        expect(error).toBeInstanceOf(DatabaseUnavailableError)
+        expect((error as DatabaseUnavailableError).reason).toBe('throttled')
+        expect(warn).not.toHaveBeenCalled()
+    })
+
+    it("leaves a plain Kysely transaction as Kysely has it: the rollback's error replaces the work's", async () => {
+        // The framework\'s scope is where the work's error is kept; a transaction opened on the raw handle is not.
+        const h = failingRollback(throttled)
+        const done = outcome(h.db.transaction().execute(() => Promise.reject(new ForbiddenError('not yours'))))
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect((await done).error).toBeInstanceOf(DatabaseUnavailableError)
     })
 })
 

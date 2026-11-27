@@ -48,7 +48,8 @@ export type RdsDataCommand =
     BeginTransactionCommand | CommitTransactionCommand | RollbackTransactionCommand | ExecuteStatementCommand
 
 export interface RdsDataClientLike {
-    send(command: RdsDataCommand): Promise<unknown>
+    /** `options.abortSignal` ends a request still in flight (the SDK's own option); the resume probes use it. */
+    send(command: RdsDataCommand, options?: { abortSignal?: AbortSignal }): Promise<unknown>
     destroy?(): void
 }
 
@@ -285,8 +286,10 @@ class RdsDataDriver implements Driver {
     constructor(config: RdsDataDialectConfig) {
         this.config = config
         const { client, resourceArn, secretArn, database } = config
-        this.#resume = new ResumeWait(() =>
-            client.send(new ExecuteStatementCommand({ resourceArn, secretArn, database, sql: 'SELECT 1' })),
+        this.#resume = new ResumeWait((abortSignal) =>
+            client.send(new ExecuteStatementCommand({ resourceArn, secretArn, database, sql: 'SELECT 1' }), {
+                abortSignal,
+            }),
         )
     }
 
