@@ -51,6 +51,13 @@ export function toolsVersionProblem(tools, own = OWN_VERSION) {
 const TRANSPORTS = /** @type {const} */ (['pg', 'data-api'])
 
 /**
+ * The Amazon CA bundle in the Lambda Node.js runtime (AWS Lambda's guide, "Using AWS Lambda with Amazon RDS": from
+ * Node.js 20 the runtime keeps the Amazon CA certificates, RDS's among them, in this file and no longer loads them).
+ * Both Lambdas are zip functions on that runtime (NODEJS_22_X), not container images, which need not have the file.
+ */
+const LAMBDA_CA_BUNDLE = '/var/runtime/ca-cert.pem'
+
+/**
  * The migrator entry, a published subpath of `@sssb/kit` (its `exports` map), resolved through that map from the
  * app; and the framework's migration registry, which is not published, so it is named by its path inside the
  * package. The version check below is what makes naming that path safe: this construct is released with that one
@@ -480,6 +487,14 @@ export class SssbApp extends Construct {
               })
             : undefined
 
+        // How both Lambdas protect their `pg` connection (the kit's `databaseSsl`): TLS that checks the certificate
+        // chains to Amazon RDS's roots and names the cluster endpoint. Those roots are in the Amazon CA bundle every
+        // Lambda Node.js runtime from 20 on carries at /var/runtime/ca-cert.pem (and loads no longer by default), so the
+        // adapter trusts that file for this one connection. Not a parameter: Aurora always offers TLS, so there is no
+        // deployment of this construct that should turn it off. On `data-api` neither applies: the SDK speaks HTTPS.
+        /** @type {Record<string, string>} */
+        const pgTlsEnv = { DATABASE_SSL_MODE: 'verify-full', DATABASE_SSL_ROOT_CERT: LAMBDA_CA_BUNDLE }
+
         // The database half of each Lambda's environment (the framework's real adapters read it at boot).
         // data-api builds no DATABASE_URL at all: the credential stays in Secrets Manager, where the Data
         // API reads it, so the `db-credential-not-in-env` concern does not arise on that path.
@@ -493,6 +508,7 @@ export class SssbApp extends Construct {
               }
             : {
                   DATABASE_TRANSPORT: 'pg',
+                  ...pgTlsEnv,
                   // DRAFT: built via CFN dynamic references so the server
                   // can actually boot; revisit with the shared secrets constructs at cutover
                   // (env-var exposure vs runtime secret fetch).
@@ -581,7 +597,12 @@ export class SssbApp extends Construct {
             // which the synthesized secret does not carry (only the cluster's secret attachment would add it, at deploy).
             environment: dataApi
                 ? databaseEnv
-                : { DATABASE_TRANSPORT: 'pg', DB_SECRET_ARN: secret.secretArn, DATABASE_NAME: databaseName },
+                : {
+                      DATABASE_TRANSPORT: 'pg',
+                      ...pgTlsEnv,
+                      DB_SECRET_ARN: secret.secretArn,
+                      DATABASE_NAME: databaseName,
+                  },
             bundling: {
                 format: aws_lambda_nodejs.OutputFormat.ESM,
                 // An ESM bundle has no `require`, and esbuild's stand-in for the CommonJS packages it inlines (`pg`,

@@ -229,7 +229,7 @@ describe('the time an audit event carries', () => {
         // Constructing the pool connects to nothing; it is destroyed at once. The only simulated-world thing a
         // DbPort may add is `now`, and a real adapter that did would make an audit row's time caller-influenced.
         const { createRealDb } = await import('../adapters/real/db')
-        const real = createRealDb('postgres://nobody:nothing@127.0.0.1:1/none')
+        const real = createRealDb('postgres://nobody:nothing@127.0.0.1:1/none', { mode: 'disable' })
         try {
             expect(real.now).toBeUndefined()
             expect('now' in real).toBe(false)
