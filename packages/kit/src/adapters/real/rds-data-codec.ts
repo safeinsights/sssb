@@ -39,14 +39,25 @@ export interface SqlSegment {
 
 /**
  * Splits SQL into code and the stretches that can hide a `$1`, a `:name` or a `;`. Both the dialect and
- * the test-only emulator read SQL through this one scanner, so they cannot disagree about where code is.
+ * the test-only emulator read SQL through this one scanner, so they cannot disagree about where code is, with ONE
+ * deliberate exception: the emulator's own parameter scan asks for `dataApiReading` (below).
  *
  * Postgres's own lexical rules, the parts that matter here: `'…'` (with `''`), `E'…'` (with backslash
  * escapes as well), `"…"` (with `""`), `--` to end of line, nested block comments, and `$tag$…$tag$`. A
  * `$` directly after an identifier character is part of that identifier, not a placeholder or a dollar
  * quote, and `$1` is code.
+ *
+ * `dataApiReading` is how the RDS Data API's own scanner, which finds the `:name` parameters before Postgres sees the
+ * statement, appears to read a plain `'…'` literal: a backslash escapes the next character there too, so the `'` in
+ * `'\'` does not close it, and the literal runs on to the next quote. Postgres, with `standard_conforming_strings` on
+ * (the default), reads `'\'` as a complete one-character literal. Live, on 2026-11-24, an app's query with `ESCAPE '\'`
+ * was refused with `syntax error at or near ":"` (safeinsights/sssb#201): a `:` reached Postgres, which a parameter
+ * left in what the Data API took for a literal would explain (Postgres gets a bare `:kp1`). That is the whole observation; the escape rule, and that it reaches every
+ * plain literal, is inferred from it (docs/runbooks/data-api.md, step 2, says how to check). The dialect never uses
+ * this reading: it rewrites `$n` by Postgres's rules, which are what the SQL was written for.
  */
-export function sqlSegments(sql: string): SqlSegment[] {
+export function sqlSegments(sql: string, options: { dataApiReading?: boolean } = {}): SqlSegment[] {
+    const plainBackslash = options.dataApiReading === true
     const segments: SqlSegment[] = []
     let code = ''
     let i = 0
@@ -66,7 +77,8 @@ export function sqlSegments(sql: string): SqlSegment[] {
         } else if (ch === '/' && next === '*') {
             literal(blockCommentEnd(sql, i))
         } else if (ch === "'") {
-            const escapes = (prev === 'E' || prev === 'e') && !IDENT_CHAR.test(i > 1 ? sql[i - 2]! : '')
+            const escapes =
+                plainBackslash || ((prev === 'E' || prev === 'e') && !IDENT_CHAR.test(i > 1 ? sql[i - 2]! : ''))
             // Two string constants separated only by whitespace holding a newline are one constant, and a
             // continued E-string keeps its backslash escapes: `E'a'<newline>'\' $1'` is one string.
             let end = quotedEnd(sql, i, "'", escapes)

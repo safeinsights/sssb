@@ -7859,3 +7859,33 @@ safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
   while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
   nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
   **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
+## The Data API emulator reads a plain literal's backslash as the Data API does (2026-11-27, `fix/emulator-backslash`)
+
+`safeinsights/sssb#201`: an app's query with `ESCAPE '\'` and a parameter after it passed the contract run, and the real
+Data API answered `syntax error at or near ":"` (seen live, 2026-11-24). Postgres, with `standard_conforming_strings` on,
+reads `'\'` as a complete literal; the Data API finds `:name` parameters with a scanner of its own, and the error says a
+`:` reached Postgres, so that scanner did not see the parameter as code.
+
+- **What the emulator does.** Its parameter scan (`toPositional`) now reads SQL with `sqlSegments(sql, { dataApiReading:
+true })`, in which a backslash escapes the next character in a plain `'…'` literal too, so `'\'` does not close and the
+  literal runs on to the next quote. A `:name` in that stretch is left in the text; Postgres is handed a bare `:kp1` and
+  answers `syntax error at or near ":"`, the message the live Data API gave; the emulator wraps it as `DatabaseErrorException`, as it does any database error. The
+  dialect keeps Postgres's rules for `$n` (`rewritePlaceholders`): it rewrites the SQL the app wrote for node-postgres.
+  A statement is refused only when a `:name` falls in the stretch where the two readings differ, which is exactly the
+  evidence. The SQL text Postgres receives is otherwise unchanged.
+- **Proven and inferred.** One live observation: a plain literal ending in a backslash, a parameter after it, that error
+  (the issue records the error and the `ESCAPE '\'`, not the statement's full text). Inferred: that the Data API treats `\'` as an escaped quote in every plain
+  literal (so the escaped-quote reading, and the way it shifts every later literal, follow from one rule); not known: a
+  statement with no parameter after the literal, or only before it, which is not refused; `E'…'`, `--` and `$$` are
+  assumed read as Postgres reads them (the runbook's step 2 checks the first two). The runbook's step 2 now ends with the
+  live check, `a` (the observed shape) and `b` (the `E'\\'` spelling), and says which line each result corrects.
+- **Rejected: rewriting `'\'` to `E'\\'` in the dialect.** It would make the statement work on both transports, but it
+  means rewriting SQL the dialect cannot parse (a literal is one thing to the Data API's scanner and another to
+  Postgres's, and the divergence is itself unconfirmed past one case), and an adopter who wrote `'\'` would never learn
+  the statement is not portable. Rejected: **refusing every plain literal that ends in a backslash**, which is broader
+  than the evidence: a parameterless statement may well be fine. Rejected: **refusing in the dialect**
+  (`unsupportedStatement`) with a clearer message: the brief and the issue ask for the emulator's refusal, and a
+  production refusal on an inferred rule is a decision for the owner; the emulator is test-only. The spellings both
+  scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
+- **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
+  the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
