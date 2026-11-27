@@ -118,6 +118,21 @@ describe('POST /api/escalations (create)', () => {
         expect(h.createEscalation).not.toHaveBeenCalled()
     })
 
+    // safeinsights/sssb#137: authorized before the responder is resolved, so a person who may not raise an
+    // escalation cannot tell an org slug that exists from one that does not.
+    test.each([
+        ['a restricted member', user({ role: 'restricted', restricted: true })],
+        ['a person with no standing (none)', user({ role: 'none', restricted: true })],
+    ])('%s gets the same 403 for an org that exists as for one that does not', async (_, who) => {
+        h.requireUser.mockResolvedValue(who)
+        const existing = await post({ responderOrgSlug: 'platform', subject: 's', body: 'b' })
+        const missing = await post({ responderOrgSlug: 'nope', subject: 's', body: 'b' })
+
+        expect(existing.status).toBe(403)
+        expect([existing.status, await existing.json()]).toEqual([missing.status, await missing.json()])
+        expect(h.orgIdForSlug).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), 'nope')
+    })
+
     test('404 when the responder org slug is unknown', async () => {
         const response = await post({ responderOrgSlug: 'ghost', subject: 'x', body: 'y' })
 

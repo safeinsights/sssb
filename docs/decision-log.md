@@ -7836,6 +7836,47 @@ One branch's secret-like string failed the scan on every other open pull request
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
 
+## One answer for a missing id and a refused one (2026-11-27, `fix/id-existence-oracle`)
+
+safeinsights/sssb#137. The showcase's mutating `[id]` routes looked the row up, answered 404 when it was missing, and
+only then authorized, so a person in the active org who may not act got 403 for an id that exists and 404 for one that
+does not: one bit of existence, against the routes' own comments.
+
+- **Both of the issue's designs, each where it fits.** Where the subject's org is the active org the session resolves
+  to (tickets, attachment confirm, webhook endpoints), `authorize` moves before the lookup: a refusal is the same 403
+  for any id, and an allowed caller still gets 404 for a missing or foreign id. Where the subject's orgs come from the
+  row (the two-sided escalation, cancel and respond), the lookup has to come first, and the refusal is rethrown as
+  `NotFoundError`, the same status and body (`{ error: 'not found' }`, `withPortErrors`) as a missing row. Rejected:
+  **mapping every refusal to 404**, which would tell a restricted member who can see the queue that a ticket they are
+  looking at does not exist, where the reorder gives them an honest 403 that reveals nothing.
+- **The class, not only the five routes.** Review found the same oracle in `POST /api/escalations`, on an org slug in
+  the body: the responder org was resolved, and 404 `unknown responder org` returned, before `authorize`, so a person
+  with no standing (refused the list that shows the targets) could learn which org slugs exist. It now authorizes once
+  on the requester side before the responder is resolved (the create rule reads only that side), and again with both
+  sides after. `service/jobs/[id]/status` moves its `authorize` before the lookup too; its only callers are service
+  keys in their own org, which the framework's machine rule always grants, so nothing leaked there today, but it was
+  the example that contradicted the rule. The guide's rule is stated for any lookup keyed by request input.
+- **The escalation routes' missing row throws the same `NotFoundError` the refusal is rethrown as**, so one mapper
+  (`withPortErrors`) writes both answers rather than two literals agreeing by hand.
+- **A malformed id is still a 404 before `authorize`** (`requireUuidParam`), on every route: a refused caller gets 404
+  for a non-uuid and 403 for a uuid, which tells them only the id's shape, which they wrote.
+- **A responder-side member who may not decide gets 404 for an escalation they can see**, which is what the
+  reorder was chosen to avoid for tickets. The issue's "Done when" requires it, and the dashboard shows that member no
+  decide controls, so only a forced request meets it.
+- **Rejected for escalations: authorizing the read first**, then the action after the lookup. It hides existence from
+  anyone who may not read escalations, but a reader who may not decide would still get 403 for an existing id and 404
+  for a missing one, which the issue's "Done when" rules out.
+- **The rethrow sits in a `catch` that always throws**, so the authorization scan still counts the `authorize` call
+  (a `catch` that returns would swallow it). It is written inline in each route: a helper in another module would not
+  count.
+- **A refused attempt is not audited.** The issue asked whether the audit trail should record one; no route records a
+  refusal today, and doing so is a design of its own (an audit action per refusal, and who reads them).
+- **The starter gains no `[id]` route.** Its Items slice has none, and adding one to demonstrate the rule would grow the
+  scaffold every adopter deletes (`sssb remove-items`'s diffs with it). The rule goes in the app guide instead.
+- **No conformance check.** The authorization scan proves a handler may reach `authorize`, not the order of calls, and
+  it cannot tell which call is the row lookup in an app's own code, so an order check would be a guess about names.
+  The guide says to pin the rule with a route test, as the showcase's routes now do.
+
 ## Two edges of real sign-in: before Clerk loads, and a session a failed finalize left (2026-11-27, `fix/sign-in-edges`)
 
 safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.

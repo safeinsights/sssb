@@ -54,6 +54,10 @@ export async function POST(request: Request): Promise<Response> {
         // A self-directed request is rejected here first (the table CHECK is only the backstop). Compare
         // BOTH the slug and the resolved id so a caller can't slip past by naming their own org.
         if (responderOrgSlug === user.orgSlug) return Response.json({ error: 'self-request' }, { status: 400 })
+        // Authorized once before the responder is looked up: the create rule reads only the requester side, so a
+        // person who may not raise an escalation is refused whether or not the slug they name is an org, and cannot
+        // use this route to learn which orgs exist (safeinsights/sssb#137).
+        authorize(user, requesterOrgId, 'create', { type: 'Escalation', requesterOrgId, responderOrgId: null })
         const responderOrgId = await orgIdForSlug(db, tenantId, responderOrgSlug)
         if (!responderOrgId) return Response.json({ error: 'unknown responder org' }, { status: 404 })
         if (responderOrgId === requesterOrgId) return Response.json({ error: 'self-request' }, { status: 400 })

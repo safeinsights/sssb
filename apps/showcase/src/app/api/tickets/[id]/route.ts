@@ -13,9 +13,11 @@ import { readJsonObject, requireUuidParam, withPortErrors } from '../../respond'
  * HTTP surface behind them; an ability rule with no route is a rule nobody has ever exercised.
  *
  * PATCH changes status and/or assignee. DELETE removes the ticket (a real delete: the tickets table is
- * the one app table granted DELETE — see migration 1001). Both resolve the row ORG-SCOPED first, so a
- * ticket belonging to another team is indistinguishable from a missing one and ids cannot be probed
- * (the jobForOrg doctrine), and both re-authorize with the row's real org id rather than a slug anchor.
+ * the one app table granted DELETE — see migration 1001). Both authorize FIRST, against the active org the
+ * session resolves to (a ticket's org is the team's own), and only then look the row up ORG-SCOPED. So a
+ * person who may not act gets the same 403 whether or not the id exists, and for one who may, a ticket
+ * belonging to another team is indistinguishable from a missing one (404, the jobForOrg doctrine): no id can
+ * be probed either way (safeinsights/sssb#137).
  *
  * PATCH is the boundary half of a ticket edit — parse, validate, resolve, authorize — and hands the edit
  * itself (write, audit verb, assignee notification) to `applyTicketChanges` (src/domain/ticket-changes.ts),
@@ -51,11 +53,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
 
+        // Authorization choke point, before the lookup: a restricted member may read the queue but not change
+        // it, and is told so whether or not the id names a ticket.
+        authorize(user, orgId, 'update', { type: 'Ticket', orgId })
+
         const before = await ticketForOrg(db, tenantId, orgId, id)
         if (!before) return Response.json({ error: 'not found' }, { status: 404 })
-
-        // Authorization choke point: a restricted member may read the queue but not change it.
-        authorize(user, orgId, 'update', { type: 'Ticket', orgId })
 
         // A ticket is handed to someone on this team, never to an id that names nobody (or someone
         // outside the org): checked against the auth port, the authority on membership, after the
@@ -91,10 +94,10 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
 
+        authorize(user, orgId, 'delete', { type: 'Ticket', orgId })
+
         const ticket = await ticketForOrg(db, tenantId, orgId, id)
         if (!ticket) return Response.json({ error: 'not found' }, { status: 404 })
-
-        authorize(user, orgId, 'delete', { type: 'Ticket', orgId })
 
         const removed = await deleteTicket(db, tenantId, orgId, id)
         if (removed === 0) return Response.json({ error: 'not found' }, { status: 404 })
