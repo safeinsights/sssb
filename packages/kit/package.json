@@ -158,6 +158,7 @@
         "./server-lib/sms": "./src/server-lib/sms.ts",
         "./server-lib/webhook-dispatch": "./src/server-lib/webhook-dispatch.ts",
         "./service-auth/mailgun": "./src/service-auth/mailgun.ts",
+        "./service-auth/standard-webhooks": "./src/service-auth/standard-webhooks.ts",
         "./service-auth/verify": "./src/service-auth/verify.ts",
         "./service-auth/webhook": "./src/service-auth/webhook.ts",
         "./testing": "./src/testing/index.ts",
