@@ -148,10 +148,11 @@ export async function runScheduledTick(
 
 /**
  * A retry whose start threw has been recorded failed; when it was the last attempt, that is the job's end, so it notifies
- * as every runner's failure does (`notifyJobTerminal` skips one that armed a further attempt). Loaded when it is needed:
+ * as every runner's failure does (`notifyJobTerminal` skips one that armed a further attempt). The Simulator's clock and
+ * run-due controls pass it to `runDueRetries` too. Loaded when it is needed:
  * the notifier reaches the adapter registry's auth port, which a tick that starts every retry never touches.
  */
-async function notifyRetryEnd(input: { tenantId: string; jobId: string }): Promise<void> {
+export async function notifyRetryEnd(input: { tenantId: string; jobId: string }): Promise<void> {
     const [{ notifyJobTerminal }, { makeNotifyDeps }, { auth }] = await Promise.all([
         import('./notify'),
         import('./notify-deps'),

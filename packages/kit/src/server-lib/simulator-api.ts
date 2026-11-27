@@ -18,6 +18,7 @@ import type { Person } from '../components/simulator/people-app'
 import { LOCALES } from '../core/locale'
 import { sameOriginPath } from '../core/same-origin-path'
 import { runDueRetries } from '../db/jobs'
+import { notifyRetryEnd } from './scheduled-tick'
 import { listSchedulesForWorld, runDueSchedules } from '../db/schedules'
 import { runDueDeliveries } from '../db/webhooks'
 import { AuthRequiredError, ForbiddenError, NotFoundError } from '../ports/errors'
@@ -283,7 +284,7 @@ async function schedules(): Promise<Response> {
 async function runDueAtWorldNow() {
     const now = worldNow()
     const { spawned, failed } = await runDueSchedules(db, jobs, now)
-    const retries = await runDueRetries(db, jobs, now)
+    const retries = await runDueRetries(db, jobs, now, undefined, notifyRetryEnd)
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook)
     return { spawned, failed, retries, deliveries }
 }

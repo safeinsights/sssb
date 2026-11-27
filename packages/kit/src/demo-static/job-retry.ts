@@ -11,7 +11,10 @@ import { backoffDelayMs } from '../core/webhook-events'
 /** core/jobs' MAX_JOB_ATTEMPTS. */
 export const DEMO_MAX_JOB_ATTEMPTS = 10
 
-/** core/jobs' isJobRetry: a whole number of attempts from 1 to the maximum, delays finite and ≥ 0. */
+/** core/jobs' MAX_JOB_RETRY_DELAY_MS: thirty days. */
+export const DEMO_MAX_JOB_RETRY_DELAY_MS = 30 * 24 * 60 * 60 * 1000
+
+/** core/jobs' isJobRetry: a whole number of attempts from 1 to the maximum, delays from 0 to the longest delay. */
 export function isDemoJobRetry(value: unknown): value is JobRetry {
     if (typeof value !== 'object' || value === null) return false
     const { attempts, delaysMs } = value as { attempts?: unknown; delaysMs?: unknown }
@@ -24,7 +27,10 @@ export function isDemoJobRetry(value: unknown): value is JobRetry {
         return false
     }
     if (delaysMs === undefined) return true
-    return Array.isArray(delaysMs) && delaysMs.every((d) => typeof d === 'number' && Number.isFinite(d) && d >= 0)
+    return (
+        Array.isArray(delaysMs) &&
+        delaysMs.every((d) => typeof d === 'number' && Number.isFinite(d) && d >= 0 && d <= DEMO_MAX_JOB_RETRY_DELAY_MS)
+    )
 }
 
 /** core/jobs' retryDelayMs: the wait before attempt `failedAttempt + 1`, the kind's own delays else the webhook backoff. */

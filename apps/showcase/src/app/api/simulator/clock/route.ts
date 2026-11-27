@@ -1,6 +1,7 @@
 import { db, isSimulated, jobs } from '@sssb/kit/adapters/index'
 import { advanceClockMs, readClockOffsetMs, resetClock, worldNow } from '@sssb/kit/adapters/fake/clock'
 import { runDueRetries } from '@sssb/kit/db/jobs'
+import { notifyRetryEnd } from '@sssb/kit/server-lib/scheduled-tick'
 import { runDueSchedules } from '@sssb/kit/db/schedules'
 import { runDueDeliveries } from '@sssb/kit/db/webhooks'
 import { dispatchWebhook } from '@sssb/kit/server-lib/webhook-dispatch'
@@ -40,7 +41,7 @@ export async function POST(request: Request): Promise<Response> {
         const now = worldNow()
         const { spawned, failed } = await runDueSchedules(db, jobs, now)
         // Due job retries too: advancing past a failed attempt's delay starts its next attempt.
-        const retries = await runDueRetries(db, jobs, now)
+        const retries = await runDueRetries(db, jobs, now, undefined, notifyRetryEnd)
         // Same tick drains due webhook deliveries — so "advance the clock past a retry's
         // backoff and watch it fire" works alongside "advance past a schedule and watch it fire".
         const deliveries = await runDueDeliveries(db, now, dispatchWebhook)

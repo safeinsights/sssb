@@ -4,11 +4,24 @@ import { NextIntlClientProvider } from 'next-intl'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
-import { isJobRetry, jobRetryFor, MAX_JOB_ATTEMPTS, retryDelayMs, type JobRetry } from '../core/jobs'
+import {
+    isJobRetry,
+    jobRetryFor,
+    MAX_JOB_ATTEMPTS,
+    MAX_JOB_RETRY_DELAY_MS,
+    retryDelayMs,
+    type JobRetry,
+} from '../core/jobs'
 import enFramework from '../i18n/messages/en.json'
 import { mergeMessages } from '../i18n/messages'
 import type { DemoWorldOptions } from './contracts'
-import { DEMO_MAX_JOB_ATTEMPTS, demoJobRetryFor, demoRetryDelayMs, isDemoJobRetry } from './job-retry'
+import {
+    DEMO_MAX_JOB_ATTEMPTS,
+    DEMO_MAX_JOB_RETRY_DELAY_MS,
+    demoJobRetryFor,
+    demoRetryDelayMs,
+    isDemoJobRetry,
+} from './job-retry'
 import { useDemoWorld } from './world'
 
 /**
@@ -236,6 +249,10 @@ describe("the twin's retry policy agrees with core/jobs'", () => {
         { attempts: 3, delaysMs: [-1] },
         { attempts: 3, delaysMs: [Number.NaN] },
         { attempts: 3, delaysMs: [Number.POSITIVE_INFINITY] },
+        { attempts: 3, delaysMs: [MAX_JOB_RETRY_DELAY_MS] },
+        { attempts: 3, delaysMs: [MAX_JOB_RETRY_DELAY_MS + 1] },
+        { attempts: 3, delaysMs: [31 * 86_400_000] },
+        { attempts: 3, delaysMs: [1e16] },
         { attempts: 3, delaysMs: ['10'] },
         { attempts: 3, delaysMs: '10' },
         { attempts: 3, delaysMs: null },
@@ -253,8 +270,9 @@ describe("the twin's retry policy agrees with core/jobs'", () => {
         expect(isDemoJobRetry(entry)).toBe(isJobRetry(entry))
     })
 
-    it('has the same maximum', () => {
+    it('has the same maximums, of attempts and of a delay', () => {
         expect(DEMO_MAX_JOB_ATTEMPTS).toBe(MAX_JOB_ATTEMPTS)
+        expect(DEMO_MAX_JOB_RETRY_DELAY_MS).toBe(MAX_JOB_RETRY_DELAY_MS)
     })
 
     const policies: JobRetry[] = [
