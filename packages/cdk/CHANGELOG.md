@@ -1,5 +1,49 @@
 # @sssb/cdk
 
+## 0.9.0
+
+### Minor Changes
+
+- 7fdb607: ### `PUBLIC_ORIGIN`, and the visitor's address from `SssbApp`'s edge
+
+    **Kind.** operator
+
+    **Action.** required
+
+    **What changed.** `SssbApp`'s viewer-request CloudFront Function now also writes `x-sssb-viewer-address`, the address
+    CloudFront took from the visitor's connection, over any a visitor sent, and the construct sets `SSSB_EDGE=cloudfront` on
+    the server, which tells `@sssb/kit`'s `publicOrigin` and `clientAddress` to believe that header and `x-forwarded-host`.
+    Without `SSSB_EDGE` (in `pnpm dev`, or on a host of your own) neither reads a forwarded header, and the server refuses
+    `SSSB_EDGE` off Lambda. A new optional server setting, `PUBLIC_ORIGIN`, is the origin `publicOrigin` returns wherever
+    it is set, in a request and outside one. A malformed `PUBLIC_ORIGIN`, or an `SSSB_EDGE` other than `cloudfront` or off
+    Lambda, fails `sssb check-real-env` and the server's boot, naming cutover row `domains-and-certs`. `cdk synth` now
+    fails a behavior that reaches the server without `sssbApp.forwardedHost` on `viewer-request`, on any distribution in
+    the construct's stack, an origin group's included.
+
+    **To adopt.** Redeploy with this `@sssb/cdk`. Once the deployment has a custom domain, set the server's `PUBLIC_ORIGIN`
+    to its origin, a bare origin with no trailing slash (`PUBLIC_ORIGIN=https://app.example.org`), so every link names it
+    rather than the host a visitor came in on; set it too wherever a job, or the cron route the scheduled tick calls, builds
+    a link. If synth now fails naming a behavior, give that behavior the function:
+    `functionAssociations: [{ function: sssbApp.forwardedHost, eventType: FunctionEventType.VIEWER_REQUEST }]`. Without it,
+    a visitor writes the host and address the server believes. Never set `SSSB_EDGE` yourself.
+
+### Patch Changes
+
+- 27d0a99: ### Corrections from the release review
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** SSSB's plugin commands `/sssb:new-actor` and `/sssb:a11y-review` now describe the `pnpm dev`
+    Simulator panel as this release builds it: `SimulatorHost` takes an app's own tabs (`extraTabs`), and a generated
+    app's panel has every framework tab but Actors, and Tours until the app registers one. The starter's Simulator route
+    comment names Tours. A comment in `@sssb/cdk`'s viewer-request function no longer says `clientAddress` reads
+    `X-Forwarded-For`. Two client races in the Simulator host that this release added, never released, are fixed: a poll
+    of the dev ticker no longer overwrites a start or stop, and the Snapshots tab's refreshes no longer land out of order.
+
+- @sssb/tools@0.9.0
+
 ## 0.8.0
 
 ### Patch Changes
