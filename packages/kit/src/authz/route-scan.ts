@@ -7,8 +7,14 @@ import ts from 'typescript'
  * fixture, `authorized-mutations.test.ts`), split out so the scan's POLICY (which roots, which exemptions:
  * ./route-policy.ts and an app's own) is input rather than something this module knows. It reads route
  * files with the TypeScript compiler's parser and binder, never a regex over their text, and judges EACH
- * exported mutating handler on its own: a string, a comment, a call in another handler or a call in
- * statically dead code proves nothing about the handler in front of it. Server Actions (`scanServerActions`) are
+ * exported handler on its own, whatever its verb: a string, a comment, a call in another handler or a call in
+ * statically dead code proves nothing about the handler in front of it. A read handler (GET, HEAD, OPTIONS) is held
+ * to the same rule as a mutation, because a read of org-scoped data authorizes the read, and may pass in one more way:
+ * by reading nothing (`readsNothing`): naming nothing from outside itself but inert globals, primitive consts, a few
+ * named imports and its request, as a liveness probe, or a preflight whose headers are written inline, does.
+ * Which reads touch org-scoped data is not guessed from what a handler calls, since a helper in another module that
+ * resolves the org would hide it: a read that names anything else authorizes, or names an exemption whose gate it
+ * passes, as a mutation does (safeinsights/sssb#103). Server Actions (`scanServerActions`) are
  * judged by the same rules as a POST, each export of a `'use server'` file and each function whose body opens with
  * `'use server'`; no exemption applies to one. The walks follow a symbolic link to a directory, as Next does.
  *
@@ -95,8 +101,23 @@ import ts from 'typescript'
  * stronger: authorize before anything else the handler does, on every path.
  */
 
-/** The verbs that mutate. GET, HEAD and OPTIONS are never judged. */
+/** The verbs that mutate. */
 const MUTATING_VERBS: readonly string[] = ['POST', 'PUT', 'PATCH', 'DELETE']
+
+/**
+ * The verbs that read. A read handler is judged as a mutation is, with one more way to pass: it reads nothing
+ * (`HandlerFacts.readsNothing`), as a liveness probe, or a CORS preflight whose headers are written inline, does. A read of org-scoped data
+ * authorizes the read, since the session's org says where a person is placed, not that they may read there.
+ */
+const READ_VERBS: readonly string[] = ['GET', 'HEAD', 'OPTIONS']
+
+/** Every verb Next routes to an exported handler: each one the module exports is judged. */
+const JUDGED_VERBS: readonly string[] = [...MUTATING_VERBS, ...READ_VERBS]
+
+/** Whether `verb` reads (GET, HEAD, OPTIONS) rather than mutates. */
+export function isReadVerb(verb: string): boolean {
+    return READ_VERBS.includes(verb)
+}
 
 // Next.js routes route.ts/tsx/js/jsx/mjs. All of them, or the scan is bypassable by filename.
 const ROUTE_FILE = /^route\.(?:mjs|[jt]sx?)$/
@@ -162,9 +183,15 @@ export interface HandlerFacts {
     calls: ReadonlySet<string>
     /** The handler opens with the inert `if (!isSimulated)` gate and no parameter runs code (`opensWithSimulated404`). */
     opensWithSimulated404: boolean
+    /**
+     * The handler is a function (not a wrapper's result) whose code, read lexically, names nothing from outside it
+     * but inert globals, a few named imports and literal constants (`readsNothing`), so the only data in its reach is
+     * its request. What lets a read handler pass without `authorize`.
+     */
+    readsNothing: boolean
 }
 
-/** One exported mutating handler: its facts, or why it could not be read (a refusal is a failure). */
+/** One exported handler: its facts, or why it could not be read (a refusal is a failure). */
 export type Handler =
     { verb: string; facts: HandlerFacts; refusal?: never } | { verb: string; refusal: string; facts?: never }
 
@@ -173,7 +200,7 @@ export interface ScannedRoute {
     /** Path relative to the root's `exemptDir`, `/`-separated. */
     rel: string
     file: string
-    /** One entry per exported mutating verb. Empty for a route that mutates nothing. */
+    /** One entry per exported verb Next routes (`JUDGED_VERBS`). Empty for a file that exports none. */
     handlers: Handler[]
 }
 
@@ -182,7 +209,7 @@ export interface ScanOptions {
     authorizeModules?: readonly string[]
 }
 
-/** Every route file under every root, each with its exported mutating handlers analysed. */
+/** Every route file under every root, each with its exported handlers analysed. */
 export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}): ScannedRoute[] {
     const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
     return roots.flatMap((root) => {
@@ -508,7 +535,7 @@ export function describeGate(gate: Gate): string {
     const names = (callees: readonly string[]) => callees.map((c) => `${c}(…)`).join(' or ')
     switch (gate.kind) {
         case 'wrapped-by':
-            return `the handler is itself a call to an imported ${names(gate.callees)}, as in \`export const POST = ${gate.callees[0]}(…)\``
+            return `the handler is itself a call to an imported ${names(gate.callees)}, as in \`export const <VERB> = ${gate.callees[0]}(…)\``
         case 'calls':
             return `the handler reaches a call to an imported ${names(gate.callees)} on its own path`
         case 'opens-with-simulated-404':
@@ -537,11 +564,35 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
     if (required && !gateHolds(required.mustMatch, handler.facts)) {
         return `${where} must also satisfy: ${describeGate(required.mustMatch)}. ${required.reason}`
     }
+    // A read that names nothing but inert values and its request reads no data, so it has nothing to authorize.
+    const read = isReadVerb(handler.verb)
+    if (!handler.facts.reachesAuthorize && read && handler.facts.readsNothing) return undefined
     if (!handler.facts.reachesAuthorize && exemption) {
         return (
             `${where} sits under an exemption that holds only when ${describeGate(exemption.mustMatch)}, and this ` +
             `handler does not: the exemption's justification does not hold here. Add the gate to THIS handler, or call ` +
             `authorize(...). (A string, a comment, a look-alike, or the gate on another verb does not count.)`
+        )
+    }
+    if (!handler.facts.reachesAuthorize && read) {
+        return (
+            `${where} exports a read handler that does not reach authorize(...) on its own path, and the route is not ` +
+            `in the exemption map. A read authorizes as a mutation does, \`authorize(user, orgId, 'read', subject)\`: ` +
+            `the session's org says where a person is placed, not that they may read there (the role \`none\` is placed ` +
+            `with no standing). Only authorize(...) counts: a non-throwing check such as canInActiveOrg does not. A ` +
+            `read handler passes without it only when it reads nothing: it names nothing from outside itself but inert ` +
+            `globals (Response, Date, URL, JSON), a const holding a primitive (write an object's values inline), ` +
+            `NextResponse (next/server), redirect, permanentRedirect and notFound (next/navigation), and appMode and ` +
+            `isSimulated, so no other import, no helper, fetch or process.env, and works only on its request. The ` +
+            `same reachability rules apply as for a ` +
+            `mutation: a call in a string, a dead branch, an uncalled function or another module does not count, nor ` +
+            `does one whose denial cannot reach the handler. Call authorize(...) in this handler (a self-only read ` +
+            `authorizes its self-only subject), or, only if it reads nothing org-scoped, ` +
+            (route.rel.startsWith('../')
+                ? `move it under src/app/api, where an exemption in the app's authz-exemptions.mjs can name it: a ` +
+                  `route outside src/app/api can match none.`
+                : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs.`) +
+            (policy.hint ? ` ${policy.hint}` : '')
         )
     }
     if (!handler.facts.reachesAuthorize) {
@@ -614,7 +665,7 @@ class RootScanner {
     handlers(file: string): Handler[] {
         const src = this.load(file)
         if (typeof src === 'string') return [{ verb: '*', refusal: src }]
-        return this.mutatingExports(src, new Set()).map(([verb, binding]) => {
+        return this.judgedExports(src, new Set()).map(([verb, binding]) => {
             const node = this.handlerOf(binding, new Set())
             return 'reason' in node ? { verb, refusal: node.reason } : { verb, facts: this.facts(node) }
         })
@@ -704,10 +755,10 @@ class RootScanner {
         return typeof loaded === 'string' ? `'${specifier}' (${resolved.resolvedFileName}): ${loaded}` : loaded
     }
 
-    /** `[verb, binding]` for every mutating verb the module exports, through `export *` as well. */
-    private mutatingExports(src: Source, seen: Set<string>): Array<[string, Binding]> {
+    /** `[verb, binding]` for every verb the module exports (`JUDGED_VERBS`), through `export *` as well. */
+    private judgedExports(src: Source, seen: Set<string>): Array<[string, Binding]> {
         const { named, stars } = exportsOf(src)
-        const out = [...named].filter(([name]) => MUTATING_VERBS.includes(name))
+        const out = [...named].filter(([name]) => JUDGED_VERBS.includes(name))
         if (seen.has(src.fileName)) return out
         seen.add(src.fileName)
         for (const specifier of stars) {
@@ -717,7 +768,7 @@ class RootScanner {
                 out.push(['*', { kind: 'refused', reason }])
                 continue
             }
-            for (const [verb, binding] of this.mutatingExports(target, seen)) {
+            for (const [verb, binding] of this.judgedExports(target, seen)) {
                 if (!out.some(([known]) => known === verb)) out.push([verb, binding])
             }
         }
@@ -812,6 +863,7 @@ class RootScanner {
                 wrappedBy: null,
                 calls: reach.calls,
                 opensWithSimulated404: opensWithSimulated404(node.src, node.fn),
+                readsNothing: readsNothing(node.src, node.fn),
             }
         }
         reach.wrapped(node.call)
@@ -820,6 +872,8 @@ class RootScanner {
             wrappedBy: gateName(node.src, node.call.expression) ?? null,
             calls: reach.calls,
             opensWithSimulated404: false,
+            // A wrapper is code the scan does not read, run on every request: what it reads is out of sight.
+            readsNothing: false,
         }
     }
 }
@@ -1876,6 +1930,233 @@ function opensWithSimulated404(src: Source, fn: ts.FunctionLikeDeclaration): boo
 }
 
 /**
+ * The globals a handler that reads nothing may name: values and constructors that hold no data of their own and reach
+ * no module, network, file or process. Anything else declared nowhere in the file is out: `fetch` (an upstream
+ * service's data), `process` (its environment, and `getBuiltinModule`), `require`, `eval`, `Function`, `Reflect`,
+ * `globalThis` and its aliases, `arguments`, and any global another module declares (`declare global { var prisma }`).
+ * Every `…Error` constructor is in too (`GLOBAL_ERROR`).
+ */
+const INERT_GLOBALS: ReadonlySet<string> = new Set([
+    'AbortController',
+    'Array',
+    'BigInt',
+    'Blob',
+    'Boolean',
+    'Date',
+    'Headers',
+    'Intl',
+    'Infinity',
+    'JSON',
+    'Map',
+    'Math',
+    'NaN',
+    'Number',
+    'Object',
+    'Promise',
+    'RegExp',
+    'Response',
+    'Set',
+    'String',
+    'Symbol',
+    'ReadableStream',
+    'Request',
+    'TextDecoder',
+    'TextEncoder',
+    'URL',
+    'URLSearchParams',
+    'WeakMap',
+    'WeakSet',
+    'console',
+    'crypto',
+    'atob',
+    'btoa',
+    'decodeURI',
+    'decodeURIComponent',
+    'encodeURI',
+    'encodeURIComponent',
+    'isFinite',
+    'isNaN',
+    'parseFloat',
+    'parseInt',
+    'structuredClone',
+    'undefined',
+])
+
+/**
+ * The imports a handler that reads nothing may name, by module and exported name: Next's `NextResponse` and
+ * `next/navigation`'s `redirect`, `permanentRedirect` and `notFound`, which only build or throw a response, and SSSB's
+ * run-mode constants, which a liveness probe reports.
+ */
+const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
+    'next/server': ['NextResponse'],
+    'next/navigation': ['notFound', 'permanentRedirect', 'redirect'],
+    '@sssb/kit/adapters/index': ['appMode', 'isSimulated'],
+}
+
+/** Member names that lead from any value to the `Function` constructor or a prototype the scan cannot see. */
+const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__'])
+
+/**
+ * Whether `fn` reads nothing it could have to authorize. Its whole text is read LEXICALLY, not along a path
+ * (parameters, nested functions and dead branches included), and every name it refers to that is declared outside it
+ * must be one of:
+ *
+ * - a global in INERT_GLOBALS (`Response`, `new Date`, `URL`, `JSON`), which the file does not assign to;
+ * - an import INERT_IMPORTS names, imported under its exported name (`NextResponse`, `appMode`);
+ * - a `const` of this file bound to a primitive literal (`isPrimitiveLiteral`: `const ALLOW = 'GET'`); an object or
+ *   array is not one, since the file can fill it.
+ *
+ * So the only data in reach is those, literals, and the handler's own parameters (the request), and any method may be
+ * called on them: `new URL(request.url).searchParams.get('x')` and `await request.json()` read the request, not a
+ * port, the database or a helper. Out, whatever the name: an import (a helper, a port, a lazy query, a cache object,
+ * a component, a tag), a function of this file, `fetch`, `process`, `arguments`; a dynamic `import()`, `import.meta`;
+ * a `.constructor` or `.__proto__` member (`Object.constructor('…')` is `Function`); a class (its heritage and members
+ * run code the handler does not show) and a `using` declaration (its disposer runs).
+ *
+ * What it does not see: a member read through a computed key the scan cannot evaluate (`request[key]`). Like a gate,
+ * it proves the KIND of handler, one that names nothing but inert values and its request, not that no data can reach
+ * it (ADR-0012).
+ */
+function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
+    const { checker, sf } = src
+    // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
+    const inside = (decl: ts.Declaration) => decl !== fn && decl.getStart(sf) >= fn.getStart(sf) && decl.end <= fn.end
+    const assigned = new Map<string, boolean>()
+    const assignedGlobal = (name: string): boolean => {
+        let known = assigned.get(name)
+        if (known === undefined) assigned.set(name, (known = assignsGlobal(sf, (n) => n === name)))
+        return known
+    }
+    const allowedOutside = (decl: ts.Declaration): boolean => {
+        const imported = valueImportOf(decl)
+        if (imported !== undefined) {
+            if (imported.kind !== 'named') return false
+            return (
+                ts.isImportSpecifier(decl) &&
+                decl.name.text === imported.name &&
+                (INERT_IMPORTS[imported.module] ?? []).includes(imported.name)
+            )
+        }
+        return (
+            ts.isVariableDeclaration(decl) &&
+            isConst(decl) &&
+            decl.initializer !== undefined &&
+            isPrimitiveLiteral(src, decl.initializer)
+        )
+    }
+    const allowedReference = (id: ts.Identifier): boolean => {
+        const parent = id.parent
+        const symbol =
+            ts.isShorthandPropertyAssignment(parent) && parent.name === id
+                ? checker.getShorthandAssignmentValueSymbol(parent)
+                : checker.getSymbolAtLocation(id)
+        const decl = symbol?.declarations?.[0]
+        if (decl === undefined) {
+            return (INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)
+        }
+        return inside(decl) || allowedOutside(decl)
+    }
+    let reads = false
+    const visit = (node: ts.Node): void => {
+        if (reads) return
+        // A type runs nothing, and names nothing the handler reads.
+        // An instantiation expression (`load<T>`) is an ExpressionWithTypeArguments, which is a type node holding a value.
+        if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression)
+        if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) return
+        if (
+            ts.isClassLike(node) ||
+            ts.isMetaProperty(node) ||
+            (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+            (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
+            (ts.isPropertyAccessExpression(node) && ESCAPE_MEMBERS.has(node.name.text)) ||
+            (ts.isBindingElement(node) &&
+                ESCAPE_MEMBERS.has((node.propertyName ?? node.name).getText(sf).replace(/^['"]|['"]$/g, ''))) ||
+            (ts.isElementAccessExpression(node) &&
+                ts.isStringLiteralLike(node.argumentExpression) &&
+                ESCAPE_MEMBERS.has(node.argumentExpression.text))
+        ) {
+            reads = true
+            return
+        }
+        if (ts.isIdentifier(node) && isReference(node) && !allowedReference(node)) {
+            reads = true
+            return
+        }
+        ts.forEachChild(node, visit)
+    }
+    visit(fn)
+    return !reads
+}
+
+/**
+ * A primitive literal: a string, a number (signed), a bigint, a boolean, `null`, `undefined` or a template with no
+ * substitutions. An object or array literal is not one: `const` fixes the binding, not the contents, which any code in
+ * the file (`cache[org] = await load(org)`) can fill.
+ */
+function isPrimitiveLiteral(src: Source, expression: ts.Expression): boolean {
+    const e = unwrap(expression)
+    switch (e.kind) {
+        case ts.SyntaxKind.StringLiteral:
+        case ts.SyntaxKind.NumericLiteral:
+        case ts.SyntaxKind.BigIntLiteral:
+        case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+        case ts.SyntaxKind.TrueKeyword:
+        case ts.SyntaxKind.FalseKeyword:
+        case ts.SyntaxKind.NullKeyword:
+            return true
+    }
+    if (ts.isPrefixUnaryExpression(e)) {
+        return (
+            (e.operator === ts.SyntaxKind.MinusToken || e.operator === ts.SyntaxKind.PlusToken) &&
+            ts.isNumericLiteral(unwrap(e.operand))
+        )
+    }
+    return ts.isIdentifier(e) && e.text === 'undefined' && declarationOf(src, e) === undefined
+}
+
+/**
+ * Whether an identifier names a value at this point, rather than being a property's or a declaration's own name, a
+ * label, a JSX attribute or an intrinsic JSX tag (`<div>`). A shorthand property (`{ store }`) is a reference.
+ */
+function isReference(id: ts.Identifier): boolean {
+    const parent = id.parent
+    if (ts.isPropertyAccessExpression(parent)) return parent.expression === id
+    if (ts.isQualifiedName(parent)) return false
+    if (
+        (ts.isPropertyAssignment(parent) ||
+            ts.isMethodDeclaration(parent) ||
+            ts.isPropertyDeclaration(parent) ||
+            ts.isGetAccessorDeclaration(parent) ||
+            ts.isSetAccessorDeclaration(parent) ||
+            ts.isEnumMember(parent) ||
+            ts.isJsxAttribute(parent)) &&
+        parent.name === id
+    ) {
+        return false
+    }
+    if (ts.isBindingElement(parent) && (parent.propertyName === id || parent.name === id)) return false
+    if (
+        (ts.isVariableDeclaration(parent) ||
+            ts.isParameter(parent) ||
+            ts.isFunctionDeclaration(parent) ||
+            ts.isFunctionExpression(parent) ||
+            ts.isEnumDeclaration(parent)) &&
+        parent.name === id
+    ) {
+        return false
+    }
+    if ((ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) && parent.label === id) return false
+    if (
+        (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent) || ts.isJsxClosingElement(parent)) &&
+        parent.tagName === id &&
+        /^[a-z]/.test(id.text)
+    ) {
+        return false
+    }
+    return true
+}
+
+/**
  * A parameter that runs no code when the handler is called: no default anywhere in it, and no computed key in a
  * destructuring pattern. Next's own `(request, { params })` is fine; `{ params = wipe() }` is not.
  */
@@ -1935,13 +2216,20 @@ function importedFrom(src: Source, callee: ts.Expression): string | undefined {
  * builds with code of the file's own. Undeclared names only; a declared one is not the global anyway.
  */
 function assignsGateGlobal(sf: ts.SourceFile): boolean {
+    return assignsGlobal(
+        sf,
+        (name) =>
+            name === 'Response' ||
+            name === 'NextResponse' ||
+            name === 'JSON' ||
+            name === 'globalThis' ||
+            GLOBAL_ERROR.test(name),
+    )
+}
+
+/** Whether the file assigns to an undeclared name `relied` accepts, or to a property of one (`fetch.x = …`). */
+function assignsGlobal(sf: ts.SourceFile, relied: (name: string) => boolean): boolean {
     let found = false
-    const relied = (name: string) =>
-        name === 'Response' ||
-        name === 'NextResponse' ||
-        name === 'JSON' ||
-        name === 'globalThis' ||
-        GLOBAL_ERROR.test(name)
     const visit = (node: ts.Node): void => {
         if (found) return
         if (

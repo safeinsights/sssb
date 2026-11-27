@@ -10,12 +10,13 @@ import { readJsonObject, withPortErrors } from '../respond'
  * in two teams can differ per team; the fan-out reads prefs by the notification's org, always one the
  * recipient belongs to). GET returns the caller's stored opt-out rows (the UI derives the default-on
  * grid via the shared core resolver); POST upserts one (kind, channel) toggle. A user manages ONLY their
- * own prefs — authorize() with a self-only NotificationPref subject, and the userId is always the
- * session's, never client-supplied.
+ * own prefs — authorize() with a self-only NotificationPref subject, on the read as on the write, and the
+ * userId is always the session's, never client-supplied.
  */
 export async function GET(): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
+        authorize(user, user.orgSlug, 'read', { type: 'NotificationPref', ownerId: user.id })
         const resolved = await resolveOrgContext(user)
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
