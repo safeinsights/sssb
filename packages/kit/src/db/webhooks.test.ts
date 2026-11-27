@@ -171,3 +171,108 @@ describe('webhook emission + drain', () => {
         expect(forOff).toHaveLength(0)
     })
 })
+
+describe('the delivery drain is bounded per tick and fair across tenants (safeinsights/sssb#97)', () => {
+    test("a tenant with a long backlog to a slow endpoint cannot starve another tenant's delivery, and nothing it leaves is lost or sent twice", async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { createEndpoint, enqueueWebhookEvent, runDueDeliveries, listDeliveriesForWorld } =
+            await import('./webhooks')
+        const { fakeDispatchWebhook } = await import('../adapters/fake/webhooks')
+        // Long before every other test's rows, so only this test's deliveries are due at `due`.
+        const enqueuedAt = new Date('2025-01-01T00:00:00.000Z')
+        const due = new Date('2025-01-01T01:00:00.000Z')
+
+        const busy = await ids('harbor', 'annex')
+        const quiet = await ids('lakeside', 'wharf')
+        const endpoint = async (who: { tenantId: string; orgId: string }, url: string) =>
+            (
+                await createEndpoint(fakeDb, {
+                    ...who,
+                    url,
+                    eventKinds: ['job.status_changed'],
+                    secret: 'whsec_fair',
+                    createdBy: 'test',
+                })
+            ).id
+        const slowId = await endpoint(busy, 'https://slow.example.test/hook')
+        const quietId = await endpoint(quiet, 'https://quiet.example.test/hook')
+        const event = (who: { tenantId: string; orgId: string }, jobId: string, at: Date) =>
+            enqueueWebhookEvent(
+                fakeDb,
+                {
+                    ...who,
+                    kind: 'job.status_changed',
+                    payload: { jobId, jobKind: 'export-dockets', status: 'completed', orgId: who.orgId },
+                },
+                at,
+            )
+        // The busy tenant's twenty deliveries are all older than the quiet tenant's one.
+        for (let i = 0; i < 20; i++) await event(busy, `busy-${i}`, enqueuedAt)
+        await event(quiet, 'quiet-0', new Date(enqueuedAt.getTime() + 60_000))
+
+        // Every POST to the slow endpoint takes ten seconds of the tick's clock, the real dispatcher's timeout.
+        let clock = 0
+        const sent: string[] = []
+        const dispatch: typeof fakeDispatchWebhook = (input) => {
+            sent.push(input.deliveryId)
+            if (input.endpointId === slowId) clock += 10_000
+            return fakeDispatchWebhook(input)
+        }
+        const mine = async (endpointId: string) =>
+            (await listDeliveriesForWorld(fakeDb)).filter((d) => d.endpointId === endpointId)
+
+        const first = await runDueDeliveries(fakeDb, due, dispatch, {
+            maxItems: 100,
+            deadline: 25_000,
+            clock: () => clock,
+        })
+        // Whichever tenant the tick's shuffle puts first, the quiet tenant's one delivery is in the first round, and the
+        // busy tenant's start at 0, 10 and 20 seconds; at 30 the window had closed.
+        expect(first).toEqual({ delivered: 4, failed: 0, dead: 0, deferred: 17, stoppedBy: 'time' })
+        expect((await mine(quietId)).map((d) => d.status)).toEqual(['delivered'])
+        const afterFirst = await mine(slowId)
+        expect(afterFirst.filter((d) => d.status === 'delivered')).toHaveLength(3)
+        // The rest were never claimed: still pending, no attempt, still due.
+        const untouched = afterFirst.filter((d) => d.status !== 'delivered')
+        expect(untouched).toHaveLength(17)
+        for (const d of untouched) {
+            expect(d.status).toBe('pending')
+            expect(d.attemptCount).toBe(0)
+            expect(new Date(d.nextAttemptAt).getTime()).toBeLessThanOrEqual(due.getTime())
+        }
+
+        // The next tick, with a row bound this time, takes up where the first left off.
+        clock = 0
+        const second = await runDueDeliveries(fakeDb, due, dispatch, {
+            maxItems: 10,
+            deadline: Number.MAX_SAFE_INTEGER,
+        })
+        expect(second).toEqual({ delivered: 10, failed: 0, dead: 0, deferred: 1, stoppedBy: 'items' })
+        const third = await runDueDeliveries(fakeDb, due, dispatch, { maxItems: 10, deadline: Number.MAX_SAFE_INTEGER })
+        expect(third).toEqual({ delivered: 7, failed: 0, dead: 0, deferred: 0, stoppedBy: null })
+
+        // All twenty-one delivered, each sent exactly once.
+        const all = [...(await mine(slowId)), ...(await mine(quietId))]
+        expect(all).toHaveLength(21)
+        expect(all.every((d) => d.status === 'delivered' && d.attemptCount === 1)).toBe(true)
+        expect(new Set(sent).size).toBe(sent.length)
+        expect(sent).toHaveLength(21)
+    })
+
+    test('a drain whose deadline has already passed lists nothing and sends nothing', async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { runDueDeliveries } = await import('./webhooks')
+        const sent: string[] = []
+        const result = await runDueDeliveries(
+            fakeDb,
+            new Date('2030-01-01T00:00:00.000Z'),
+            (input) => {
+                sent.push(input.deliveryId)
+                return { delivered: true }
+            },
+            { maxItems: 100, deadline: 0, clock: () => 0 },
+        )
+        expect(result).toEqual({ delivered: 0, failed: 0, dead: 0, deferred: 0, stoppedBy: 'time' })
+        expect(sent).toEqual([])
+    })
+})

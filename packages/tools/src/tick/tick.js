@@ -273,21 +273,35 @@ function count(value) {
  * left queued and the schedule has moved on (the in-process runner's sweep fails the job after five minutes; see
  * `@sssb/kit/db/schedules`).
  *
- * @param {Record<string, unknown>} body the route's JSON: `{ ok, spawned, failed, deliveries: { delivered, failed, dead } }`
+ * A tick is bounded (`@sssb/kit/server-lib/scheduled-tick`), so it may leave due work for the next one: then the line
+ * ends with how much, as the route's `deferred` counts say it (a lower bound), whenever either drain's `stoppedBy` is set
+ * or either counts work left.
+ *
+ * @param {Record<string, unknown>} body the route's JSON:
+ *   `{ ok, spawned, failed, deferred, stoppedBy, deliveries: { delivered, failed, dead, deferred, stoppedBy } }`
  */
 export function summarizeTick(body) {
     const deliveries =
         body.deliveries && typeof body.deliveries === 'object'
             ? /** @type {Record<string, unknown>} */ (body.deliveries)
             : {}
+    // A drain that stopped on its bound says so even with nothing counted as left: one whose window had passed before it
+    // began listed nothing, so its `deferred` is 0.
+    const stopped = [body.stoppedBy, deliveries.stoppedBy].some((reason) => reason === 'items' || reason === 'time')
+    const left =
+        stopped || count(body.deferred) > 0 || count(deliveries.deferred) > 0
+            ? `; stopped on its bound, left for the next tick: at least ${count(body.deferred)} schedule(s), ${count(deliveries.deferred)} delivery(ies)`
+            : ''
     return (
         `ticked: ${count(body.spawned)} job(s) spawned from due schedules, ${count(body.failed)} schedule(s) failed; ` +
-        `webhook deliveries: ${count(deliveries.delivered)} delivered, ${count(deliveries.failed)} failed, ${count(deliveries.dead)} dead`
+        `webhook deliveries: ${count(deliveries.delivered)} delivered, ${count(deliveries.failed)} failed, ${count(deliveries.dead)} dead` +
+        left
     )
 }
 
 /**
- * Whether a tick moved anything at all, for a caller that only wants to speak when something happened.
+ * Whether a tick moved anything at all, or stopped on its bound with work left, for a caller that only wants to speak
+ * when something happened.
  *
  * @param {Record<string, unknown>} body
  */
@@ -296,8 +310,10 @@ export function tickDidWork(body) {
         body.deliveries && typeof body.deliveries === 'object'
             ? /** @type {Record<string, unknown>} */ (body.deliveries)
             : {}
-    return [body.spawned, body.failed, deliveries.delivered, deliveries.failed, deliveries.dead].some(
-        (n) => count(n) > 0,
+    const stopped = [body.stoppedBy, deliveries.stoppedBy].some((reason) => reason === 'items' || reason === 'time')
+    return (
+        stopped ||
+        [body.spawned, body.failed, deliveries.delivered, deliveries.failed, deliveries.dead].some((n) => count(n) > 0)
     )
 }
 
