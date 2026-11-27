@@ -121,11 +121,11 @@ describe('every API route handler is authorized', () => {
             'simulator/world/route.ts',
             'storage/[...key]/route.ts',
         ]) {
-            expect(readOf(rel)?.callsOnlyGlobals, rel).toBe(false)
+            expect(readOf(rel)?.readsNothing, rel).toBe(false)
         }
         expect(readOf('dockets/route.ts')?.reachesAuthorize).toBe(true)
         expect(readOf('service/jobs/route.ts')?.reachesAuthorize).toBe(true)
-        expect(readOf('health/route.ts')).toMatchObject({ reachesAuthorize: false, callsOnlyGlobals: true })
+        expect(readOf('health/route.ts')).toMatchObject({ reachesAuthorize: false, readsNothing: true })
     })
 
     it('at least one handler of each kind is NON-exempt and genuinely reaches authorize(...)', () => {

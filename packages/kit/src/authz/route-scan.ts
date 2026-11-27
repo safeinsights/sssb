@@ -10,7 +10,8 @@ import ts from 'typescript'
  * exported handler on its own, whatever its verb: a string, a comment, a call in another handler or a call in
  * statically dead code proves nothing about the handler in front of it. A read handler (GET, HEAD, OPTIONS) is held
  * to the same rule as a mutation, because a read of org-scoped data authorizes the read, and may pass in one more way:
- * by reading nothing, every call in it a global's (`callsOnlyGlobals`), as a liveness probe or a preflight does.
+ * by reading nothing, naming no data but inert globals, literals and its request (`readsNothing`), as a liveness
+ * probe or a preflight does.
  * Which reads touch org-scoped data is not guessed from what a handler calls, since a helper in another module that
  * resolves the org would hide it: a read that calls anything else authorizes, or names an exemption whose gate it
  * passes, as a mutation does (safeinsights/sssb#103). Server Actions (`scanServerActions`) are
@@ -105,7 +106,7 @@ const MUTATING_VERBS: readonly string[] = ['POST', 'PUT', 'PATCH', 'DELETE']
 
 /**
  * The verbs that read. A read handler is judged as a mutation is, with one more way to pass: it reads nothing
- * (`HandlerFacts.callsOnlyGlobals`), as a liveness probe or a CORS preflight does. A read of org-scoped data
+ * (`HandlerFacts.readsNothing`), as a liveness probe or a CORS preflight does. A read of org-scoped data
  * authorizes the read, since the session's org says where a person is placed, not that they may read there.
  */
 const READ_VERBS: readonly string[] = ['GET', 'HEAD', 'OPTIONS']
@@ -183,11 +184,11 @@ export interface HandlerFacts {
     /** The handler opens with the inert `if (!isSimulated)` gate and no parameter runs code (`opensWithSimulated404`). */
     opensWithSimulated404: boolean
     /**
-     * The handler is a function (not a wrapper's result) whose code, read lexically, calls nothing but globals
-     * (`callsOnlyGlobals`): it can read nothing a port, the database or a helper holds. What lets a read handler pass
-     * without `authorize`.
+     * The handler is a function (not a wrapper's result) whose code, read lexically, names nothing from outside it
+     * but inert globals, a few named imports and literal constants (`readsNothing`), so the only data in its reach is
+     * its request. What lets a read handler pass without `authorize`.
      */
-    callsOnlyGlobals: boolean
+    readsNothing: boolean
 }
 
 /** One exported handler: its facts, or why it could not be read (a refusal is a failure). */
@@ -565,7 +566,7 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
     }
     // A read that calls nothing but globals reads no data, so it has nothing to authorize, wherever it sits.
     const read = isReadVerb(handler.verb)
-    if (!handler.facts.reachesAuthorize && read && handler.facts.callsOnlyGlobals) return undefined
+    if (!handler.facts.reachesAuthorize && read && handler.facts.readsNothing) return undefined
     if (!handler.facts.reachesAuthorize && exemption) {
         return (
             `${where} sits under an exemption that holds only when ${describeGate(exemption.mustMatch)}, and this ` +
@@ -578,9 +579,10 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
             `${where} exports a read handler that does not reach authorize(...) on its own path, and the route is not ` +
             `in the exemption map. A read authorizes as a mutation does, \`authorize(user, orgId, 'read', subject)\`: ` +
             `the session's org says where a person is placed, not that they may read there (the role \`none\` is placed ` +
-            `with no standing). A read handler passes without it only when it reads nothing: every call in it is to a ` +
-            `global such as Response.json or new Date, never an import, a helper, or a method on a parameter or a ` +
-            `local. The same reachability rules apply as for a mutation: a call in a string, a dead branch, an uncalled ` +
+            `with no standing). A read handler passes without it only when it reads nothing: it names nothing from ` +
+            `outside itself but inert globals (Response, Date, URL, JSON), NextResponse, appMode and isSimulated, and ` +
+            `literal constants, so no import, helper, fetch or process.env, and works only on its request. ` +
+            `The same reachability rules apply as for a mutation: a call in a string, a dead branch, an uncalled ` +
             `function or another module does not count, nor does one whose denial cannot reach the handler. Call ` +
             `authorize(...) in this handler, or, only if it reads nothing org-scoped (a self-only read authorizes its ` +
             `self-only subject instead), add a justified exemption.` +
@@ -855,7 +857,7 @@ class RootScanner {
                 wrappedBy: null,
                 calls: reach.calls,
                 opensWithSimulated404: opensWithSimulated404(node.src, node.fn),
-                callsOnlyGlobals: callsOnlyGlobals(node.src, node.fn),
+                readsNothing: readsNothing(node.src, node.fn),
             }
         }
         reach.wrapped(node.call)
@@ -865,7 +867,7 @@ class RootScanner {
             calls: reach.calls,
             opensWithSimulated404: false,
             // A wrapper is code the scan does not read, run on every request: what it reads is out of sight.
-            callsOnlyGlobals: false,
+            readsNothing: false,
         }
     }
 }
@@ -1922,81 +1924,190 @@ function opensWithSimulated404(src: Source, fn: ts.FunctionLikeDeclaration): boo
 }
 
 /**
- * Globals a handler that "reads nothing" may not call, though nothing in the file declares them: each reaches a module
- * (`require`, `process.getBuiltinModule`), runs code from a string (`eval`, `Function`), calls a function it is
- * handed by reflection (`Reflect.apply`), or reads whatever another module left on the global object.
+ * The globals a handler that reads nothing may name: values and constructors that hold no data of their own and reach
+ * no module, network, file or process. Anything else declared nowhere in the file is out: `fetch` (an upstream
+ * service's data), `process` (its environment, and `getBuiltinModule`), `require`, `eval`, `Function`, `Reflect`,
+ * `globalThis` and its aliases, `arguments`, and any global another module declares (`declare global { var prisma }`).
+ * Every `…Error` constructor is in too (`GLOBAL_ERROR`).
  */
-const OPAQUE_GLOBALS: ReadonlySet<string> = new Set([
-    'Bun',
-    'Deno',
-    'Function',
-    'Reflect',
-    'eval',
-    'exports',
-    'global',
-    'globalThis',
-    'module',
-    'process',
-    'require',
-    'self',
-    'window',
+const INERT_GLOBALS: ReadonlySet<string> = new Set([
+    'Array',
+    'BigInt',
+    'Blob',
+    'Boolean',
+    'Date',
+    'Headers',
+    'Infinity',
+    'JSON',
+    'Map',
+    'Math',
+    'NaN',
+    'Number',
+    'Object',
+    'Promise',
+    'RegExp',
+    'Response',
+    'Set',
+    'String',
+    'Symbol',
+    'TextDecoder',
+    'TextEncoder',
+    'URL',
+    'URLSearchParams',
+    'WeakMap',
+    'WeakSet',
+    'console',
+    'crypto',
+    'decodeURI',
+    'decodeURIComponent',
+    'encodeURI',
+    'encodeURIComponent',
+    'isFinite',
+    'isNaN',
+    'parseFloat',
+    'parseInt',
+    'structuredClone',
+    'undefined',
 ])
 
 /**
- * Whether `fn` reads nothing it could have to authorize: its whole text (parameters, nested functions and dead
- * branches included, so it is read LEXICALLY, not along a path) makes no call, `new` or tagged template but to a
- * global, a name declared nowhere in the file (`Response.json`, `new Date().toISOString()`, `fetch`), never to an
- * import, a same-file helper, a parameter's or a local's method, or a global the file assigns to or OPAQUE_GLOBALS
- * names. No call is handed a name from outside the handler as an argument either (`p.then(load)`,
- * `setTimeout(load)`), since the global would call it; an import read as a plain value (`{ mode: appMode }`) is
- * allowed. No JSX element but an intrinsic one (a component is a call), no decorator and no `using` declaration (its
- * disposer runs). A dynamic `import()` and `import.meta.resolve()` have no global head, so they fail it.
- *
- * What it does not see: a getter, an iterator or a conversion (`toJSON`, `toString`) that an imported value carries
- * runs code when the handler reads it as a value. Like a gate, it proves the KIND of handler (one that calls nothing
- * it imports), not that no data can reach it (ADR-0012).
+ * The imports a handler that reads nothing may name, by module and exported name: Next's `NextResponse`, and SSSB's
+ * run-mode constants, which a liveness probe reports.
  */
-function callsOnlyGlobals(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
-    const inside = (decl: ts.Declaration) => decl.getStart(src.sf) >= fn.getStart(src.sf) && decl.end <= fn.end
-    const globalHead = (callee: ts.Expression): boolean => {
-        let head = unwrap(callee)
-        for (;;) {
-            if (ts.isPropertyAccessExpression(head) || ts.isElementAccessExpression(head))
-                head = unwrap(head.expression)
-            else if (ts.isCallExpression(head) || ts.isNewExpression(head) || ts.isAwaitExpression(head))
-                head = unwrap(head.expression)
-            else break
+const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
+    'next/server': ['NextResponse'],
+    '@sssb/kit/adapters/index': ['appMode', 'isSimulated'],
+}
+
+/** Member names that lead from any value to the `Function` constructor or a prototype the scan cannot see. */
+const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__'])
+
+/**
+ * Whether `fn` reads nothing it could have to authorize. Its whole text is read LEXICALLY, not along a path
+ * (parameters, nested functions and dead branches included), and every name it refers to that is declared outside it
+ * must be one of:
+ *
+ * - a global in INERT_GLOBALS (`Response`, `new Date`, `URL`, `JSON`), which the file does not assign to;
+ * - an import INERT_IMPORTS names, imported under its exported name (`NextResponse`, `appMode`);
+ * - a `const` of this file bound to a literal value (`isLiteralValue`: `const HEADERS = { allow: 'GET' }`).
+ *
+ * So the only data in reach is those, literals, and the handler's own parameters (the request), and any method may be
+ * called on them: `new URL(request.url).searchParams.get('x')` and `await request.json()` read the request, not a
+ * port, the database or a helper. Out, whatever the name: an import (a helper, a port, a lazy query, a cache object,
+ * a component, a tag), a function of this file, `fetch`, `process`, `arguments`; a dynamic `import()`, `import.meta`;
+ * a `.constructor` or `.__proto__` member (`Object.constructor('…')` is `Function`); a class (its heritage and members
+ * run code the handler does not show) and a `using` declaration (its disposer runs).
+ *
+ * What it does not see: a member read through a computed key the scan cannot evaluate (`request[key]`). Like a gate,
+ * it proves the KIND of handler, one that names nothing but inert values and its request, not that no data can reach
+ * it (ADR-0012).
+ */
+function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
+    const { checker, sf } = src
+    const inside = (decl: ts.Declaration) => decl.getStart(sf) >= fn.getStart(sf) && decl.end <= fn.end
+    const assigned = new Map<string, boolean>()
+    const assignedGlobal = (name: string): boolean => {
+        let known = assigned.get(name)
+        if (known === undefined) assigned.set(name, (known = assignsGlobal(sf, (n) => n === name)))
+        return known
+    }
+    const allowedOutside = (decl: ts.Declaration): boolean => {
+        const imported = valueImportOf(decl)
+        if (imported !== undefined) {
+            if (imported.kind !== 'named') return false
+            return (
+                ts.isImportSpecifier(decl) &&
+                decl.name.text === imported.name &&
+                (INERT_IMPORTS[imported.module] ?? []).includes(imported.name)
+            )
         }
         return (
-            ts.isIdentifier(head) &&
-            declarationOf(src, head) === undefined &&
-            !OPAQUE_GLOBALS.has(head.text) &&
-            !assignsGlobal(src.sf, (name) => name === head.text)
+            ts.isVariableDeclaration(decl) &&
+            isConst(decl) &&
+            decl.initializer !== undefined &&
+            isLiteralValue(src, decl.initializer)
         )
     }
-    /** A name (or a property read on one) declared outside the handler: an import, a same-file function or value. */
-    const outsideName = (argument: ts.Expression): boolean => {
-        let head = unwrap(ts.isSpreadElement(argument) ? argument.expression : argument)
-        while (ts.isPropertyAccessExpression(head) || ts.isElementAccessExpression(head)) head = unwrap(head.expression)
-        if (!ts.isIdentifier(head)) return false
-        const decl = declarationOf(src, head)
-        return decl !== undefined && !inside(decl)
+    const allowedReference = (id: ts.Identifier): boolean => {
+        const parent = id.parent
+        const symbol =
+            ts.isShorthandPropertyAssignment(parent) && parent.name === id
+                ? checker.getShorthandAssignmentValueSymbol(parent)
+                : checker.getSymbolAtLocation(id)
+        const decl = symbol?.declarations?.[0]
+        if (decl === undefined) {
+            return (INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)
+        }
+        return inside(decl) || allowedOutside(decl)
     }
-    let only = true
+    let reads = false
     const visit = (node: ts.Node): void => {
-        if (!only) return
-        if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-            if (!globalHead(node.expression) || (node.arguments ?? []).some(outsideName)) only = false
-        } else if (ts.isTaggedTemplateExpression(node)) {
-            if (!globalHead(node.tag)) only = false
-        } else if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
-            if (!(ts.isIdentifier(node.tagName) && /^[a-z]/.test(node.tagName.text))) only = false
-        } else if (ts.isDecorator(node)) only = false
-        else if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) only = false
+        if (reads) return
+        // A type runs nothing, and names nothing the handler reads.
+        if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) return
+        if (
+            ts.isClassLike(node) ||
+            ts.isMetaProperty(node) ||
+            (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+            (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
+            (ts.isPropertyAccessExpression(node) && ESCAPE_MEMBERS.has(node.name.text)) ||
+            (ts.isElementAccessExpression(node) &&
+                ts.isStringLiteralLike(node.argumentExpression) &&
+                ESCAPE_MEMBERS.has(node.argumentExpression.text))
+        ) {
+            reads = true
+            return
+        }
+        if (ts.isIdentifier(node) && isReference(node) && !allowedReference(node)) {
+            reads = true
+            return
+        }
         ts.forEachChild(node, visit)
     }
     visit(fn)
-    return only
+    return !reads
+}
+
+/**
+ * Whether an identifier names a value at this point, rather than being a property's or a declaration's own name, a
+ * label, a JSX attribute or an intrinsic JSX tag (`<div>`). A shorthand property (`{ store }`) is a reference.
+ */
+function isReference(id: ts.Identifier): boolean {
+    const parent = id.parent
+    if (ts.isPropertyAccessExpression(parent)) return parent.expression === id
+    if (ts.isQualifiedName(parent)) return false
+    if (
+        (ts.isPropertyAssignment(parent) ||
+            ts.isMethodDeclaration(parent) ||
+            ts.isPropertyDeclaration(parent) ||
+            ts.isGetAccessorDeclaration(parent) ||
+            ts.isSetAccessorDeclaration(parent) ||
+            ts.isEnumMember(parent) ||
+            ts.isJsxAttribute(parent)) &&
+        parent.name === id
+    ) {
+        return false
+    }
+    if (ts.isBindingElement(parent) && (parent.propertyName === id || parent.name === id)) return false
+    if (
+        (ts.isVariableDeclaration(parent) ||
+            ts.isParameter(parent) ||
+            ts.isFunctionDeclaration(parent) ||
+            ts.isFunctionExpression(parent) ||
+            ts.isEnumDeclaration(parent)) &&
+        parent.name === id
+    ) {
+        return false
+    }
+    if ((ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) && parent.label === id) return false
+    if (
+        (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent) || ts.isJsxClosingElement(parent)) &&
+        parent.tagName === id &&
+        /^[a-z]/.test(id.text)
+    ) {
+        return false
+    }
+    return true
 }
 
 /**

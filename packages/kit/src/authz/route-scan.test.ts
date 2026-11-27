@@ -1901,11 +1901,12 @@ describe('the facts a gate is judged on', () => {
     })
 })
 
-describe('a read that reads nothing: every call in it a global (safeinsights/sssb#103)', () => {
-    const only = (src: string, verb = 'GET') => factsOf(src, verb).callsOnlyGlobals
-    const IMPORT = "import { appMode, db, load } from '@sssb/kit/adapters/index'\n"
+describe('a read that reads nothing (safeinsights/sssb#103)', () => {
+    const only = (src: string, verb = 'GET') => factsOf(src, verb).readsNothing
+    const IMPORT = "import { appMode, db, load, store, query } from '@sssb/kit/adapters/index'\n"
+    const tsx = (src: string) => scanTree({ 'route.tsx': src }).find((r) => r.rel === 'route.tsx')!.handlers[0]!.facts!
 
-    it('holds for a probe that calls only globals, and reads an import only as a plain value', () => {
+    it('holds for a probe that names only inert globals, its request, literal constants and the named imports', () => {
         expect(only('export async function GET() { return Response.json({ ok: true }) }')).toBe(true)
         expect(
             only(
@@ -1914,35 +1915,79 @@ describe('a read that reads nothing: every call in it a global (safeinsights/sss
         ).toBe(true)
         expect(only('export const HEAD = () => new Response(null, { status: 204 })', 'HEAD')).toBe(true)
         expect(
-            only("export function OPTIONS() { return new Response(null, { headers: { allow: 'GET' } }) }", 'OPTIONS'),
+            only(
+                "const CORS = { allow: 'GET' }\nexport function OPTIONS() { return new Response(null, { headers: CORS }) }",
+                'OPTIONS',
+            ),
         ).toBe(true)
         expect(
             only(
-                'export async function GET() { const r = await fetch("http://x"); return Response.json({ up: r.ok }) }',
+                "import { NextResponse } from 'next/server'\nexport function GET() { return NextResponse.json({ ok: true }) }",
             ),
         ).toBe(true)
+        expect(
+            only(
+                'export function GET(request: Request) { const u = new URL(request.url); return new Response(u.searchParams.get("hub.challenge")) }',
+            ),
+        ).toBe(true)
+        expect(
+            only(
+                'type Row = { id: string }\nexport function GET() { const rows: Row[] = []; return Response.json(rows) }',
+            ),
+        ).toBe(true)
+        expect(tsx(`${IMPORT}export async function GET() { return Response.json({ el: <div /> }) }`).readsNothing).toBe(
+            true,
+        )
     })
 
-    it('fails a call to anything but a global: an import, a helper, a parameter or a local', () => {
-        expect(only(`${IMPORT}export async function GET() { return Response.json(await load()) }`)).toBe(false)
-        expect(
-            only(`${IMPORT}export async function GET() { return Response.json(await db.withTenant('t', () => 1)) }`),
-        ).toBe(false)
+    it('fails a name from outside it that is not inert: an import, a helper, a value that is not a literal', () => {
+        for (const body of [
+            'return Response.json(await load())',
+            "return Response.json(await db.withTenant('t', () => 1))",
+            'return Response.json({ dockets: store })',
+            'return Response.json({ store })',
+            'return Response.json({ ...store })',
+            "return Response.json(store['depot'] ?? [])",
+            'return Response.json(await query)',
+            'const f = load; return Response.json(await Promise.resolve().then(f))',
+            'setTimeout(load); return Response.json({})',
+        ]) {
+            expect(only(`${IMPORT}export async function GET() { ${body} }`), body).toBe(false)
+        }
         expect(
             only('function helper() { return 1 }\nexport async function GET() { return Response.json(helper()) }'),
         ).toBe(false)
-        expect(only('export async function GET(request: Request) { return Response.json(await request.json()) }')).toBe(
+        expect(only('const cache = new Map()\nexport async function GET() { return Response.json([...cache]) }')).toBe(
             false,
         )
         expect(
-            only(
-                'export async function GET() { const u = new URL("http://x"); return Response.json(u.searchParams.get("a")) }',
-            ),
+            only("import { NextResponse as R } from 'next/server'\nexport function GET() { return R.json({}) }"),
         ).toBe(false)
-        expect(only("export async function GET() { const m = await import('./data'); return Response.json(m) }")).toBe(
+    })
+
+    it('fails a global that is not inert: an upstream service, the process, a module, code from a string', () => {
+        for (const body of [
+            "return fetch('http://data/orgs/depot/dockets')",
+            'return Response.json(await (await fetch(process.env.DATA_API!)).json())',
+            'return Response.json({ api: process.env.DATA_API })',
+            "return Response.json(require('./db').load())",
+            "return Response.json(eval('1'))",
+            "return Response.json(new Function('return 1')())",
+            'return Response.json(Reflect.ownKeys({}))',
+            'return Response.json(globalThis.store)',
+            'return Response.json(await prisma.docket.findMany())',
+            'return Response.json(arguments[0])',
+            'return Response.json({ m: module, e: exports, w: window, s: self, g: global })',
+            "return Response.json(Object.constructor('return 1')())",
+            "return Response.json(Date['constructor'])",
+            "return Response.json(await import('./data'))",
+            'return Response.json(import.meta.url)',
+        ]) {
+            expect(only(`export async function GET() { ${body} }`), body).toBe(false)
+        }
+        expect(only('Response = class {} as never\nexport async function GET() { return Response.json({}) }')).toBe(
             false,
         )
-        expect(only('export async function GET() { return Response.json(import.meta.resolve("x")) }')).toBe(false)
     })
 
     it('reads the handler lexically: a dead branch, a nested function and a default count', () => {
@@ -1953,47 +1998,29 @@ describe('a read that reads nothing: every call in it a global (safeinsights/sss
         expect(only(`${IMPORT}export async function GET(x = load()) { return Response.json({ x }) }`)).toBe(false)
     })
 
-    it('fails a name from outside the handler handed to a call, which may call it', () => {
-        expect(
-            only(`${IMPORT}export async function GET() { return Response.json(await Promise.resolve().then(load)) }`),
-        ).toBe(false)
-        expect(only(`${IMPORT}export async function GET() { setTimeout(load); return Response.json({}) }`)).toBe(false)
-        expect(only(`${IMPORT}export async function GET() { return new Response(null, db.options) }`)).toBe(false)
-    })
-
-    it('fails a global that reaches a module, runs a string, reflects, or that the file replaces', () => {
-        for (const call of [
-            "require('./db').load()",
-            "eval('load()')",
-            "new Function('return 1')()",
-            "process.getBuiltinModule('fs')",
-            "globalThis.fetch('http://x')",
-            'Reflect.ownKeys({})',
-        ]) {
-            expect(only(`export async function GET() { ${call}; return Response.json({}) }`), call).toBe(false)
-        }
+    it('fails a tagged template, a component, a class, a decorator or a using declaration', () => {
         expect(
             only(
-                `${IMPORT}fetch = load as never\nexport async function GET() { return Response.json(await fetch('x')) }`,
+                "import { sql } from '@vercel/postgres'\nexport async function GET() { return Response.json(await sql`select 1`) }",
             ),
         ).toBe(false)
-    })
-
-    it('fails a component, a decorator or a using declaration', () => {
-        const tsx = (src: string) =>
-            scanTree({ 'route.tsx': src }).find((r) => r.rel === 'route.tsx')!.handlers[0]!.facts!
-        expect(
-            tsx(`${IMPORT}export async function GET() { return Response.json({ el: <div /> }) }`).callsOnlyGlobals,
-        ).toBe(true)
         expect(
             tsx(`import { Card } from './card'\nexport async function GET() { return Response.json({ el: <Card /> }) }`)
-                .callsOnlyGlobals,
+                .readsNothing,
         ).toBe(false)
-        expect(only(`${IMPORT}export async function GET() { using r = db; return Response.json({}) }`)).toBe(false)
+        expect(
+            tsx(
+                `import { Card } from './card'\nexport async function GET() { return Response.json({ el: <Card></Card> }) }`,
+            ).readsNothing,
+        ).toBe(false)
+        expect(only('export async function GET() { class A {}; return Response.json({ a: A.name }) }')).toBe(false)
         expect(
             only(
                 `${IMPORT}export async function GET() { class A { @load m() {} }; return Response.json({ a: A.name }) }`,
             ),
+        ).toBe(false)
+        expect(
+            only('export async function GET() { using r = { [Symbol.dispose]() {} }; return Response.json({}) }'),
         ).toBe(false)
     })
 
@@ -2008,7 +2035,7 @@ describe('judging a handler against a policy', () => {
         wrappedBy: null,
         calls: new Set(),
         opensWithSimulated404: false,
-        callsOnlyGlobals: false,
+        readsNothing: false,
         ...over,
     })
     const route = (rel: string): ScannedRoute => ({ root: 'r', rel, file: `/x/${rel}`, handlers: [] })
@@ -2053,23 +2080,23 @@ describe('judging a handler against a policy', () => {
             expect(failure).toContain("authorize(user, orgId, 'read', subject)")
             expect(failure).toContain('HINT-TEXT')
             expect(
-                judge(route('items/route.ts'), { verb, facts: facts({ callsOnlyGlobals: true }) }, policy),
+                judge(route('items/route.ts'), { verb, facts: facts({ readsNothing: true }) }, policy),
             ).toBeUndefined()
         }
     })
 
     it('reading nothing excuses a read only: a mutation that calls only globals still authorizes', () => {
-        expect(
-            judge(route('items/route.ts'), { verb: 'POST', facts: facts({ callsOnlyGlobals: true }) }, policy),
-        ).toMatch(/exports a mutating handler that does not reach authorize/)
+        expect(judge(route('items/route.ts'), { verb: 'POST', facts: facts({ readsNothing: true }) }, policy)).toMatch(
+            /exports a mutating handler that does not reach authorize/,
+        )
     })
 
     it('a read that reads nothing passes under an exemption whose gate it misses, but not a required gate', () => {
         expect(
-            judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ callsOnlyGlobals: true }) }, policy),
+            judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
         ).toBeUndefined()
         expect(
-            judge(route('svc/jobs/route.ts'), { verb: 'GET', facts: facts({ callsOnlyGlobals: true }) }, policy),
+            judge(route('svc/jobs/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
         ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
         expect(
             judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, policy),

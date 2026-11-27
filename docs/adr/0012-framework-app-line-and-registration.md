@@ -1044,7 +1044,7 @@ pass: a read that reads nothing. Its whole text, read lexically, calls nothing b
 (`Response.json`, `new Date`, `fetch`), never an import, a helper, or a method on a parameter or a local; hands no name
 from outside the handler to a call; and calls none of the globals that reach a module, a string's code or reflection
 (`require`, `eval`, `Function`, `process`, `globalThis`, `Reflect`). It is a fact the analyser computes
-(`callsOnlyGlobals`), not a gate an entry names, so a liveness probe or a CORS preflight needs no exemption. Like a
+(`readsNothing`), not a gate an entry names, so a liveness probe or a CORS preflight needs no exemption. Like a
 gate, it proves the KIND of handler: a getter, an iterator or a conversion an imported value carries is not seen.
 
 **Which action.** Any `authorize` call counts on a read, as on a mutation; the scan does not require the action to be
