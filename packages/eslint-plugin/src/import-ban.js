@@ -6,7 +6,7 @@
 // the `iu` flags, and the specifier trimmed. It visits what that rule visits: import declarations, re-exports with a
 // source, and TypeScript's `import m = require('…')`. One difference, a tightening: ESLint trims the specifier of
 // import and export declarations only, and this half trims `import m = require(' x')`'s too. That includes the group syntax's quirks:
-// a bare name matches at any depth, so core's `react` also bans `@x/react` and `./react`, and `pg` bans `./pg`.
+// a bare name matches at any depth, so core's `react` also bans `@x/react` and `./react`. (The vendor list anchors its bare names, `/pg`, so it bans the package and what is under it, never a local `./pg`.)
 //
 // The declarationless half (declarationlessImportBan) sees what no declaration rule can: `import()`, `require()`,
 // vitest/jest's `importActual`, `requireActual`, `importMock` and `requireMock`, and a type-position `import('…')`

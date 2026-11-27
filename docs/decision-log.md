@@ -8260,3 +8260,39 @@ catchRequests })`), which the conformance check uses so it never touches an app'
   do run live in the demo, as on the server, because a demo that skipped them would show a different world from the one
   the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
   (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.
+
+## A reused pid does not keep a stale ticker marker alive, and the vendor ban reads one list one way (2026-11-27, `fix/ticker-marker-and-vendor-ban`)
+
+`safeinsights/sssb#146` and `safeinsights/sssb#155`, two tooling leftovers.
+
+- **`#146`: a marker is stale when the process at its pid started after the marker was written.** A wrapper killed with
+  SIGKILL leaves `dev-ticker.json`, and once the OS gives its pid to an unrelated process `process.kill(pid, 0)` says
+  "alive", so both Playwright configs refused to load until the file was deleted by hand. The marker's `startedAt` is
+  written by its own process after that process began, so a process at the pid that began later cannot have written it.
+  `liveTickerMarker(file, startOf = processStartedAt)` compares the two, with `ps -o lstart=` for the start (macOS and
+  Linux, to the second; `LC_ALL=C`; two seconds' timeout) and a 2 s tolerance, because `ps` rounds down and Linux reckons
+  a start from the boot time, which drifts by up to a second. Rejected: `/proc/<pid>/stat`, which macOS lacks; the
+  issue's other reading, "did not start at `startedAt`", which a wrapper that is a long-running server (the showcase's
+  dev server writes its marker minutes after it began) would fail by being too early. The start time of a process is
+  later than a marker only when the pid was reused.
+- **When it cannot be told, the marker stays live, as before:** `startedAt` not a date, no `ps` (Windows), a `ps` that
+  fails. A false "stale" would let an e2e run adopt a ticking dev server, which is what the marker exists to stop, and a
+  false "live" is only the old behaviour. **A stale marker is cleared**, and so is one whose process is gone (it was
+  ignored before and left on disk), unless the file changed since it was read (another wrapper wrote its own in between).
+- **`#155`: the vendor ban's two halves read one list through one matcher.** The static half matched the list with the
+  `ignore` package (gitignore semantics, case-insensitive), the declarationless half (`import()`, `require()`, a
+  type-position `import('…')`) with a hand-written `isVendorSpecifier`, so a bare `pg` banned a local `./pg` and
+  `some/dir/pg` in one half only, and `@CLERK/nextjs` was a vendor in one half only. The bare names in
+  `vendorSdkPattern` are anchored (`/pg`, `/posthog-js`, `/posthog-node`, `/mailgun.js`: in gitignore a leading `/`
+  anchors to the start, and `/pg` still bans what is under it, `pg/lib/x`), and the declarationless half is
+  `matchesPatterns` over the same group, as the framework/app fence's already was. An app's own bare `sssb.vendors`
+  entries are anchored in the rules (`anchorBare`) the same way, so `stripe` bans the package, not `./stripe`. Both
+  halves are now case-insensitive. Seen in the tests: `posthog-node/lib` is a vendor in both halves (a name bans what is
+  under it; the old declarationless reading agreed), a thing the issue's table did not list.
+- **What a change of fence needs:** the preset is the rules' own list, `packages/eslint-plugin/src/probes.js` probes an
+  app's vendors by naming the package itself (`stripe`), which the anchored entry still matches, so the probes needed no
+  change and `sssb check-fences` passes (`tests/lint/check-fences.test.ts`, both apps and the scratch apps that weaken a
+  fence). A negation entry (`!pg`) was already refused by the loader; anchoring would have turned one into a literal name
+  had it got through. The parity table (`tests/lint/framework-fence.test.ts`) now has a vendor block: 27 specifiers,
+  three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
+  (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).

@@ -22,19 +22,23 @@ export const STORY_FILES = '**/*.stories.{js,jsx,ts,tsx}'
 // Vendor SDKs may only be imported inside an adapters directory: packages/kit/src/adapters/ for SSSB's ports,
 // an app's src/adapters/real/ for a port the app owns (ADR-0012, addendum 2026-11-16). Two rules enforce the
 // one list: sssb/no-vendor-import sees declarations, sssb/no-dynamic-vendor-import sees import(), require() and
-// a type-position import('…').
+// a type-position import('…'). Both read the list through the same matcher (`matchesPatterns`, ./import-ban.js), which
+// reads it as gitignore does: a bare name matches at any depth, so a bare `pg` would also ban a local `./pg` and
+// `some/dir/pg`. A leading `/` anchors a name to the start of the specifier (`/pg` is the package `pg` and what is under
+// it, never `./pg`), and a pattern with a `/` inside is anchored already (`pg/*`, `@clerk/*`). An app's own `sssb.vendors`
+// are anchored the same way (rules.js).
 export const vendorSdkPattern = {
     group: [
         '@clerk/*',
         '@aws-sdk/*',
         '@anthropic-ai/*',
         '@sentry/*',
-        'posthog-js',
+        '/posthog-js',
         'posthog-js/*',
-        'posthog-node',
-        'mailgun.js',
+        '/posthog-node',
+        '/mailgun.js',
         'mailgun.js/*',
-        'pg',
+        '/pg',
         'pg/*',
     ],
     message:

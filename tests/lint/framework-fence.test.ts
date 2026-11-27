@@ -233,6 +233,54 @@ describe('the two halves of each fence read the group the same way', () => {
     })
 })
 
+// The vendor ban's two halves read ONE list through ONE matcher (`safeinsights/sssb#155`): what is a vendor SDK to a
+// declaration is a vendor SDK to import() and require(), row by row, and the table pins which rows are. A bare name in
+// the list is anchored (`/pg`), so it is the package and what is under it, never a local `./pg`.
+describe('the two halves of the vendor ban read the list the same way', () => {
+    const VENDOR_ROWS: [string, boolean][] = [
+        ['pg', true],
+        ['pg/lib/client', true],
+        ['PG', true],
+        [' pg', true],
+        ['pg-boss', false],
+        ['pglite', false],
+        ['@electric-sql/pglite', false],
+        ['./pg', false],
+        ['../pg', false],
+        ['some/dir/pg', false],
+        ['@x/pg', false],
+        ['@clerk/nextjs', true],
+        ['@clerk/nextjs/server', true],
+        ['@CLERK/nextjs', true],
+        ['@clerk', false],
+        ['@aws-sdk/client-s3', true],
+        ['@anthropic-ai/sdk', true],
+        ['@sentry/nextjs', true],
+        ['posthog-js', true],
+        ['posthog-js/react', true],
+        ['./posthog-js', false],
+        ['posthog-node', true],
+        ['posthog-node/lib', true],
+        ['mailgun.js', true],
+        ['mailgun.js/x', true],
+        ['./mailgun.js', false],
+        ['x/mailgun.js', false],
+    ]
+    const files = [`${APP}/src/domain/kv.ts`, 'packages/kit/src/server-lib/kv.ts', FIXTURE]
+
+    describe.each(files)('%s', (file) => {
+        it.each(VENDOR_ROWS)('%s', async (specifier, vendor) => {
+            const at = JSON.stringify(specifier)
+            const declared = fired(await lint(file, `import x from ${at}\nexport { x }\n`), VENDOR_STATIC)
+            const loaded = fired(await lint(file, `export const load = () => import(${at})\n`), VENDOR_DYNAMIC)
+            const required = fired(await lint(file, `export const load = () => require(${at})\n`), VENDOR_DYNAMIC)
+            expect({ declared, loaded, required }, specifier).toEqual(
+                vendor ? { declared: 1, loaded: 1, required: 1 } : { declared: 0, loaded: 0, required: 0 },
+            )
+        })
+    })
+})
+
 // The same app code by PATH: `../../../../apps/showcase/src/domain/tickets` from SSSB's server-lib is the file
 // the app's `@/*` alias names, and `../../../seed/src/index` is `@app/seed`. sssb/no-path-to-app-code resolves a
 // relative or absolute path against the importing file and reports it if it lands in apps/ or packages/seed/,
