@@ -63,7 +63,8 @@ export default defineConfig({
     // shards on CI — never inside one server. Raising this number requires per-worker world
     // isolation first: safeinsights/sssb#99.
     workers: 1,
-    reporter: process.env.CI ? 'github' : 'list',
+    // TEMPORARY (safeinsights/sssb#100): the timing reporter is the measurement; the commit that sets the budgets removes it.
+    reporter: process.env.CI ? [['github'], ['./tests/e2e/support/timing-reporter.ts']] : 'list',
     use: {
         baseURL: BASE_URL,
         trace: 'on-first-retry',
