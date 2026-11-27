@@ -8017,9 +8017,16 @@ settle:
   `withWebhookSecret`, and one outside `src/app/api` can match no exemption, as before.
 - **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
   prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
-  a prefix's gate override every exact entry beneath it (review of this change caught it in the first draft).
+  a prefix's gate override every exact entry beneath it (an existing test caught it in the first draft).
 - **`names` are identifiers**, not dotted names: an import's exported name (a default import's local name) or a
   declaration of the route's file. A namespace import is refused outright, since it names the whole module, and so is
   an aliased one (`import { headers as cors }`), as for every gate.
+- **Narrowed in review.** The first draft let a listed declaration of the file excuse whatever it held (an alias of an
+  import, a helper reading the database, a `declare`d `fetch`): the scan now reads a listed `const` or function and
+  counts its names, and refuses an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
+  under `simulator/` too, which the issue did not ask for and whose 404-in-real guarantee such a read does not keep:
+  `webhooks/` only. A listed name nobody reads is a problem. Review also found route groups escaping path-keyed
+  rules (`api/(g)/service/…` past the `service/` gate), older than this change; the scan now matches by URL, which can
+  fail an app that passed, hence `minor`, Action required.
 - **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
   own, in its own PR.

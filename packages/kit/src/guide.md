@@ -151,10 +151,12 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   written inline. Any other read that is genuinely not org-scoped (a public one, a preflight sharing a headers object,
   a provider's verification handshake) names an exemption with a `reads-only` gate,
   `{ kind: 'reads-only', names: ['corsHeaders'] }`: the read may then name, besides those inert values, only the
-  listed imports (by exported name) and declarations of its file, so the reason covers exactly what it reads. Such an
+  listed imports (by exported name) and `const`s or functions of its file, and what a listed declaration of the file
+  names must be listed too, so the reason covers exactly what it reads; every name listed must be in use. Such an
   entry applies to reads only (a mutation at its path keeps the gate it had), and it is the one kind that may sit
   outside `src/app/api`, under `outsideApi: { files, prefixes }` with keys relative to `src/app`, or name one file
-  under SSSB's `webhooks/` or `simulator/` prefix.
+  under SSSB's `webhooks/` prefix (a provider's verification handshake). A key names a dynamic segment literally
+  (`[locale]/feed.xml/route.ts`), and a route group's `(name)` is not part of it, as it is not part of the URL.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.

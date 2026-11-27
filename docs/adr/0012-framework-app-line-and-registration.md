@@ -1081,15 +1081,23 @@ gate it is applies to reads only: at its path, a mutation is judged by the exemp
 
 **Where it may sit, and nothing else may.** An app may put a `reads-only` entry (and only that kind) outside
 `src/app/api`, under a new key `outsideApi: { files, prefixes }` relative to `src/app`; and it may name ONE file
-(not a prefix) under one of the framework's exempt prefixes (`webhooks/`, `simulator/`), not under a framework exact
-entry or a required-alongside prefix (`service/`). Everything else an app's file could say before is unchanged, and
+(not a prefix) under the framework's `webhooks/` prefix, not under `simulator/` (whose guarantee, 404 in real mode, a
+reads-only read does not keep), a framework exact entry or a required-alongside prefix (`service/`). Everything else an app's file could say before is unchanged, and
 every other overlap with a framework entry still fails. A `reads-only` entry is stale unless its path has a read
 handler.
 
 **What it proves.** That the read touches nothing but its request, inert values and the listed names: the entry's
-reason has to answer for exactly those names. A listed import is not read (a helper in another module is out of the
-scan's sight, as always), so listing a function that reads org data is a claim the reason makes, which review judges,
-as it judges a `calls` gate's port call.
+reason has to answer for exactly those names. A declaration of the route's file counts by name only as a `const` or a
+function the file neither exports, declares ambiently (`declare`, `declare global`) nor reassigns, and the scan reads
+it: what it names counts too, so `const corsHeaders = db` or `function posts() { return db.all() }` also needs `db`
+listed. A listed import is not read (a helper in another module is out of the scan's sight, as always), so listing a
+function that reads org data is a claim the reason makes, which review judges, as it judges a `calls` gate's port
+call. A listed name no read handler at the path uses is a problem, so a list cannot pre-approve one. The handler
+naming itself (`GET.load`) is refused whatever is listed.
+
+**Route groups.** The scan matches a route by its URL: a `(name)` segment is dropped from a route's path, and from an
+app's exemption key, before either is matched. Before this addendum, `api/(internal)/service/x/route.ts` escaped the
+`service/` required gate, a hole older than reads being judged, which a reads-only entry would have widened.
 
 **Rejected:** treating `process.env` as inert (the app's lint, `sssb/no-process-env`, keeps it out of routes; a value
 from the environment arrives through `config/params.ts`, an import a `reads-only` gate can name); treating a frozen
