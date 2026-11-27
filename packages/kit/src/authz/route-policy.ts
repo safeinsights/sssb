@@ -96,7 +96,7 @@ export const EXEMPT_FILES: Readonly<Record<string, Exemption>> = {
     },
     'storage-upload/route.ts': {
         reason:
-            'simulated-mode-only (404 in real) multipart upload endpoint — the local twin of an S3 presigned POST (its PUT: of a presigned PUT), ' +
+            'simulated-mode-only (404 in real) upload endpoint — the local twin of an S3 presigned POST (multipart) and of a presigned PUT, ' +
             'authenticated by the server-signed HMAC upload-target fields (like the webhook secret), NOT a user ' +
             'session; the upload TARGET was already authorized by the app route that minted it',
         mustMatch: SIMULATED_404,

@@ -3,8 +3,8 @@ import { verifyUploadFields } from '@sssb/kit/adapters/fake/storage'
 import { ATTACHMENT_MAX_BYTES } from '@/domain/attachments'
 
 /**
- * The simulated-mode-only twin of an S3 presigned POST target. Real mode uploads go straight to
- * the S3 bucket URL that createRealStorage minted, so this endpoint 404s outside simulated mode first-line,
+ * The simulated-mode-only twin of an S3 presigned POST target (and, below, of a presigned PUT). Real mode
+ * uploads go straight to the store's URL that the real adapter minted, so this endpoint 404s outside simulated mode first-line,
  * exactly like /api/storage/[...key]. It accepts the SAME multipart shape S3 would — the signed policy
  * fields first, the file last — and enforces the SAME constraints AWS would, approximating the status
  * codes S3 returns:

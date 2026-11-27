@@ -7,7 +7,7 @@ import { resolveOrgContext } from '../../../org-context'
 import { requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
- * The CONFIRM step of a two-step upload. After the browser has POSTed the file to the mint
+ * The CONFIRM step of a two-step upload. After the browser has sent the file (a POST or a PUT) to the mint
  * step's upload target, it calls this to finalize the pending attachment row. We resolve the row
  * org-scoped (a foreign org's id is indistinguishable from a missing one — jobForOrg doctrine),
  * re-authorize the same create ability (finalizing one's own upload), then VERIFY the object actually
@@ -50,7 +50,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
 
         const updated = await confirmAttachment(db, tenantId, orgId, id, stored.size)
         if (updated === 0) {
-            // Already ready: a re-confirm (double-click, retried request) is idempotent — and the
+            // Became ready between the status read above and this write (two confirms at once): idempotent — and the
             // audit trail records only what actually happened, so NO second confirmed event.
             return Response.json({ attachmentId: id, idempotent: true }, { status: 200 })
         }

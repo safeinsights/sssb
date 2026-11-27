@@ -32,9 +32,10 @@ function copySourceFor(bucket: string, key: string): string {
 const UPLOAD_EXPIRES_SECONDS = 900
 
 /**
- * A presigned PUT. Its URL signs `Content-Type` and the exact `Content-Length` (the SDK's presigner signs neither
- * unless told to: `signableHeaders`), so the store refuses another type, and a body of another length if it honours a
- * signed length (AWS S3 does; Cloudflare R2 is to be measured by cutover row `storage-compatible-live`). The browser
+ * A presigned PUT. Its URL signs `Content-Type` and the exact `Content-Length`. Measured against the SDK's presigner
+ * (@aws-sdk/s3-request-presigner): by default it signs `content-length` and `host` but NOT `content-type`, and
+ * `signableHeaders` adds it; both are named so neither rests on that default. So the store refuses another type, and a body of another length if it honours a
+ * signed length (AWS S3 does; Cloudflare R2 is to be measured by cutover row `storage-compatible-store`). The browser
  * is sent only the headers it must set; it adds the length itself from the body.
  */
 async function createPutTarget(

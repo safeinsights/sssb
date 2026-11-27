@@ -7606,7 +7606,7 @@ takes a PUT end to end (mint, browser, the fake's endpoint, confirm). What was d
   the exact `Content-Length`, or staging under another key, `head` and `copy`. R2 could not be measured (no live store,
   and nothing in CI calls one), so the choice does not rest on R2 honouring a signed length. What was verified is the
   SDK's side, locally: the presigner signs `content-length;content-type;host` once told to (`signableHeaders`; by default
-  it signs neither), and it must not carry the checksum the SDK's default settings add (`x-amz-checksum-crc32=AAAAAA==`, the
+  it signs `content-length;host` and not the content type), and it must not carry the checksum the SDK's default settings add (`x-amz-checksum-crc32=AAAAAA==`, the
   checksum of an empty body, which no real upload matches). So `UploadConstraints.sizeBytes` is the client's exact size,
   the port says plainly that a PUT's ceiling is held by the store only where it honours a signed length, and the
   showcase's confirm route reads `head` and deletes an object over the ceiling (it read the whole object with `get`
