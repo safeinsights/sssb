@@ -35,9 +35,10 @@ const pgTypes: CustomTypesConfig = {
 
 /**
  * AUTHORED — CUTOVER (`cloud-accounts`, `db-tls`): typechecked, never run against Aurora. The migrator
- * Lambda and the app share this adapter; connection details come from DATABASE_URL (Secrets
- * Manager-injected in deployed environments). This is the default transport (`DATABASE_TRANSPORT=pg`),
- * for a Lambda inside the database's VPC; the RDS Data API one is ./db-data-api.ts.
+ * Lambda and the app share this adapter. The server's connection details come from DATABASE_URL (Secrets
+ * Manager-injected in deployed environments); the migrator builds its URL from the secret (./migrate-handler.ts).
+ * This is the default transport (`DATABASE_TRANSPORT=pg`), for a Lambda inside the database's VPC; the RDS Data API
+ * one is ./db-data-api.ts.
  *
  * `ssl` is the connection's TLS, always given, never left to the URL or to `pg`'s own defaults (which, with no
  * `sslmode` in the URL and no PGSSLMODE, are no TLS at all): the deployment's `databaseSsl()`

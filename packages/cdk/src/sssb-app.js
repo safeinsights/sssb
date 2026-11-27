@@ -53,7 +53,7 @@ const TRANSPORTS = /** @type {const} */ (['pg', 'data-api'])
 /**
  * The Amazon CA bundle in the Lambda Node.js runtime (AWS Lambda's guide, "Using AWS Lambda with Amazon RDS": from
  * Node.js 20 the runtime keeps the Amazon CA certificates, RDS's among them, in this file and no longer loads them).
- * Both Lambdas run on that runtime (NODEJS_22_X); a container image has no such file.
+ * Both Lambdas are zip functions on that runtime (NODEJS_22_X), not container images, which need not have the file.
  */
 const LAMBDA_CA_BUNDLE = '/var/runtime/ca-cert.pem'
 
