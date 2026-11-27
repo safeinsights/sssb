@@ -7589,3 +7589,47 @@ standing rule for these sessions: decide, and record the rejected alternative.
   every app follows. The cutover checklist's `auth-dev` row gains one sentence (a sibling change edits the same row).
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
+
+## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
+
+safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind
+address (`https://localhost:3000`), and the first `X-Forwarded-For` entry is whatever the visitor wrote. Both issues
+left a choice open; the maintainer's standing instruction is to decide and record.
+
+- **One module, in the adapters directory: `@sssb/kit/adapters/edge-headers`.** It reads two settings from the
+  server's environment, which only an adapters module may, and holds both helpers, since they rest on one promise:
+  that every request crossed `SssbApp`'s viewer-request function. Rejected: **a `server-lib` module** taking its
+  settings from the caller, which would hand every app the job of reading `PUBLIC_ORIGIN` and the trust switch right.
+- **Both sources for the origin (#131's open question), configuration first.** `PUBLIC_ORIGIN` when set, in a request or
+  outside one; behind `SssbApp`, `https://` and `x-forwarded-host`; anywhere else, `request.url`'s origin. Configuration
+  wins over the header because a deployment served on two origins (its custom domain and `*.cloudfront.net`, both in
+  `CLERK_AUTHORIZED_PARTIES`) should mail one. Outside a request with no `PUBLIC_ORIGIN`, and behind `SssbApp` on a
+  request that never crossed the distribution (the scheduled tick invokes the server directly), it throws, naming the
+  setting. Rejected: **the header alone**, which a job cannot read; **the setting alone**, which a first deploy on
+  `*.cloudfront.net` cannot set (the server's environment cannot name the distribution's host without a dependency
+  cycle, as the authorized-parties entry above found); and **`NEXT_PUBLIC_PUBLIC_ORIGIN`**: nothing on the client needs
+  it, and a client bundle's value is fixed at build, not per deployment.
+- **Forwarded headers are believed only when the deployment says so: `SSSB_EDGE=cloudfront`, set by `SssbApp`.**
+  Without it (`pnpm dev`, `dev:real`, a host of the adopter's own) neither helper reads a forwarded header at all, so a
+  client cannot choose the answer. Rejected: **believing them whenever `!isSimulated`**, which would trust headers any
+  client writes on a real-mode server that is not behind `SssbApp`; and **believing them always**, the dev-mode hole
+  #131's fallback would otherwise have. Any other value of `SSSB_EDGE` is refused, at boot by `assertRealEnv` (cutover
+  row `domains-and-certs`) and on first use, rather than read as on or off.
+- **The address comes from a header of SSSB's own, `x-sssb-viewer-address`, written by the CloudFront Function from
+  `event.viewer.ip` (#132's open question).** CloudFront's docs say neither whether a viewer's own
+  `CloudFront-Viewer-Address` is overwritten nor, by name, that `AllViewerExceptHostHeader` forwards it; and counting
+  `X-Forwarded-For` from the right depends on how many entries the Function URL appends, which only a live request would
+  show. The function already runs on every behavior that reaches the server (the synth test holds it) and already
+  overwrites `x-forwarded-host`; writing one more header there rests on nothing undocumented. Rejected:
+  **`CloudFront-Viewer-Address`**, and **the rightmost-minus-N `X-Forwarded-For` entry**, for those reasons. The
+  helper returns `undefined`, never a guess, when the header is missing or is not one IP address.
+- **A lint rule, `sssb/no-raw-request-origin`, not a conformance check.** It flags a visitor header named as a string
+  in `.get`/`.has`/`.getAll` or a computed key (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `Forwarded`,
+  `Host`, `CloudFront-Viewer-Address`, `x-sssb-viewer-address` and the other `X-Forwarded-*`, in any case), and the
+  `origin`, `host` or `hostname` of `new URL(<x>.url)` or `<x>.nextUrl`, in every module of an app's `src/` but its
+  tests, and in the framework but the module itself. A name held in a variable gets past, as any alias does. Path and
+  search parameters stay allowed. Rejected: **a conformance check**, which would re-implement the same syntax match at
+  test time; the lint preset is where the other syntax fences are, and `sssb check-fences` probes it.
+- **Live proof is a cutover row, not this change's.** Both issues ask for it; no SSSB session deploys. The
+  `domains-and-certs` row now names the proof: forged headers through the distribution's domain, and what the server
+  and the helpers see.

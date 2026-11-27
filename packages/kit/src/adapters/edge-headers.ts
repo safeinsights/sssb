@@ -90,6 +90,15 @@ export function publicOriginFrom(env: Env, request?: HasHeaders & { readonly url
     return `https://${host}`
 }
 
+/**
+ * Refuses a malformed `PUBLIC_ORIGIN` or `SSSB_EDGE`, as the helpers would when first called, so a real server's boot
+ * check (`assertRealEnv`, and with it `sssb check-real-env`) names it before a deploy. Both are optional.
+ */
+export function assertEdgeSettings(env: Env): void {
+    configuredOrigin(env)
+    behindSssbEdge(env)
+}
+
 /** `clientAddress` over a given environment. Exported for tests. */
 export function clientAddressFrom(env: Env, request: HasHeaders): string | undefined {
     if (!behindSssbEdge(env)) return undefined

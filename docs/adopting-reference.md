@@ -942,11 +942,27 @@ addendum of that date.
       stack of its own, `edge-<region>-…`, carrying your stack's tags, so bootstrap us-east-1 too.
     - Deploy by naming your stack, which deploys that one first, or with `--all`.
     - A request body is capped at 1 MB; a larger one answers 413.
-- **The visitor's host.** CloudFront sends the server the Function URL's own `Host`. A CloudFront Function therefore
-  sets `x-forwarded-host` (and `x-forwarded-port`) from the request the visitor made, overwriting anything the visitor
-  sent. Clerk, Next's server-action origin check and next-intl read it. Next's own `request.url` does not: it names the
-  server's own address (`localhost` and its port). So build an absolute URL for a visitor from the forwarded headers,
-  never from `request.url`.
+- **The visitor's host and address.** CloudFront sends the server the Function URL's own `Host`. A CloudFront Function
+  therefore sets `x-forwarded-host` (and `x-forwarded-port`) from the request the visitor made, and
+  `x-sssb-viewer-address` from the address CloudFront took from the connection, overwriting anything the visitor sent;
+  and `SssbApp` sets `SSSB_EDGE=cloudfront` on the server, which tells SSSB to believe them. Clerk, Next's server-action
+  origin check and next-intl read `x-forwarded-host`. Next's own `request.url` does not: it names the server's own
+  address (`localhost` and its port). And the first `X-Forwarded-For` entry is whatever the visitor wrote there. So read
+  both through `@sssb/kit/adapters/edge-headers` (`sssb/no-raw-request-origin` flags a direct read):
+    - **`publicOrigin(request)`**, for an absolute URL a visitor follows (a link in an email, a URL you store). It is
+      the server's `PUBLIC_ORIGIN` when you set it, then `https://` and `x-forwarded-host` behind `SssbApp`, then
+      `request.url`'s origin anywhere else (`pnpm dev`). Set `PUBLIC_ORIGIN` (`https://app.example.org`, a bare origin)
+      once the deployment has a custom domain, so links name it rather than whichever host the visitor came in on, and
+      wherever you build a link outside a request, in a job say: there it throws without one. A redirect needs neither:
+      Next's `redirect('/path')` and a relative URL are right as they are.
+    - **`clientAddress(request)`**, for what keys on the visitor's address: a rate limit, a lockout, an audit record's
+      "from". It is `undefined` off `SssbApp` (in `pnpm dev`, or on a host of your own) and on a request that did not
+      cross the distribution; treat that as unknown, never as a free pass. It never reads `X-Forwarded-For`,
+      `X-Real-IP`, `CF-Connecting-IP` or `Forwarded`.
+
+    `SSSB_EDGE` promises that every request crossed that function. On a host of your own, set it only behind a proxy
+    that overwrites `x-forwarded-host` and `x-sssb-viewer-address` on every request.
+
 - **HTTPS and security headers.** Every behavior redirects HTTP to HTTPS and carries AWS's managed
   SecurityHeadersPolicy:
     - HSTS for a year;
@@ -966,7 +982,8 @@ addendum of that date.
 - **A behavior you add.** A behavior you add to `sssbApp.distribution` gets none of this unless you give it all three:
     - `viewerProtocolPolicy: REDIRECT_TO_HTTPS`;
     - `responseHeadersPolicy: sssbApp.responseHeadersPolicy`;
-    - for one that reaches the server, `sssbApp.forwardedHost` on `viewer-request`.
+    - for one that reaches the server, `sssbApp.forwardedHost` on `viewer-request`: without it, a visitor writes the
+      host and address the server believes.
 
 ## Upgrading, step by step
 
