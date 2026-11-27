@@ -8378,6 +8378,33 @@ spec or helper that reads or writes its world on disk).
 - **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
   ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
   changes but a comment in `serve-standalone.js` (an empty changeset).
+## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
+
+safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "One wait for a paused cluster, and a typed
+error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
+
+- **#189: kept in the framework's own transactions, not in the dialect.** Kysely's `execute()` catches the work's error, awaits
+  `driver.rollbackTransaction`, and rethrows the work's error; if the rollback throws, that replaces it. A controlled
+  transaction's `rollback()` calls the same driver method with the same connection, and nothing tells the driver which
+  caller it has, so a rule in `rollbackTransaction` (swallow a failure) would also hide a deliberate rollback's: the
+  issue's open question. `transactionKeepingWorkError` (`packages/kit/src/db/with-tenant.ts`), which `runWithTenant`
+  (both transports) and the Data API transport's `migrateToLatest` run their transactions through, sees the work's
+  error, so it throws that when something else was thrown after it, and keeps the
+  rollback's failure as a warning and as a non-enumerable `rollbackError` on the work's error when that is an object that
+  takes one (a thrown string or a frozen error gets the warning alone). The rollback's error is never `cause`: the work's
+  error may carry its own. A transaction opened on the raw handle (`getDb()`: the contract suite's proofs, which never throttle) keeps Kysely's
+  behaviour, and a commit that fails is
+  thrown as it was: nothing the work threw is there to keep. Rejected: **a Kysely subclass or a proxy of
+  `TransactionBuilder`**, to catch the same on the raw handle: private fields, and the builder's methods each return
+  another builder. Rejected: **swallowing every failed rollback**, which hides a deliberate one.
+- **#190: a probe is aborted after three of its turns, and when the wait ends.** `RdsDataClientLike.send` takes the
+  SDK's `{ abortSignal }`, which `RDSDataClient.send` accepts (the SDK's own request option, which closes the socket).
+  A probe is sent every 3 s at the soonest (its 2 s turn plus the 1 s wait), so 6 s (`PROBE_ABORT_MS`) leaves at most
+  three out, and a probe that is slow but answers inside it still ends the wait, as before. The wait aborts every probe
+  still out when it ends, by an answer, or when its last caller gives up, at once. A rejection after an abort is ours and is read as nothing: it
+  neither ends the wait nor counts as the database's answer. Rejected: **keeping at most a few in flight by not sending**,
+  which would hold up a wait the probes in flight may never end. The SDK's pool size was not read; the bound does not
+  depend on it.
 
 ## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
 

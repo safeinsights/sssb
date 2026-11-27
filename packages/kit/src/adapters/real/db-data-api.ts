@@ -2,6 +2,7 @@ import { RDSDataClient } from '@aws-sdk/client-rds-data'
 import { Kysely } from 'kysely'
 import { migrateToLatest } from '../../db/migrate'
 import type { DB } from '../../db/schema'
+import { transactionKeepingWorkError } from '../../db/with-tenant'
 import type { DbPort } from '../../ports/db'
 import { dbPortFor } from './db-port'
 import { lockMigrations, RdsDataDialect, type RdsDataClientLike } from './rds-data-dialect'
@@ -55,7 +56,8 @@ export function createRealDataApiDb(config: DataApiDbConfig): DbPort {
         // locking at all (ADR-0002, addendum 2026-11-16). A second migrator waits on the lock, for at most
         // the Data API's 45-second call timeout, then fails loudly.
         async migrateToLatest() {
-            await db.transaction().execute(async (trx) => {
+            // A migration that fails is the error the deploy must show, whatever the rollback after it does.
+            await transactionKeepingWorkError(db, async (trx) => {
                 await lockMigrations(trx)
                 await migrateToLatest(trx)
             })
