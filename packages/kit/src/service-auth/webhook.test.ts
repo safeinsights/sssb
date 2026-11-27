@@ -158,3 +158,51 @@ describe('withWebhookSecret', () => {
         expect((await guarded(req(devWebhookSecret()))).status).toBe(401)
     })
 })
+
+describe('withWebhookSecret: the secret under a name of the app’s own', () => {
+    afterEach(() => {
+        delete process.env['PARTNER_HOOK_SECRET']
+    })
+
+    test('real mode reads the named variable, and WEBHOOK_SECRET no longer opens that route', async () => {
+        state.fake = false
+        process.env['WEBHOOK_SECRET'] = 'default-secret-value'
+        process.env['PARTNER_HOOK_SECRET'] = 'partner-secret-value'
+        const guarded = withWebhookSecret(async () => Response.json({ ok: true }), { secretEnv: 'PARTNER_HOOK_SECRET' })
+        expect((await guarded(req('partner-secret-value'))).status).toBe(200)
+        expect((await guarded(req('default-secret-value'))).status).toBe(401)
+    })
+
+    test('an unset or empty named variable never authorizes', async () => {
+        state.fake = false
+        process.env['WEBHOOK_SECRET'] = 'default-secret-value'
+        const guarded = withWebhookSecret(async () => Response.json({ ok: true }), { secretEnv: 'PARTNER_HOOK_SECRET' })
+        expect((await guarded(req('default-secret-value'))).status).toBe(401)
+        process.env['PARTNER_HOOK_SECRET'] = ''
+        expect((await guarded(req(''))).status).toBe(401)
+    })
+
+    test('no options, or an explicit default, is still WEBHOOK_SECRET', () => {
+        state.fake = false
+        process.env['WEBHOOK_SECRET'] = 'default-secret-value'
+        expect(() => verifyWebhookCaller(req('default-secret-value'))).not.toThrow()
+        expect(() => verifyWebhookCaller(req('default-secret-value'), {})).not.toThrow()
+        expect(() => verifyWebhookCaller(req('default-secret-value'), { secretEnv: 'WEBHOOK_SECRET' })).not.toThrow()
+    })
+
+    test('simulated mode keeps the dev secret whatever the name', async () => {
+        process.env['PARTNER_HOOK_SECRET'] = 'partner-secret-value'
+        const guarded = withWebhookSecret(async () => Response.json({ ok: true }), { secretEnv: 'PARTNER_HOOK_SECRET' })
+        expect((await guarded(req(devWebhookSecret()))).status).toBe(200)
+        expect((await guarded(req('partner-secret-value'))).status).toBe(401)
+    })
+
+    test.each(['', 'partner_secret', 'PARTNER-SECRET', '1SECRET', 'NEXT_PUBLIC_PARTNER_SECRET'])(
+        'a name that is not a server-only variable (%j) throws when the route is built, not per request',
+        (name) => {
+            const handler = async () => Response.json({ ok: true })
+            expect(() => withWebhookSecret(handler, { secretEnv: name })).toThrow(TypeError)
+            expect(() => verifyWebhookCaller(req(devWebhookSecret()), { secretEnv: name })).toThrow(TypeError)
+        },
+    )
+})

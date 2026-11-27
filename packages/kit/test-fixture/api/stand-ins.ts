@@ -46,6 +46,13 @@ export const withWebhookSecret =
     () =>
         handler()
 
+/** Verifies nothing; hands the handler an empty verified message, as the real wrapper hands it the one it verified. */
+export const withStandardWebhookSignature: (
+    handler: (ctx: { webhook: { id: string; timestamp: number; body: string } }) => Promise<Response>,
+    options: { secretEnv: string },
+) => (request: Request) => Promise<Response> = (handler) => () =>
+    handler({ webhook: { id: 'fixture-message', timestamp: 0, body: '' } })
+
 const IDENTITY: ServiceIdentity = {
     kind: 'org-service',
     keyId: 'wharf-key',
