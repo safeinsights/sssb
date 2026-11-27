@@ -7643,6 +7643,52 @@ a team failed with `permission denied`, and the coverage check could only hold a
 - **A `DELETE` succeeds only for a team nothing references**: every framework table that names an org holds a plain
   foreign key with no cascade, and the audit trail is append-only, so a request cannot delete a team with history.
   That is the intended posture, not a gap: an app that retires teams records that in a table of its own.
+## The upload target's PUT form (2026-11-27, `feat/storage-put-upload`, `safeinsights/sssb#134`)
+
+`UploadTarget` becomes `PostUploadTarget | PutUploadTarget`, `STORAGE_UPLOAD_TARGET` gains `put`, and the showcase
+takes a PUT end to end (mint, browser, the fake's endpoint, confirm). What was decided, and what was rejected:
+
+- **A union with `method` optional on the POST form.** A POST target keeps its shape exactly (`{ url, fields }`, and the
+  real adapter now also says `method: 'POST'`), so a browser written to it, an app's own storage adapter and a target
+  stored as JSON keep working; `method: 'PUT'` is the discriminant and a PUT has `headers`, not `fields`. The cost is
+  a compile break for server code that reads `.fields`: filed as Action `required` (a `minor`) in the changeset.
+  Rejected: **a second method** (`createPutTarget`), which makes the caller guess the store's form, when the
+  deployment's setting is what knows it; and **`fields` kept on the PUT form** (empty), which a browser that ignores
+  `method` would then POST without error.
+- **The size is signed into the URL, and the app's `head` check is the backstop.** The issue's two candidates: signing
+  the exact `Content-Length`, or staging under another key, `head` and `copy`. R2 could not be measured (no live store,
+  and nothing in CI calls one), so the choice does not rest on R2 honouring a signed length. What was verified is the
+  SDK's side, locally: the presigner signs `content-length;content-type;host` once told to (`signableHeaders`; by default
+  it signs `content-length;host` and not the content type), and it must not carry the checksum the SDK's default settings add (`x-amz-checksum-crc32=AAAAAA==`, the
+  checksum of an empty body, which no real upload matches). So `UploadConstraints.sizeBytes` is the client's exact size,
+  the port says plainly that a PUT's ceiling is held by the store only where it honours a signed length, and the
+  showcase's confirm route reads `head` and deletes an object over the ceiling (it read the whole object with `get`
+  before). Rejected: **staging plus `copy` as the port's mechanism**, which moves a two-step flow into every app whether
+  or not its store honours a signed length, and stores the bytes first; it remains the app's answer on a store that
+  ignores the length, and the cutover row asks which R2 is.
+- **`sizeBytes` is optional on the type, refused by a PUT mint when absent.** Optional so a POST store's callers and an
+  app's own adapter compile unchanged; an adapter that mints a PUT throws a plain `Error` naming it, never mints a URL
+  that signs no length. The showcase's mint route now requires `sizeBytes` (400 `invalid-size`), since its client
+  always sent it.
+- **The setting picks the form, and the default client changes for `put` only.** `createS3Storage({ uploadTarget: 'put' })`
+  defaults `requestChecksumCalculation` to `WHEN_REQUIRED` on a client it builds; a client the caller built is used as
+  it is, and a signed URL that carries a checksum makes `createUploadTarget` throw, naming the setting, instead of
+  minting a URL every upload would fail on. Rejected: **a presign-only client cloned from the given one's config**
+  (the SDK's resolved config does not survive being passed to a new client: it failed in a probe), and **stripping the
+  checksum with a middleware** (the presigner added it after, in a probe).
+- **The fake serves both forms, chosen by `createFakeStorage({ uploadTarget })`.** `fakeStorage` stays POST, so no app's
+  simulated mode changes; the PUT form is signed in the URL's query, with a `PUT` marker and the size in the signed
+  string so a POST signature never verifies as a PUT or back. The showcase's `/api/storage-upload` gained a `PUT` that
+  answers as S3 would, approximately: 403 for a changed key, size, type or signature, 411 with no length, 400 for a
+  body that is not as long as it declared. Not done: **a Simulator switch to run the showcase on the PUT form**; the
+  browser's PUT branch is unit-tested (`send-to-upload-target.test.ts`) but no e2e runs it.
+- **The `head` check is a moment, not a seal (round-1 review).** On a store that ignores a signed length, a second PUT to
+  the same URL inside its 15 minutes can replace the object after confirm. The showcase does not close that (it would
+  stage under another key and `copy` with `ifMatch` at confirm, so the URL never addresses the live object); the port's
+  comment says so and names the staging answer, and it is filed as an issue to do once R2's behaviour is measured.
+  Confirm of a row that is already `ready` now returns idempotently before reading storage, because it would otherwise
+  reach the delete and remove a good object (a later, lower ceiling does the same).
+
 ## The webhook secret's variable, and a Standard Webhooks verifier (2026-11-27, `feat/webhook-verifier`)
 
 Issues `safeinsights/sssb#121` and `safeinsights/sssb#122`, built as one change: both come from the same migrated
