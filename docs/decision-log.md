@@ -7795,6 +7795,6 @@ Decisions the issue left open:
 - **The Mail tab shows inbound mail only when the app registers an inbound handler.** An empty registration is the
   off switch for a capability; with no handler, nothing the form sends can reach the app. Rejected: **always showing
   the compose form**, whose every message a starter would file as `unmatched` under a handler name it never had (the
-  form's default, `note`, is the reference app's).
-- **A failed Errors scenario leaves the tab as it was**: `ErrorsApp` now catches the promise it is handed, which no
-  host before this one could reject.
+  form's default, `note`, is no app's: the reference app registers `support` and `feedback`).
+- **A failed Errors scenario leaves the tab as it was**: `ErrorsApp` now catches the promise it is handed. The
+  reference app's glue rejects it too when its server has stopped, and nothing caught that either.

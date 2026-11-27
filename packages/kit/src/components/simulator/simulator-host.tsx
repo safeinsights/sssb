@@ -633,8 +633,8 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
                     onClear: handleClearMail,
                     onCopyLink: handleCopyLink,
                 }}
-                // Inbound mail is an app that registers handlers (`@sssb/app-config/inbound-email`): with none, there is
-                // nothing for mail to reach, and the Mail tab shows no compose form.
+                // Inbound mail is for an app that registers a handler (`@sssb/app-config/inbound-email`): with none,
+                // nothing the form sends could reach the app, so the Mail tab shows no compose form.
                 inbound={
                     inboundData.handlers.length > 0
                         ? {

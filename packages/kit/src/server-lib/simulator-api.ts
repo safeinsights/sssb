@@ -544,7 +544,7 @@ function trimmed(body: Record<string, unknown> | null, key: string): string {
  * POST `inbound/compose` `{ from, orgSlug, handler, subject, body }`: the world emails the app. It is addressed to the
  * org's handler on the demo domain and taken in by `intakeInboundEmail`, the same intake the real inbound webhook calls,
  * so it reaches the app's registered handlers through their registry and no other way. The outcome says what intake did
- * with it (handled, unrouted, ...); a reply the handler sends lands in the Mail tab.
+ * with it (`handled`, `unmatched` or `failed`); a reply the handler sends lands in the Mail tab.
  */
 async function inboundCompose(request: Request): Promise<Response> {
     const body = await jsonObject(request)
