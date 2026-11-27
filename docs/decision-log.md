@@ -7876,6 +7876,7 @@ does not: one bit of existence, against the routes' own comments.
 - **No conformance check.** The authorization scan proves a handler may reach `authorize`, not the order of calls, and
   it cannot tell which call is the row lookup in an app's own code, so an order check would be a guess about names.
   The guide says to pin the rule with a route test, as the showcase's routes now do.
+
 ## The LLM adapter has a deadline, and the provider's limits are a port error (2026-11-27, `fix/llm-timeout`)
 
 `safeinsights/sssb#98`: `createRealLlm` built the SDK client with a key and nothing else. The SDK's timeout is ten minutes
