@@ -3,7 +3,7 @@ import type { DbPort } from '../ports/db'
 /**
  * DB access for inbound email: the row writes intake performs (insert 'received', update the
  * final status) all go through withTenant, and the global org resolution + the Simulator world list are
- * raw reads of the RLS-free infra tables (the org-lookup / listSchedulesForWorld precedents).
+ * raw reads of the infra tables, readable across tenants (the org-lookup / listSchedulesForWorld precedents).
  */
 
 /** timestamptz reads back a Date on real pg, a string on pglite — normalise (the webhooks.ts iso). */
@@ -20,12 +20,13 @@ export interface ResolvedInboundOrg {
 
 /**
  * Resolve an org slug to its (tenant, org) GLOBALLY — the recipient address (`<org-slug>+<handler>@…`)
- * names only the org, not the tenant. Org slugs are unique across the seed, so a single match yields the
- * tenant too. ZERO matches (unknown slug) OR more than one (the same slug reused in two tenants — the
+ * names only the org, not the tenant. Org slugs are unique across the seed, and a request cannot create one another
+ * tenant holds (0018_organizations_write), so a single match yields the tenant too; the gaps are
+ * safeinsights/sssb#211. ZERO matches (unknown slug) OR more than one (the same slug reused in two tenants — the
  * schema permits it, though the seed never does) both return null: an address alone can't disambiguate
  * a collision, so it's treated as unresolved rather than filed under an arbitrary tenant. A real
  * MULTI-domain instance resolves the tenant from the recipient DOMAIN first (see the decision log).
- * Reads the RLS-free `organizations`/`tenants` infra tables — the orgIdForSlug precedent.
+ * Reads the `organizations`/`tenants` infra tables, readable across tenants — the orgIdForSlug precedent.
  */
 export async function resolveOrgBySlugGlobally(db: DbPort, orgSlug: string): Promise<ResolvedInboundOrg | null> {
     await db.ready()
