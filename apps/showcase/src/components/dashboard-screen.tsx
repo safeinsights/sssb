@@ -43,6 +43,7 @@ export function DashboardScreen({
     const [answer, setAnswer] = useState('')
     const [sources, setSources] = useState<string[]>([])
     const [busy, setBusy] = useState(false)
+    const [failed, setFailed] = useState(false)
 
     return (
         <Container component="main" size="sm" py="xl">
@@ -77,11 +78,17 @@ export function DashboardScreen({
                                     // append to the previous one reads as a single confused reply.
                                     setAnswer('')
                                     setSources([])
+                                    setFailed(false)
                                     onAsk(question, (chunk) => setAnswer((prev) => prev + chunk))
                                         .then((result) => setSources(result.sources))
                                         // A failed ask (network drop, mid-stream abort) must surface,
                                         // not sit as an unhandled rejection behind a blank card.
-                                        .catch(() => setAnswer((prev) => prev || t('assistantError')))
+                                        // Text that had already streamed stays, and the failure is said under it: an
+                                        // answer that stops short must not read as a complete one.
+                                        .catch(() => {
+                                            setFailed(true)
+                                            setAnswer((prev) => prev || t('assistantError'))
+                                        })
                                         .finally(() => setBusy(false))
                                 }}
                             >
@@ -90,6 +97,11 @@ export function DashboardScreen({
                             {answer ? (
                                 <Text data-testid="assistant-answer" style={{ whiteSpace: 'pre-wrap' }}>
                                     {answer}
+                                </Text>
+                            ) : null}
+                            {failed && answer !== t('assistantError') ? (
+                                <Text c="red" size="sm" role="alert" data-testid="assistant-failed">
+                                    {t('assistantError')}
                                 </Text>
                             ) : null}
                             {sources.length > 0 ? (

@@ -8113,3 +8113,44 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
   scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
+
+## A stream's failure after text is visible, and the replays can fail the same way (2026-11-27, `fix/stream-failure-visible`)
+
+`safeinsights/sssb#145`: when a stream fails after some of its text was delivered, the consumer must be able to tell.
+`safeinsights/sssb#98` (`fix/llm-timeout`) made the real adapter throw it (`await stream.done()` after the loop: the SDK's
+iterator drops a failure that arrives while the consumer is busy between chunks); what was left is that nothing else could
+fail, and nothing held the three to one behaviour.
+
+- **The port already carries the marker: a thrown error, not an event.** The question was whether the stream type needs an
+  end-of-stream marker; it does not. An `AsyncIterable<string>` that throws from `next()` is the marker, and the text
+  already yielded stays yielded. Rejected: a terminal event in the chunk type, which would change `stream`'s type for every
+  consumer to say what a `throw` says.
+- **A fixture entry may `failure`: `{ reason }`** (`LlmFixtureEntry`, `packages/kit/src/adapters/fake/llm.ts`), with the
+  reasons of `LlmUnavailableError`. `complete` throws before returning text; `stream` yields the entry's `response`, the
+  partial answer, then throws; `runToolLoop` runs every recorded tool call live, then throws in place of the final answer.
+  An entry matches as any other does, the default entry included. The static demo's `replayAssistant` throws the same error
+  after the same tool calls. The fake can now also be built with its own fixtures directory (`createFakeLlm({ fixturesDir,
+catchRequests })`), which the conformance check uses so it never touches an app's fixtures or `.data`; `fakeLlm` is
+  `createFakeLlm()`. Rejected: a thrown error whatever the vendor, which would put a real adapter's error class in a fixture.
+- **One conformance check, `llm-stream-failure`** (`checks.json`, unit runner, so it runs in both apps and the kit's fixture), three
+  tests of one scenario (an answer that starts, then an overload): the fake's stream gives the partial text and throws, the
+  demo's replay throws after its tools, and the real adapter, against a stubbed `fetch` and with its consumer busy between
+  chunks, throws the same reason after delivering the same text and does not start the answer again. It holds the
+  framework's adapters, so it passes in every app unless the kit regressed; it fails when `await stream.done()` is taken
+  out of the real adapter (checked), which is what an adopter's own copy of the adapter would need to keep. The SDK refuses
+  to build a client in a browser-like environment, which an app's Vitest environment may be, so the check takes `window`
+  away for its one test and undoes it.
+- **A failing entry that fails before any text sets `response` to `""`** (an empty answer is an answer here; `null` still
+  means "to record", and `llm:record` now skips every entry with a `failure`, which is hand-authored: recording would
+  replace its partial answer with a whole one and leave the failure on it). The tool loop's default entry accepts the
+  same empty answer, found in review.
+- **The showcase's own consumers say it too.** The static demo's pass 2 (the compose fixture's default entry, streamed in
+  chunks) throws `LlmUnavailableError` after the same text when the entry has a `failure`, as the server's stream does;
+  the demo replay finds a matched entry only when its `conversation` is not empty, as the fake does. The dashboard hid the
+  failure once any text had arrived (`prev || assistantError`): it now keeps the streamed text and says the failure under
+  it (`assistant-failed`, `role="alert"`), and still shows the failure as the answer when nothing arrived. Known and left (`safeinsights/sssb#241`):
+  a default entry with a `conversation` is replayed by the fake with its tool calls but by the demo as its `response`
+  alone, as before this change.
+- **Not done.** The check proves the adapters, not an app's own consumer: whether a route or a screen shows the failure is
+  its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
+  can throw and how to test the path.

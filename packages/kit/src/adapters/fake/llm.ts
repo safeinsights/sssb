@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { llmTimeoutMs } from '../../core/llm-timeout'
+import { LlmUnavailableError, type LlmUnavailableReason } from '../../ports/errors'
 import type { LlmMessage, LlmPort, LlmRequest, LlmToolDef, LlmToolLoopRequest, LlmTurn } from '../../ports/llm'
 import { writeJsonAtomic } from './atomic-write'
 import { dataDir } from './data-dir'
@@ -37,6 +38,14 @@ interface LlmFixtureEntry {
     response: string | null
     /** Recorded model outputs for a tool loop (assistant turns incl. tool_use), turn by turn. */
     conversation?: LlmTurn[] | null
+    /**
+     * Replay a call that FAILS: the entry's answer is delivered as far as a real failure would have delivered it, then
+     * the call throws `LlmUnavailableError(reason)`, as the real adapter does when the provider fails mid-answer
+     * (`safeinsights/sssb#145`). `complete` throws before returning any text; `stream` yields `response` (the partial
+     * answer), then throws; `runToolLoop` runs every recorded tool call, live, then throws in place of the final
+     * answer. A fixture for the failure path of a screen or a route: its `request` is matched like any other entry's.
+     */
+    failure?: { reason: LlmUnavailableReason } | null
 }
 
 export interface LlmFixtureFile {
@@ -106,56 +115,75 @@ function hashToolLoop(request: {
     return createHash('sha256').update(canonical).digest('hex')
 }
 
-function fixturePath(purpose: string): string {
+function fixturePath(purpose: string, fixturesDir?: string): string {
     if (!/^[a-z0-9-]+$/.test(purpose)) throw new Error(`invalid llm purpose: ${purpose}`)
     // Fixtures are app-scoped (apps/<app>/fixtures), and the working directory IS the app for every
     // command that runs the app (next dev/build, pnpm llm:record). APP_FIXTURES_DIR overrides that for
     // runners whose cwd is the repo root — the unit suite runs every app's tests in one pass from
     // there. Same override shape as APP_DATA_DIR.
-    const root = process.env['APP_FIXTURES_DIR'] ?? path.join(process.cwd(), 'fixtures')
+    const root = fixturesDir ?? process.env['APP_FIXTURES_DIR'] ?? path.join(process.cwd(), 'fixtures')
     return path.join(root, 'llm', `${purpose}.json`)
 }
 
-function readFixture(purpose: string): LlmFixtureFile {
-    const file = fixturePath(purpose)
+function readFixture(purpose: string, fixturesDir?: string): LlmFixtureFile {
+    const file = fixturePath(purpose, fixturesDir)
     if (!existsSync(file)) {
         throw new Error(`no llm fixtures for purpose "${purpose}" — create ${file} and run pnpm llm:record`)
     }
     return JSON.parse(readFileSync(file, 'utf8')) as LlmFixtureFile
 }
 
-function lookup(request: LlmRequest): string {
-    const fixture = readFixture(request.purpose)
+/** What a single-turn replay answers: the text, and the failure the entry says ends it, if any. */
+interface Answer {
+    text: string
+    failure: LlmUnavailableReason | undefined
+}
+
+function lookup(request: LlmRequest, fixturesDir?: string): Answer {
+    const fixture = readFixture(request.purpose, fixturesDir)
     const hash = hashLlmRequest(request)
     for (const entry of fixture.entries) {
         if (entry.request && entry.response !== null) {
             const entryHash = hashLlmRequest({ ...entry.request, purpose: request.purpose } as LlmRequest)
-            if (entryHash === hash) return entry.response
+            if (entryHash === hash) return { text: entry.response, failure: entry.failure?.reason }
         }
     }
     const fallback = fixture.entries.find((e) => e.request === null && e.response !== null)
-    if (fallback?.response) return fallback.response
+    // An empty answer is a real one for a failing entry: a call that fails before its first word.
+    if (fallback && typeof fallback.response === 'string') {
+        return { text: fallback.response, failure: fallback.failure?.reason }
+    }
     throw new Error(
-        `no matching llm fixture in ${fixturePath(request.purpose)} (hash ${hash.slice(0, 12)}…) and no default entry`,
+        `no matching llm fixture in ${fixturePath(request.purpose, fixturesDir)} (hash ${hash.slice(0, 12)}…) and no default entry`,
     )
 }
 
 /** Resolve the recorded conversation (assistant model-outputs) for a tool-loop request. A default
  *  entry may carry a full `conversation` OR a single `response`, which becomes a one-turn text
  *  conversation — so a general question (no matching entry) still replays the deterministic answer. */
-function lookupToolLoop(request: LlmToolLoopRequest): LlmTurn[] {
-    const fixture = readFixture(request.purpose)
+function lookupToolLoop(
+    request: LlmToolLoopRequest,
+    fixturesDir?: string,
+): { conversation: LlmTurn[]; failure: LlmUnavailableReason | undefined } {
+    const fixture = readFixture(request.purpose, fixturesDir)
     const hash = hashToolLoop(request)
     for (const entry of fixture.entries) {
         if (entry.request && entry.conversation && entry.conversation.length > 0) {
-            if (hashToolLoop(entry.request) === hash) return entry.conversation
+            if (hashToolLoop(entry.request) === hash) {
+                return { conversation: entry.conversation, failure: entry.failure?.reason }
+            }
         }
     }
     const fallback = fixture.entries.find((e) => e.request === null)
-    if (fallback?.conversation && fallback.conversation.length > 0) return fallback.conversation
-    if (fallback?.response) return [{ role: 'assistant', content: [{ type: 'text', text: fallback.response }] }]
+    const failure = fallback?.failure?.reason
+    if (fallback?.conversation && fallback.conversation.length > 0) {
+        return { conversation: fallback.conversation, failure }
+    }
+    if (fallback && typeof fallback.response === 'string') {
+        return { conversation: [{ role: 'assistant', content: [{ type: 'text', text: fallback.response }] }], failure }
+    }
     throw new Error(
-        `no matching llm tool-loop fixture in ${fixturePath(request.purpose)} (hash ${hash.slice(0, 12)}…) and no default entry`,
+        `no matching llm tool-loop fixture in ${fixturePath(request.purpose, fixturesDir)} (hash ${hash.slice(0, 12)}…) and no default entry`,
     )
 }
 
@@ -166,60 +194,90 @@ function textOf(turn: LlmTurn): string {
         .join('')
 }
 
+/** The error a failing fixture entry replays as: the one the real adapter throws for the same provider failure. */
+const fixtureFailure = (reason: LlmUnavailableReason) =>
+    new LlmUnavailableError(reason, `llm ${reason} (the fixture entry says the call fails)`)
+
+export interface FakeLlmOptions {
+    /** Where `llm/<purpose>.json` is read from. Default `APP_FIXTURES_DIR`, else `fixtures/` under the working directory. */
+    fixturesDir?: string
+    /** Write each request to the catch store (`.data/llm-requests/`) as the app's own adapter does. Default true. */
+    catchRequests?: boolean
+}
+
 /**
  * Replay is instant, so it never times out and never rate-limits; what it keeps from the real adapter is the check
  * of `timeoutMs`, so a caller's bad value (`0`, `NaN`, a string) fails under `pnpm dev` and its tests, not first in
- * production. A route's 503 for `LlmUnavailableError` is proved with the error thrown by hand, as the app's
- * `respond.test.ts` does.
+ * production, and a fixture entry's `failure`, which makes a call fail the way the real adapter's does after the same
+ * text (`LlmFixtureEntry.failure`). A route's 503 for `LlmUnavailableError` is proved with the error thrown by hand, as
+ * the app's `respond.test.ts` does.
  */
-export const fakeLlm: LlmPort = {
-    async complete(request) {
-        llmTimeoutMs(request.timeoutMs)
-        await catchRequest(request, null)
-        return { text: lookup(request) }
-    },
+export function createFakeLlm(options: FakeLlmOptions = {}): LlmPort {
+    const { fixturesDir, catchRequests = true } = options
+    const caught = async (request: Parameters<typeof catchRequest>[0], tools: LlmToolDef[] | null) => {
+        if (catchRequests) await catchRequest(request, tools)
+    }
+    return {
+        async complete(request) {
+            llmTimeoutMs(request.timeoutMs)
+            await caught(request, null)
+            const { text, failure } = lookup(request, fixturesDir)
+            if (failure) throw fixtureFailure(failure)
+            return { text }
+        },
 
-    async *stream(request) {
-        // A generator body runs on first iteration, so the catch lands when the stream is consumed —
-        // the point a real adapter would open its connection too.
-        llmTimeoutMs(request.timeoutMs)
-        await catchRequest(request, null)
-        // Word-chunked so streaming UIs exercise their incremental path deterministically.
-        for (const chunk of lookup(request).split(/(?<= )/)) yield chunk
-    },
+        async *stream(request) {
+            // A generator body runs on first iteration, so the catch lands when the stream is consumed —
+            // the point a real adapter would open its connection too.
+            llmTimeoutMs(request.timeoutMs)
+            await caught(request, null)
+            const { text, failure } = lookup(request, fixturesDir)
+            // Word-chunked so streaming UIs exercise their incremental path deterministically.
+            for (const chunk of text.split(/(?<= )/)) yield chunk
+            // The text is what the stream delivered before it failed: it ends in an error, never quietly.
+            if (failure) throw fixtureFailure(failure)
+        },
 
-    async runToolLoop(request) {
-        llmTimeoutMs(request.timeoutMs)
-        await catchRequest(request, request.tools)
-        const conversation = lookupToolLoop(request)
-        const turns: LlmTurn[] = []
-        const maxTurns = request.maxTurns ?? 6
-        for (let i = 0; i < conversation.length && i < maxTurns; i++) {
-            const assistantTurn = conversation[i]!
-            turns.push(assistantTurn)
-            const toolUses = assistantTurn.content.filter(
-                (b): b is Extract<typeof b, { type: 'tool_use' }> => b.type === 'tool_use',
-            )
-            if (toolUses.length === 0) return { text: textOf(assistantTurn), turns }
-            // Relay each tool_use to the app's executor LIVE — the result is real, not canned.
-            const resultBlocks: LlmTurn['content'] = []
-            for (const call of toolUses) {
-                // Defense-in-depth: a tool_use naming a tool the app never supplied (a hand-edited
-                // fixture, say) is refused here, before any execute dispatch could mis-route it.
-                const known = request.tools.some((t) => t.name === call.name)
-                const result = known
-                    ? await request.execute({ name: call.name, input: call.input })
-                    : `unknown tool: ${call.name}`
-                resultBlocks.push({ type: 'tool_result', toolUseId: call.id, content: result })
+        async runToolLoop(request) {
+            llmTimeoutMs(request.timeoutMs)
+            await caught(request, request.tools)
+            const { conversation, failure } = lookupToolLoop(request, fixturesDir)
+            const turns: LlmTurn[] = []
+            const maxTurns = request.maxTurns ?? 6
+            for (let i = 0; i < conversation.length && i < maxTurns; i++) {
+                const assistantTurn = conversation[i]!
+                turns.push(assistantTurn)
+                const toolUses = assistantTurn.content.filter(
+                    (b): b is Extract<typeof b, { type: 'tool_use' }> => b.type === 'tool_use',
+                )
+                if (toolUses.length === 0) {
+                    if (failure) throw fixtureFailure(failure)
+                    return { text: textOf(assistantTurn), turns }
+                }
+                // Relay each tool_use to the app's executor LIVE — the result is real, not canned.
+                const resultBlocks: LlmTurn['content'] = []
+                for (const call of toolUses) {
+                    // Defense-in-depth: a tool_use naming a tool the app never supplied (a hand-edited
+                    // fixture, say) is refused here, before any execute dispatch could mis-route it.
+                    const known = request.tools.some((t) => t.name === call.name)
+                    const result = known
+                        ? await request.execute({ name: call.name, input: call.input })
+                        : `unknown tool: ${call.name}`
+                    resultBlocks.push({ type: 'tool_result', toolUseId: call.id, content: result })
+                }
+                turns.push({ role: 'user', content: resultBlocks })
             }
-            turns.push({ role: 'user', content: resultBlocks })
-        }
-        // Ran out of recorded turns (or hit maxTurns) with no terminal text-only turn: return the
-        // last assistant text we have rather than throwing — a truncated replay is still honest.
-        const lastAssistant = [...turns].reverse().find((t) => t.role === 'assistant')
-        return { text: lastAssistant ? textOf(lastAssistant) : '', turns }
-    },
+            // The failure replaces the final answer, wherever the recorded turns ran out.
+            if (failure) throw fixtureFailure(failure)
+            // Ran out of recorded turns (or hit maxTurns) with no terminal text-only turn: return the
+            // last assistant text we have rather than throwing — a truncated replay is still honest.
+            const lastAssistant = [...turns].reverse().find((t) => t.role === 'assistant')
+            return { text: lastAssistant ? textOf(lastAssistant) : '', turns }
+        },
+    }
 }
+
+export const fakeLlm: LlmPort = createFakeLlm()
 
 /** Simulated-mode-only: every caught request, oldest first, optionally narrowed to one purpose (NOT part of LlmPort). */
 export function listCaughtLlmRequests(purpose?: string): CaughtLlmRequest[] {

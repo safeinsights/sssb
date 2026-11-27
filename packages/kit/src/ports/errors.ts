@@ -78,8 +78,9 @@ export type LlmUnavailableReason = 'rate-limited' | 'overloaded' | 'timed-out'
  * message).
  *
  * It does not say the call did nothing: a `timed-out` call may have been billed, and a tool loop may already have run
- * the app's `execute` for some turns, so treat a repeat as running those again. `stream` throws it from the iteration,
- * so a route that has started its response cannot change the status. `cause` is the vendor SDK's error (for `timed-out`, its
+ * the app's `execute` for some turns, so treat a repeat as running those again. `stream` throws it from the iteration, after
+ * the text it had already delivered, so a route that has started its response cannot change the status (see
+ * `LlmPort.stream`). `cause` is the vendor SDK's error (for `timed-out`, its
  * abort or timeout error).
  */
 export class LlmUnavailableError extends Error {

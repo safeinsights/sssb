@@ -22,6 +22,7 @@ import {
 import { ActorShell } from '@sssb/kit/components/simulator/actor-shell'
 import type { SimulatorExtraTab } from '@sssb/kit/components/simulator/simulator-panel'
 import { type AssistantFixture, replayAssistant } from '@sssb/kit/demo-static/assistant-replay'
+import { LlmUnavailableError } from '@sssb/kit/ports/errors'
 import type { DemoInboundHandler } from '@sssb/kit/demo-static/contracts'
 import { go } from '@sssb/kit/demo-static/hash-route'
 import { DemoShell } from '@sssb/kit/demo-static/shell'
@@ -461,12 +462,16 @@ export function StaticDemoApp({ locale, onLocaleChange }: { locale: Locale; onLo
                     // the SAME text the server's own stream resolves to, since that request always
                     // carries live data and therefore always falls through to this entry — and emits it
                     // in chunks so the card's incremental path runs identically.
-                    const answer = composeFixture.entries.find((e) => e.request === null)?.response ?? ''
+                    // An entry with a `failure` ends the way the server's does: the text it has, then an error.
+                    const composeEntry = composeFixture.entries.find((e) => e.request === null) as
+                        AssistantFixture['entries'][number] | undefined
+                    const answer = composeEntry?.response ?? ''
                     const words = answer.split(/(?<= )/)
                     for (let i = 0; i < words.length; i += STREAM_WORDS_PER_CHUNK) {
                         onDelta(words.slice(i, i + STREAM_WORDS_PER_CHUNK).join(''))
                         await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_MS))
                     }
+                    if (composeEntry?.failure) throw new LlmUnavailableError(composeEntry.failure.reason)
                     return { sources }
                 }}
             >
