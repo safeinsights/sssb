@@ -27,8 +27,8 @@ const CALLER: AuthUser = {
 
 /**
  * The scan's READ anchor: a read of org-scoped rows that is not exempt, so it has to authorize the read for real. It
- * calls a stand-in read, so without its `authorize(...)` it would fail: a read handler that called nothing but
- * globals would pass without one.
+ * calls a stand-in read, so without its `authorize(...)` it would fail: a read handler that named only inert globals
+ * would read nothing and pass without one.
  */
 export async function GET(): Promise<Response> {
     authorize(CALLER, 'depot', 'read', { type: 'Docket', orgId: 'depot' })

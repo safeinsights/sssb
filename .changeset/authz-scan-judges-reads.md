@@ -11,8 +11,10 @@
 
 **What changed.** The conformance suite's `authz-mutations` check now judges every exported route handler, GET, HEAD
 and OPTIONS as well as POST, PUT, PATCH and DELETE, by the same rules: it reaches `authorize(...)` on its own path, or
-its route has an exemption whose gate it passes. A read handler may also pass by reading nothing: every call in it is
-to a global (`Response.json`, `new Date`, `fetch`), as a liveness probe's or a CORS preflight's are. Before, a GET that
+its route has an exemption whose gate it passes. A read handler may also pass by reading nothing: it names nothing from
+outside itself but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` holding a string or number,
+`NextResponse`, `redirect` and `notFound`, and `appMode` and `isSimulated`, as a liveness probe or a CORS preflight
+does; one that names `fetch`, `process.env` or any import authorizes or names an exemption. Before, a GET that
 read org-scoped data without `authorize` passed, and showed a signed-in person with no standing (the role `none`) their
 org's rows. The check keeps its id, so an `optOut` naming it still applies; its title and its test's name changed. The
 framework exempts one more route, `storage/[...key]/route.ts`, the simulated-mode download twin of

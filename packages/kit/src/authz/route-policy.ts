@@ -5,7 +5,7 @@ import type { Exemption, Gate, ScanPolicy } from './route-scan'
  * tree it walks. Every exported route handler, a read (GET/HEAD/OPTIONS) as well as a mutation
  * (POST/PUT/PATCH/DELETE), must reach `authorize(...)` on its own path (./route-scan.ts judges that), or its route must
  * sit in the justified exemption map below AND the handler must pass that exemption's gate. A read handler may also
- * pass by reading nothing (every call in it a global's, ./route-scan.ts `readsNothing`), which needs no entry
+ * pass by reading nothing (naming only inert globals and its request, ./route-scan.ts `readsNothing`), which needs no entry
  * here. An entry applies to every verb of the routes it names, each judged against its gate on its own.
  *
  * It lives in source, not in a test, because two scans apply it: the kit's own (`authorized-mutations.test.ts`, over

@@ -12,8 +12,8 @@ import { type ScanRoot, exemptionFor, isReadVerb, judge, scanRoutes } from './ro
  * build-time scan makes "every product route is authorized" a checked invariant rather than a discipline: it
  * judges EACH exported handler on its own, a read (GET/HEAD/OPTIONS) as well as a mutation (POST/PUT/PATCH/DELETE):
  * the handler must reach authorize(...) on its own path, or its route must sit in the justified exemption map AND
- * the handler must pass that exemption's gate. A read handler may instead read nothing, every call in it a global's
- * (safeinsights/sssb#103). "Reach" is may-reach: the scan
+ * the handler must pass that exemption's gate. A read handler may instead read nothing, naming only inert globals and
+ * its request (./route-scan.ts `readsNothing`, safeinsights/sssb#103). "Reach" is may-reach: the scan
  * does not prove that every path authorizes, or that it does so before mutating (./route-scan.ts, "What it does
  * not prove").
  *
@@ -111,7 +111,7 @@ describe('every API route handler is authorized', () => {
     })
 
     it('each fixture read passes for the reason it stands for, not by reading nothing', () => {
-        // A read that calls only globals passes without authorize(...), so a fixture read that did would prove nothing
+        // A read that reads nothing passes without authorize(...), so a fixture read that did would prove nothing
         // about the rule or exemption it is there for. The one that DOES read nothing is the liveness probe.
         const readOf = (rel: string) =>
             fixture.find((route) => route.rel === rel)?.handlers.find((handler) => handler.verb === 'GET')?.facts

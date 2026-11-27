@@ -1040,12 +1040,14 @@ covers every verb of the routes it names, each judged on its own), and the `serv
 own resolver, or a tenant-scoped db call with an org id). Rejected: a helper in another module that resolves the org
 hides it, so the trigger fails open, and the showcase's service job poll, an org's jobs read through a domain helper,
 was exactly that case. Every read handler is judged instead, deny by default as a mutation is, with one more way to
-pass: a read that reads nothing. Its whole text, read lexically, calls nothing but globals declared nowhere in the file
-(`Response.json`, `new Date`, `fetch`), never an import, a helper, or a method on a parameter or a local; hands no name
-from outside the handler to a call; and calls none of the globals that reach a module, a string's code or reflection
-(`require`, `eval`, `Function`, `process`, `globalThis`, `Reflect`). It is a fact the analyser computes
-(`readsNothing`), not a gate an entry names, so a liveness probe or a CORS preflight needs no exemption. Like a
-gate, it proves the KIND of handler: a getter, an iterator or a conversion an imported value carries is not seen.
+pass: a read that reads nothing. Its whole text, read lexically, names nothing declared outside it but an allow-list
+of inert globals (`Response`, `Date`, `URL`, `JSON`, …: no `fetch`, `process`, `require`, `eval`, `Function`,
+`Reflect` or `globalThis`), a `const` of the file bound to a primitive literal, and a few named imports (`NextResponse`;
+`redirect`, `permanentRedirect` and `notFound` from `next/navigation`; SSSB's `appMode` and `isSimulated`). So only
+inert values and the handler's own request are in reach, and any method may be called on them. A class, `import()`,
+`import.meta`, `using` and a `constructor` or `__proto__` member fail it. It is a fact the analyser computes
+(`readsNothing`), not a gate an entry names, so a liveness probe or a CORS preflight needs no exemption. Like a gate,
+it proves the KIND of handler: a member read through a computed key the scan cannot evaluate is not seen.
 
 **Which action.** Any `authorize` call counts on a read, as on a mutation; the scan does not require the action to be
 `'read'`. A read that checks a stronger action (`manage`) is correct, and reading the action argument means evaluating

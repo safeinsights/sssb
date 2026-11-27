@@ -39,7 +39,7 @@ export const storage: Pick<StoragePort, 'get'> = { get: async () => null }
 
 /**
  * A read of org-scoped rows, as an app's domain module offers one (the fixture's dockets, by org). The read routes
- * call it so that each one READS something: a read handler that calls nothing but globals passes the scan without
+ * call it so that each one READS something: a read handler that names only inert globals passes the scan without
  * `authorize(...)`, which would make a fixture read prove nothing.
  */
 export const listDockets = async (orgId: string): Promise<Array<{ id: string; orgId: string }>> => [

@@ -7600,12 +7600,15 @@ safeinsights/sssb#103. The design is ADR-0012's 2026-11-27 addendum; the calls i
   jobs through such a helper and would have stayed unjudged.
 - **"Reads nothing" is an analyser fact, not a gate kind.** A gate has to be named in an entry, so every adopter's
   health route would need an exemption for a property the scan can check by itself. Its test is lexical over the whole
-  handler (nested functions, defaults and dead branches count) and allows only calls whose head is a global the file
-  neither declares nor assigns, outside a deny list (`require`, `eval`, `Function`, `process`, `globalThis`, `global`,
-  `self`, `window`, `module`, `exports`, `Reflect`, `Bun`, `Deno`). Rejected: **allowing a method on a local**
-  (`new URL(…).searchParams.get`): telling a local that holds a global's result from one that holds an import is
-  dataflow the scan does not do. Such a probe authorizes or names an exemption. It excuses reads only; a mutation that
-  calls only globals still authorizes, as before.
+  handler (nested functions, defaults and dead branches count): every name declared outside the handler must be on an
+  allow-list (inert globals, a primitive `const` of the file, `NextResponse`, `next/navigation`'s `redirect`,
+  `permanentRedirect` and `notFound`, SSSB's `appMode` and `isSimulated`). Then only inert values and the request are in
+  reach, so calls on locals and parameters are allowed (`new URL(request.url).searchParams.get`). Rejected: **a check on
+  call heads** (any call whose head is a global the file does not declare), the first version: review found it passed
+  `fetch` to an upstream service, a `declare global` client, and an import in any argument but a bare one
+  (`{ dockets: store }`). Rejected: **an object or array `const`** as inert: `const` fixes the binding, and the file
+  can fill it (`cache[org] = await load(org)`). `fetch` is out: a probe of an upstream service authorizes or names an
+  exemption. It excuses reads only; a mutation that reads nothing still authorizes, as before.
 - **Any `authorize` call counts on a read**, not only `'read'`: the scan does not evaluate the action argument, and a
   read that checks a stronger action is correct.
 - **OPTIONS is judged** with GET and HEAD: a preflight calls only globals and passes, so judging it costs an adopter
