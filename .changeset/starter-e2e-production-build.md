@@ -29,5 +29,5 @@ and in `apps/<app>/playwright.config.ts`, branch the web server on the flag:
 const E2E_BUILD = process.env['E2E_BUILD'] === '1'
 // in webServer:
 command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
-timeout: E2E_BUILD ? 420_000 : 120_000,
+timeout: E2E_BUILD ? 180_000 : 120_000,
 ```

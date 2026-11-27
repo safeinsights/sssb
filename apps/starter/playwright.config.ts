@@ -55,6 +55,7 @@ export default defineConfig({
         env: { DEV_TICK_SECONDS: '' },
         reuseExistingServer: !process.env['CI'],
         // A production build compiles the whole app before it serves; `next dev` serves at once and compiles per route.
-        timeout: E2E_BUILD ? 420_000 : 120_000,
+        // Build and start took 28 s on CI (2026-11-27): 180 s is over 6x that.
+        timeout: E2E_BUILD ? 180_000 : 120_000,
     },
 })

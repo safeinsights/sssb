@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { openSimulatorPanel } from '../support/simulator'
 import { signInAs } from '../support/people'
 import { tours } from '../../../src/app-config/tours'
+import { coldRoute } from '../support/budgets'
 
 /**
  * Tours on the SERVER host. The whole walkthrough is gated from `file://`
@@ -45,8 +46,8 @@ for (const tour of tours.slice(0, 1)) {
         // The snapshot restore reloads the whole page — proven by the URL: this test started on
         // /en/dashboard, and a reset lands on /en. The tour comes back on step 1 and keeps driving,
         // which is the resume marker doing its job rather than the tour simply never having reloaded.
-        await expect(page).toHaveURL(/\/en$/, { timeout: 60_000 })
-        await expect(page.getByTestId('tour-bar')).toBeVisible({ timeout: 60_000 })
+        await expect(page).toHaveURL(/\/en$/, { timeout: coldRoute(60_000) })
+        await expect(page.getByTestId('tour-bar')).toBeVisible({ timeout: coldRoute(60_000) })
         await expect(page.getByTestId('tour-progress')).toHaveAttribute('data-step', '1')
         await expect(page.getByTestId('tour-miss')).toHaveCount(0)
 
@@ -75,8 +76,8 @@ for (const tour of tours
 
         // The preset's viewpoint is Dana; this test started as Sam, so the name is the proof the
         // replay — not the old session — decided who is looking.
-        await expect(page.getByTestId('signed-in-as')).toContainText('Dana Okoye', { timeout: 60_000 })
-        await expect(page.getByTestId('tour-bar')).toBeVisible({ timeout: 60_000 })
+        await expect(page.getByTestId('signed-in-as')).toContainText('Dana Okoye', { timeout: coldRoute(60_000) })
+        await expect(page.getByTestId('tour-bar')).toBeVisible({ timeout: coldRoute(60_000) })
         await expect(page.getByTestId('tour-progress')).toHaveAttribute('data-step', '1')
         await expect(page.getByTestId('tour-miss')).toHaveCount(0)
 

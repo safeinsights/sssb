@@ -4,6 +4,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { openSimulatorPanel } from '../support/simulator'
 import { signInAs } from '../support/people'
 import { setWorldFlag } from '../support/world-flags'
+import { coldRoute } from '../support/budgets'
 
 /**
  * THE AUTOMATED ACTOR. service-flow.spec.ts drives the service/webhook loop BY HAND; this spec proves
@@ -106,8 +107,6 @@ async function worldJob(request: APIRequestContext, id: string): Promise<{ id: s
 }
 
 test('stepped bundle-analyzer drives a held frontline export to a real, downloadable artifact', async ({ page }) => {
-    // First hits cold-compile the actor route on a fresh dev server — generous room over the default.
-    test.setTimeout(120_000)
     const { request } = page
 
     // A held frontline export parks queued, waiting for its counterparty service to claim it.
@@ -121,9 +120,9 @@ test('stepped bundle-analyzer drives a held frontline export to a real, download
     expect((await productJob(request, jobId))?.status, 'held frontline export parks queued').toBe('queued')
 
     // Open the service actor page PAUSED so we drive it one hop at a time.
-    await page.goto('/en/simulator/actors/bundle-analyzer?paused=1', { timeout: 90_000 })
+    await page.goto('/en/simulator/actors/bundle-analyzer?paused=1')
     const shell = page.getByTestId('actor-shell')
-    await expect(shell).toBeVisible({ timeout: 60_000 })
+    await expect(shell).toBeVisible({ timeout: coldRoute(60_000) })
     await expect(shell).toHaveAttribute('data-actor', 'bundle-analyzer')
     await expect(page.getByTestId('actor-status')).toHaveAttribute('data-state', 'paused')
 
@@ -165,7 +164,6 @@ test('stepped bundle-analyzer drives a held frontline export to a real, download
 })
 
 test('stepped partner-desk delivers a completion webhook for a held platform export', async ({ page }) => {
-    test.setTimeout(120_000)
     const { request } = page
 
     // A held PLATFORM export — the partner-desk's pool (every org that is not the service runner's own).
@@ -176,9 +174,9 @@ test('stepped partner-desk delivers a completion webhook for a held platform exp
     const jobId = await submitExport(request)
     expect((await productJob(request, jobId))?.status, 'held platform export parks queued').toBe('queued')
 
-    await page.goto('/en/simulator/actors/partner-desk?paused=1', { timeout: 90_000 })
+    await page.goto('/en/simulator/actors/partner-desk?paused=1')
     const shell = page.getByTestId('actor-shell')
-    await expect(shell).toBeVisible({ timeout: 60_000 })
+    await expect(shell).toBeVisible({ timeout: coldRoute(60_000) })
     await expect(shell).toHaveAttribute('data-actor', 'partner-desk')
     await expect(page.getByTestId('actor-status')).toHaveAttribute('data-state', 'paused')
 
@@ -215,7 +213,6 @@ test('stepped partner-desk delivers a completion webhook for a held platform exp
 })
 
 test('the actors run from page load, hold on the world flag, and drain both queues on release', async ({ page }) => {
-    test.setTimeout(120_000)
     const { request } = page
     setWorldFlag('actors-held', false) // the stepped tests above left the actors held
 
@@ -230,7 +227,7 @@ test('the actors run from page load, hold on the world flag, and drain both queu
 
     // A fresh page with the Simulator COLLAPSED and the Actors tab never opened: the frames are there
     // anyway, hidden — the counterparties are part of the world, not of a tab.
-    await page.goto('/en/dashboard', { timeout: 90_000 })
+    await page.goto('/en/dashboard')
     await expect(page.getByTestId('simulator-pill')).toBeVisible()
     await expect(page.getByTestId('actor-frame-bundle-analyzer')).toBeAttached()
     await expect(page.getByTestId('actor-frame-partner-desk')).toBeAttached()
