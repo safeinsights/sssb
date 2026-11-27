@@ -50,6 +50,7 @@ const MIGRATIONS = [
     '0017_job_requester',
     '0019_job_attempts',
     '0020_job_runner_ref',
+    '0021_schedule_failures',
 ]
 
 /** The Postgres family's own modules, relative to `packages/kit/src`, each with why it is the family's. */

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { ScheduleSpec } from '../core/schedules'
+import type { DbPort } from '../ports/db'
 import type { JobsPort, SubmittedJob } from '../ports/jobs'
 
 // Point all fake-adapter state at a throwaway dir BEFORE importing anything that touches pglite.
@@ -267,5 +268,179 @@ describe('the schedules drain is bounded per tick and fair across tenants (safei
         const none = await runDueSchedules(fakeDb, slow, now, { maxItems: 100, deadline: 0, clock: () => 0 })
         expect(none).toEqual({ spawned: 0, failed: 0, deferred: 0, stoppedBy: 'time' })
         expect(firedFor(calls, unfired[0]!)).toBe(0)
+    })
+})
+
+describe('a schedule whose spawn keeps failing (safeinsights/sssb#215)', () => {
+    /**
+     * The fake database, but an insert into `jobs` for one of `failing.ids`' schedules (or any, with `failing.all`)
+     * throws: a spawn that fails inside its transaction.
+     */
+    const failing = { all: false, ids: new Set<string>() }
+    async function failingInserts(): Promise<DbPort> {
+        const { fakeDb } = await import('../adapters/fake/db')
+        const fails = (values: unknown) => {
+            const scheduleId = (values as { payload?: { scheduleId?: string } }).payload?.scheduleId
+            return failing.all || (scheduleId !== undefined && failing.ids.has(scheduleId))
+        }
+        return Object.create(fakeDb, {
+            withTenant: {
+                value: (tenantId: string, fn: (trx: unknown) => Promise<unknown>) =>
+                    fakeDb.withTenant(tenantId, (trx) =>
+                        fn(
+                            new Proxy(trx, {
+                                get(target, prop, receiver) {
+                                    if (prop === 'insertInto') {
+                                        return (table: string) => {
+                                            const builder = target.insertInto(table as never)
+                                            if (table !== 'jobs') return builder
+                                            return new Proxy(builder, {
+                                                get(b, p, r) {
+                                                    if (p === 'values') {
+                                                        return (values: unknown) => {
+                                                            if (fails(values))
+                                                                throw new Error('fixture: the jobs insert failed')
+                                                            return b.values(values as never)
+                                                        }
+                                                    }
+                                                    const v = Reflect.get(b, p, r)
+                                                    return typeof v === 'function' ? v.bind(b) : v
+                                                },
+                                            })
+                                        }
+                                    }
+                                    const value = Reflect.get(target, prop, receiver)
+                                    return typeof value === 'function' ? value.bind(target) : value
+                                },
+                            }),
+                        ),
+                    ),
+            },
+        }) as DbPort
+    }
+
+    async function scheduleRow(id: string) {
+        const { fakeDb } = await import('../adapters/fake/db')
+        return fakeDb
+            .getDb()
+            .selectFrom('job_schedules')
+            .select(['enabled', 'next_run_at', 'failure_count', 'last_error'])
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow()
+    }
+
+    test('a spec that no longer parses turns the schedule off at its first failure, and an audit event says why', async () => {
+        const { runDueSchedules } = await import('./schedules')
+        const { fakeDb } = await import('../adapters/fake/db')
+        const now = new Date('2022-03-01T00:00:00.000Z')
+        const id = await insertSchedule({
+            nextRunAt: new Date('2022-02-01T00:00:00.000Z'),
+            spec: { type: 'bogus' } as unknown as ScheduleSpec,
+        })
+        const jobs = stubJobs()
+        expect(await runDueSchedules(fakeDb, jobs.port, now)).toMatchObject({ failed: 1 })
+        expect(await scheduleRow(id)).toMatchObject({ enabled: false, failure_count: 1 })
+        expect((await scheduleRow(id)).last_error).toMatch(/schedule spec|bogus|type/i)
+        const audit = await fakeDb
+            .getDb()
+            .selectFrom('audit_events')
+            .select(['action', 'detail'])
+            .where('subject_id', '=', id)
+            .where('action', '=', 'schedule.disabled')
+            .executeTakeFirstOrThrow()
+        expect(audit.detail).toMatchObject({ reason: 'spec does not parse' })
+        // Off, so no later tick lists it.
+        expect(await runDueSchedules(fakeDb, jobs.port, new Date(now.getTime() + 86_400_000))).toMatchObject({
+            failed: 0,
+        })
+    })
+
+    test('any other failure backs off, longer each time, and the next spawn that commits clears it', async () => {
+        const { runDueSchedules } = await import('./schedules')
+        const db = await failingInserts()
+        const now = new Date('2021-03-01T00:00:00.000Z')
+        const id = await insertSchedule({ nextRunAt: new Date('2021-03-01T00:00:00.000Z') })
+        const jobs = stubJobs()
+
+        failing.all = true
+        try {
+            expect(await runDueSchedules(db, jobs.port, now)).toMatchObject({ failed: 1 })
+            let row = await scheduleRow(id)
+            expect(row).toMatchObject({
+                enabled: true,
+                failure_count: 1,
+                last_error: 'fixture: the jobs insert failed',
+            })
+            expect(new Date(row.next_run_at).getTime()).toBe(now.getTime() + 60_000)
+            // Not due again until its backoff has passed; then it fails again, and waits five minutes.
+            expect(await runDueSchedules(db, jobs.port, new Date(now.getTime() + 30_000))).toMatchObject({ failed: 0 })
+            const second = new Date(now.getTime() + 61_000)
+            expect(await runDueSchedules(db, jobs.port, second)).toMatchObject({ failed: 1 })
+            row = await scheduleRow(id)
+            expect(row.failure_count).toBe(2)
+            expect(new Date(row.next_run_at).getTime()).toBe(second.getTime() + 5 * 60_000)
+        } finally {
+            failing.all = false
+        }
+
+        const recovered = new Date(now.getTime() + 61_000 + 5 * 60_000 + 1_000)
+        expect(await runDueSchedules(db, jobs.port, recovered)).toMatchObject({ spawned: 1, failed: 0 })
+        expect(await scheduleRow(id)).toMatchObject({ enabled: true, failure_count: 0, last_error: null })
+        expect(firedFor(jobs.calls, id)).toBe(1)
+    })
+
+    test.each([
+        ['turned off', { type: 'bogus' } as unknown as ScheduleSpec, false],
+        ['backed off', undefined, true],
+    ])(
+        'a healthy schedule still spawns beside more %s schedules than the per-tenant listing takes',
+        async (_how, spec, viaInserts) => {
+            const { runDueSchedules } = await import('./schedules')
+            const { fakeDb } = await import('../adapters/fake/db')
+            const db = viaInserts ? await failingInserts() : fakeDb
+            const year = viaInserts ? 2019 : 2018
+            const now = new Date(Date.UTC(year, 5, 1))
+            // Five stuck schedules, all due before the healthy one; the listing takes maxItems + 1 = 3 a tenant.
+            const stuck: string[] = []
+            for (let i = 0; i < 5; i++) {
+                stuck.push(
+                    await insertSchedule({ nextRunAt: new Date(Date.UTC(year, 0, 1, 0, i)), ...(spec && { spec }) }),
+                )
+            }
+            const healthy = await insertSchedule({ nextRunAt: new Date(Date.UTC(year, 1, 1)) })
+            const jobs = stubJobs()
+            const budget = { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER }
+            for (const id of stuck) failing.ids.add(id)
+            let ticks = 0
+            try {
+                while (firedFor(jobs.calls, healthy) === 0 && ticks < 5) {
+                    ticks += 1
+                    await runDueSchedules(db, jobs.port, new Date(now.getTime() + ticks * 1_000), budget)
+                }
+            } finally {
+                failing.ids.clear()
+            }
+            expect(firedFor(jobs.calls, healthy)).toBe(1)
+            // Two turns a tick: the five stuck ones are turned or backed off within three ticks, and none comes back
+            // (the first backoff is a minute), so the healthy one is reached by the fourth.
+            expect(ticks).toBeLessThanOrEqual(4)
+            for (const id of stuck) expect((await scheduleRow(id)).failure_count).toBeLessThanOrEqual(1)
+        },
+    )
+
+    test('a failure after the spawn committed (the runner refused the job) is not a spawn failure', async () => {
+        const { runDueSchedules } = await import('./schedules')
+        const { fakeDb } = await import('../adapters/fake/db')
+        const now = new Date('2017-03-01T00:00:00.000Z')
+        const id = await insertSchedule({ nextRunAt: new Date('2017-02-01T00:00:00.000Z') })
+        const refusing: JobsPort = {
+            async start() {
+                throw new Error('runner down')
+            },
+        }
+        expect(await runDueSchedules(fakeDb, refusing, now)).toMatchObject({ failed: 1 })
+        const row = await scheduleRow(id)
+        expect(row).toMatchObject({ enabled: true, failure_count: 0, last_error: null })
+        expect(new Date(row.next_run_at).getTime()).toBeGreaterThan(now.getTime())
     })
 })

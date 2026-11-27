@@ -92,6 +92,10 @@ interface JobSchedulesTable {
      *  ISO string, reads back as a Date on both engines (normalised via toIso / new Date()). */
     next_run_at: Date | string
     enabled: Generated<boolean>
+    /** Spawns in a row that failed inside the spawn transaction; 0 once one commits (0021_schedule_failures). */
+    failure_count: Generated<number>
+    /** The latest such failure's message; null once a spawn commits again (0021_schedule_failures). */
+    last_error: Generated<string | null>
     /** Opaque creator id (no users table) — same convention as jobs / service_keys. */
     created_by: string
     created_at: Generated<string>

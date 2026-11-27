@@ -18,10 +18,16 @@ const codebuild = vi.hoisted(() => ({
 }))
 vi.mock('@aws-sdk/client-codebuild', () => {
     class StartBuildCommand {
-        constructor(readonly input: (typeof codebuild.started)[number]) {}
+        input: (typeof codebuild.started)[number]
+        constructor(input: (typeof codebuild.started)[number]) {
+            this.input = input
+        }
     }
     class BatchGetBuildsCommand {
-        constructor(readonly input: { ids: string[] }) {}
+        input: { ids: string[] }
+        constructor(input: { ids: string[] }) {
+            this.input = input
+        }
     }
     return {
         StartBuildCommand,
