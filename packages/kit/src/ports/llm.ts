@@ -93,6 +93,15 @@ export interface LlmToolLoopRequest {
 
 export interface LlmPort {
     complete(request: LlmRequest): Promise<{ text: string }>
+    /**
+     * The answer as it arrives, a chunk of text at a time. A stream that fails after some text was delivered ENDS IN A
+     * THROWN ERROR from the iteration, never in an end that reads as a complete answer: `LlmUnavailableError` for a
+     * provider's rate limit or overload and for the deadline (`timeoutMs`), any other failure as the provider's SDK threw
+     * it. The text already delivered stays delivered and is never sent again. A route that has begun its response has no
+     * status left to change, so it reports the failure in the body, as the showcase's assistant route does with a final
+     * `{ "error": ... }` line. The fake adapter and the static demo's replay fail the same way, for a fixture entry with a
+     * `failure` (`LlmFixtureEntry`); the conformance check `llm-stream-failure` holds the three to it.
+     */
     stream(request: LlmRequest): AsyncIterable<string>
     /**
      * Drive a tool-using conversation to its final text. Returns `text` (the FINAL assistant turn's

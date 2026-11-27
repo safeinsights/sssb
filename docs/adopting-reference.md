@@ -397,7 +397,7 @@ against your app's world.
 
 What does run against your app is the conformance suite, `@sssb/kit/testing` — the authorization scan of
 your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the app's named roles, the
-demo-presets check and the seam map — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
+demo-presets check, the seam map and the stream-failure check — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
 `conformanceSuite({ appDir, optOut })`, against your catalog, your tables, your routes and your presets. Leaving a
 check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/testing/checks.json`); a typo in one
 fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
@@ -476,7 +476,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 91 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 92 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import

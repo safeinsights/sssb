@@ -6,6 +6,7 @@ import { authzMutations } from './authz'
 import { appRolesCheck, migrationOrder, rlsPglite } from './db'
 import { demoPresets } from './demo-presets'
 import { i18nParity, i18nPartition } from './i18n'
+import { llmStreamFailure } from './llm-stream-failure'
 import { checkOptOut, registerChecks } from './register'
 import { seamMap } from './seam-map'
 import type { CheckContext, CheckImpl } from './types'
@@ -39,6 +40,7 @@ const IMPLEMENTATIONS: Readonly<Record<string, CheckImpl>> = {
     'app-roles': appRolesCheck,
     'demo-presets': demoPresets,
     'seam-map': seamMap,
+    'llm-stream-failure': llmStreamFailure,
 }
 
 export interface ConformanceOptions {
