@@ -74,6 +74,12 @@ export type DatabaseSsl =
     { readonly mode: 'verify-full'; readonly rootCert?: string | undefined } | { readonly mode: 'disable' }
 
 export function databaseSsl(): DatabaseSsl {
+    // `pg`'s native client (pg-native, chosen by this variable) hands libpq only `sslmode` and its file keys from the
+    // `ssl` option, never `rejectUnauthorized` or `ca`, so every mode here would reach it as libpq's default, `prefer`:
+    // TLS if offered, and no certificate checked. Refused rather than translated, since no SSSB deployment uses it.
+    if (process.env['NODE_PG_FORCE_NATIVE']) {
+        throw new Error("NODE_PG_FORCE_NATIVE is set, and pg's native client ignores DATABASE_SSL_MODE: unset it")
+    }
     const mode = process.env['DATABASE_SSL_MODE'] || 'verify-full'
     const rootCert = process.env['DATABASE_SSL_ROOT_CERT'] || undefined
     if (!(DATABASE_SSL_MODES as readonly string[]).includes(mode)) {
@@ -92,4 +98,40 @@ export function databaseSsl(): DatabaseSsl {
         throw new Error(`DATABASE_SSL_ROOT_CERT must be an absolute path to a PEM file (got "${rootCert}")`)
     }
     return { mode: 'verify-full', rootCert }
+}
+
+/**
+ * The URL may not set its own TLS (./db.ts's `createRealDb` refuses one at boot, and `assertRealEnv` before it). `pg` reads `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`
+ * and `uselibpqcompat` from the query string, and what it reads there REPLACES the `ssl` option it is given
+ * (pg's ConnectionParameters merges the parsed URL over the config), so `?sslmode=disable` or `?sslmode=no-verify`
+ * would quietly undo the mode. Refused rather than stripped, so a URL that asks for something is never silently
+ * answered with something else; the message names the parameters and never the URL, which holds the password.
+ *
+ * The query is read as `pg-connection-string` reads it: the same re-encoding of a URL with a space or a bad escape,
+ * the same base, and the same retry for a URL with no host (`postgres://user@/db`). Any parameter whose name starts
+ * with `ssl`, in any case, is refused, which covers names `pg` does not read yet.
+ */
+export function refuseTlsInUrl(databaseUrl: string): void {
+    if (databaseUrl.startsWith('/')) return // a socket path with a database name: no query string
+    let str = databaseUrl
+    if (/ |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(str)) str = encodeURI(str).replace(/%25(\d\d)/g, '%$1')
+    let url: URL
+    try {
+        url = new URL(str, 'postgres://base')
+    } catch {
+        try {
+            url = new URL(str.replace('@/', '@___DUMMY___/'), 'postgres://base')
+        } catch {
+            return // `pg` cannot parse it either, and says so when it connects
+        }
+    }
+    const names = [...new Set([...url.searchParams.keys()])].filter(
+        (name) => /^ssl/i.test(name) || name.toLowerCase() === 'uselibpqcompat',
+    )
+    if (names.length > 0) {
+        throw new Error(
+            `the database URL (DATABASE_URL) sets ${names.join(', ')}; remove it and set DATABASE_SSL_MODE (and ` +
+                'DATABASE_SSL_ROOT_CERT) instead, which the server and the migrator both read',
+        )
+    }
 }

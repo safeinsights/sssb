@@ -25,6 +25,21 @@ describe('pgSslOptions', () => {
         })
     })
 
+    it('a root file with no certificate in it is refused: Node would take an empty `ca` as its own roots', () => {
+        const dir = makeTestTmpDir('db-ssl-')
+        for (const [name, content] of [
+            ['empty.pem', ''],
+            ['blank.pem', '\n\n'],
+            ['public-key.pem', '-----BEGIN PUBLIC KEY-----\nk\n-----END PUBLIC KEY-----\n'],
+        ] as const) {
+            const file = path.join(dir, name)
+            writeFileSync(file, content)
+            expect(() => pgSslOptions({ mode: 'verify-full', rootCert: file })).toThrow(
+                `${file} holds no PEM certificate`,
+            )
+        }
+    })
+
     it('a root file that cannot be read fails when the pool is built, naming the path', () => {
         const missing = path.join(makeTestTmpDir('db-ssl-'), 'absent.pem')
         expect(() => pgSslOptions({ mode: 'verify-full', rootCert: missing })).toThrow(
@@ -69,7 +84,7 @@ describe('createRealDb refuses a URL that sets its own TLS', () => {
         } catch (error) {
             message = (error as Error).message
         }
-        expect(message).toContain(`the database URL sets ${names};`)
+        expect(message).toContain(`the database URL (DATABASE_URL) sets ${names};`)
         expect(message).toContain('DATABASE_SSL_MODE')
         // The message names parameters, never the URL, which holds the password.
         expect(message).not.toContain('secret')

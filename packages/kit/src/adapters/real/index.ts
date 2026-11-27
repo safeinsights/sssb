@@ -13,7 +13,13 @@ import { configuredAuth } from '../configured-auth'
 import { orgNameForSlugs } from '../../db/org-lookup'
 import { clerkIdentitySource, realAuth } from './auth'
 import { clerkAuthorizedParties } from './clerk-authorized-parties'
-import { DATABASE_ENV, databaseResumeBudgetMs, databaseSsl, databaseTransport } from './database-transport'
+import {
+    DATABASE_ENV,
+    databaseResumeBudgetMs,
+    databaseSsl,
+    databaseTransport,
+    refuseTlsInUrl,
+} from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
 import { assertEndpoint, parseForcePathStyle, parseUploadTarget } from './storage-settings'
@@ -82,10 +88,12 @@ export function assertRealEnv(): void {
             throw new CutoverPendingError(['data-api'], (error as Error).message)
         }
     } else {
-        // The TLS settings' shape only: the root file is read when the pool is built, on the deployment, since the path
-        // `SssbApp` sets (the Lambda runtime's bundle) exists only there and `sssb check-real-env` runs anywhere.
+        // The TLS settings and a URL that would override them, as createRealDb refuses both. The root file is not read
+        // here: the path `SssbApp` sets (the Lambda runtime's bundle) exists only there, and `sssb check-real-env` runs
+        // anywhere; createRealDb reads it when the pool is built.
         try {
             databaseSsl()
+            refuseTlsInUrl(process.env['DATABASE_URL'] ?? '')
         } catch (error) {
             throw new CutoverPendingError(['db-tls'], (error as Error).message)
         }

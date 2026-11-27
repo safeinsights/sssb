@@ -98,7 +98,7 @@ beforeEach(() => {
         return { createInProcessJobs: () => ({}) }
     })
     stubEnv({ ...COMMON_ENV, DATABASE_TRANSPORT: undefined, DATABASE_URL: undefined })
-    stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: undefined })
+    stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: undefined, NODE_PG_FORCE_NATIVE: undefined })
     stubEnv(Object.fromEntries(Object.keys(DATA_API_ENV).map((name) => [name, undefined])))
     stubEnv(Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, undefined])))
     stubEnv({
@@ -194,6 +194,13 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
         // The boot check reads no file: the path SssbApp sets exists only on Lambda, and `sssb check-real-env` runs anywhere.
         stubEnv({ DATABASE_SSL_ROOT_CERT: '/nowhere/ca.pem' })
         expect(() => assertRealEnv()).not.toThrow()
+
+        // A URL that would override the mode fails here too, before the adapter would refuse it.
+        stubEnv({ DATABASE_SSL_ROOT_CERT: undefined, DATABASE_URL: `${url}?sslmode=require` })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*the database URL \(DATABASE_URL\) sets sslmode/s)
+        stubEnv({ DATABASE_URL: url, NODE_PG_FORCE_NATIVE: '1' })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*NODE_PG_FORCE_NATIVE is set/s)
+        stubEnv({ NODE_PG_FORCE_NATIVE: undefined })
 
         // A Data API deployment does not read them.
         stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, DATABASE_SSL_MODE: 'require' })

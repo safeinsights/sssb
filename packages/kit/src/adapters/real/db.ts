@@ -4,7 +4,7 @@ import { Kysely, PostgresDialect } from 'kysely'
 import { Pool, types, type CustomTypesConfig } from 'pg'
 import type { DB } from '../../db/schema'
 import type { DbPort } from '../../ports/db'
-import type { DatabaseSsl } from './database-transport'
+import { refuseTlsInUrl, type DatabaseSsl } from './database-transport'
 import { dbPortFor } from './db-port'
 
 /**
@@ -91,41 +91,10 @@ export function pgSslOptions(ssl: DatabaseSsl): false | ConnectionOptions {
     } catch (error) {
         throw new Error(`SSSB db: cannot read the database's root certificates at ${ssl.rootCert}`, { cause: error })
     }
+    // Node takes an empty `ca` as no `ca`, and trusts its own roots instead: an empty or truncated file would quietly
+    // widen what this connection trusts. A file with no certificate in it is refused.
+    if (!ca.includes('-----BEGIN CERTIFICATE-----')) {
+        throw new Error(`SSSB db: the database's root certificate file at ${ssl.rootCert} holds no PEM certificate`)
+    }
     return { rejectUnauthorized: true, ca }
-}
-
-/**
- * The URL may not set its own TLS. `pg` reads `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`
- * and `uselibpqcompat` from the query string, and what it reads there REPLACES the `ssl` option it is given
- * (pg's ConnectionParameters merges the parsed URL over the config), so `?sslmode=disable` or `?sslmode=no-verify`
- * would quietly undo the mode. Refused rather than stripped, so a URL that asks for something is never silently
- * answered with something else; the message names the parameters and never the URL, which holds the password.
- *
- * The query is read as `pg-connection-string` reads it: the same re-encoding of a URL with a space or a bad escape,
- * the same base, and the same retry for a URL with no host (`postgres://user@/db`). Any parameter whose name starts
- * with `ssl`, in any case, is refused, which covers names `pg` does not read yet.
- */
-function refuseTlsInUrl(databaseUrl: string): void {
-    if (databaseUrl.startsWith('/')) return // a socket path with a database name: no query string
-    let str = databaseUrl
-    if (/ |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(str)) str = encodeURI(str).replace(/%25(\d\d)/g, '%$1')
-    let url: URL
-    try {
-        url = new URL(str, 'postgres://base')
-    } catch {
-        try {
-            url = new URL(str.replace('@/', '@___DUMMY___/'), 'postgres://base')
-        } catch {
-            return // `pg` cannot parse it either, and says so when it connects
-        }
-    }
-    const names = [...new Set([...url.searchParams.keys()])].filter(
-        (name) => /^ssl/i.test(name) || name.toLowerCase() === 'uselibpqcompat',
-    )
-    if (names.length > 0) {
-        throw new Error(
-            `SSSB db: the database URL sets ${names.join(', ')}; remove it and set DATABASE_SSL_MODE (and ` +
-                'DATABASE_SSL_ROOT_CERT) instead, which the server and the migrator both read',
-        )
-    }
 }
