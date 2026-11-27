@@ -52,9 +52,9 @@ import type { DB } from './schema'
  * These are INFRA tables read while resolving who is calling — before any tenant context exists — so
  * `app_user` holds a cross-tenant `SELECT` on them that no policy narrows.
  *
- * An exempt relation is SELECT-only unless its entry declares `writes`. A declared write is exempt from
- * nothing: the check holds it to row-level security as strictly as any tenant table's (`provenWrite`
- * below), so the exemption stays one of READING across tenants. TRUNCATE is not declarable, because it
+ * An exempt relation is SELECT-only unless its entry declares `writes`. A declared write is held to
+ * row-level security that reads the tenant setting, as a tenant table's is, though not to FORCE
+ * (`provenWrite` below says why), so the exemption stays one of READING across tenants. TRUNCATE is not declarable, because it
  * ignores row-level security altogether.
  *
  * Adding a name here, or a write to a name, removes something from the guarantee `SECURITY.md` makes, so
@@ -363,8 +363,9 @@ function declares(exemption: Exemption, privilege: string): boolean {
 /**
  * Why a declared write on an exempt relation is NOT confined to the request's tenant, as failure lines; none
  * when it is. The relation must have row-level security ENABLED (an exempt relation is not held to FORCE: its
- * owner is the privileged path that resolves callers and seeds rows, and a request never writes as the owner),
- * and some PERMISSIVE policy must admit the command, or the grant reaches nothing. Every permissive policy that
+ * owner is the privileged path that seeds rows with no tenant context, and `withTenant` writes as `app_user`), an
+ * owner whose privileges `app_user` does not hold (they skip every policy that is not forced), and some
+ * PERMISSIVE policy must admit the command, or the grant reaches nothing. Every permissive policy that
  * applies to the command (its own, or ALL) is then read the way the tenant tables' policies are, but only in
  * the expressions that command evaluates: an INSERT its WITH CHECK, an UPDATE both, a DELETE its USING, an
  * absent WITH CHECK falling back to USING. An absent expression the command evaluates admits every row. A

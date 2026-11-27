@@ -7616,8 +7616,8 @@ a team failed with `permission denied`, and the coverage check could only hold a
   Rejected here: **a global unique index on `slug`**, whose migration fails on any database already holding one slug
   in two tenants; the real fix, resolving the tenant from the recipient, is `safeinsights/sssb#211`.
 - **ENABLE, not FORCE.** FORCE would hold the table's owner to the write policies too, and the owner seeds
-  teams with no tenant context (`packages/kit/src/db/seed.ts`, every proof suite's fixtures). A request never writes
-  as the owner: `getDb()` is banned in an app's `src`, and `withTenant` switches to `app_user`. Rejected: **FORCE with
+  teams with no tenant context (`packages/kit/src/db/seed.ts`). An app's routes do not write as the owner: `getDb()`
+  is banned in an app's `src` bar the exceptions it names, and `withTenant` switches to `app_user`. Rejected: **FORCE with
   an owner-only policy**, which would need the owner's role name in a framework migration, which differs per
   deployment. A dedicated non-owner app role (the cutover checklist's `db-role-not-superuser`) is held to the
   policies, which is the safer side: its raw reads are unchanged (`USING (true)`), and it had no write before.
@@ -7641,5 +7641,5 @@ a team failed with `permission denied`, and the coverage check could only hold a
   accepts. SSSB's own tables keep their plain `org_id` references, so another tenant can still hold a team's id and
   block its deletion; moving them is `safeinsights/sssb#213`.
 - **A `DELETE` succeeds only for a team nothing references**: every framework table that names an org holds a plain
-  foreign key with no cascade, and the audit trail is append-only, so a team with history cannot be hard-deleted.
-  That is the intended posture, not a gap; an app that retires teams marks them.
+  foreign key with no cascade, and the audit trail is append-only, so a request cannot delete a team with history.
+  That is the intended posture, not a gap: an app that retires teams records that in a table of its own.

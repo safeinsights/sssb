@@ -240,7 +240,7 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
     // create, rename and delete teams, and row-level security confines each of those to the request's own tenant.
     // Every write below is the shape a route would send; each cross-tenant one must land nowhere.
     const orgStamp = Date.now()
-    // Every probe ROLLS BACK, whatever the write does, so a regression shows as a red proof and never leaves a
+    // Every write through orgWriteFails ROLLS BACK, whatever it does, so a regression shows as a red proof and never leaves a
     // stray or rewritten team behind in a contract database that is reused.
     const rolledBack = new Error('rolled back')
     const orgWriteFails = async (tenantId: string | null, write: (trx: Kysely<DB>) => Promise<unknown>) => {

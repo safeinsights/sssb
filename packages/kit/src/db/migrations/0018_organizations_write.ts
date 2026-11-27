@@ -9,7 +9,8 @@ import { Kysely, sql } from 'kysely'
  * security:
  *
  * - READS stay cross-tenant, as before. `organizations` is read while resolving who is calling, before any tenant
- *   context exists (../org-lookup.ts), and a request joins another org of its own tenant (an escalation's responder),
+ *   context exists (../org-lookup.ts), and a request may join another team of its own tenant (an app's cross-team
+ *   request, say),
  *   so the SELECT policy is `USING (true)`. That is what keeps it on the coverage check's exempt list
  *   (../rls-coverage.ts), whose entry for it now declares the three writes.
  * - WRITES are tenant-scoped, one policy per command: an INSERT or an UPDATE may only leave a row in the tenant the
@@ -30,7 +31,7 @@ import { Kysely, sql } from 'kysely'
  *   A slug a team gives up by being deleted is free for any tenant to take, with whatever mail still comes to it.
  * - TRUNCATE is NOT granted: it ignores row-level security, so it would empty every tenant's teams.
  * - A DELETE succeeds only for a team nothing references: every table that names an org holds a plain foreign key
- *   to it, and the audit trail is append-only, so a team with history cannot be hard-deleted.
+ *   to it, and the audit trail is append-only, so a request cannot delete a team with history.
  *
  * `organizations_tenant_id_id_unique` over `(tenant_id, id)` is what a COMPOSITE foreign key needs: an app table
  * can then declare `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)`, and Postgres refuses a
