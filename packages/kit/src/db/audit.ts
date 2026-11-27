@@ -13,6 +13,7 @@ type FrameworkAuditAction =
     | 'job.submitted'
     | 'agreement.accepted'
     | 'schedule.fired'
+    | 'schedule.disabled'
     | 'webhook-endpoint.created'
     | 'webhook-endpoint.enabled'
     | 'webhook-endpoint.disabled'

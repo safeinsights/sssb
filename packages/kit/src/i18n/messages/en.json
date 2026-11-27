@@ -227,6 +227,7 @@
         "scheduleInterval": "Every {minutes} min",
         "scheduleDaily": "Daily · {time} UTC",
         "scheduleWeekly": "{weekday} · {time} UTC",
+        "scheduleUnparseable": "Spec does not parse",
         "scheduleEnabled": "enabled",
         "scheduleDisabled": "disabled",
         "scheduleNextRun": "next {when}",

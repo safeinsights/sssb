@@ -227,6 +227,7 @@
         "scheduleInterval": "Cada {minutes} min",
         "scheduleDaily": "Diario · {time} UTC",
         "scheduleWeekly": "{weekday} · {time} UTC",
+        "scheduleUnparseable": "La especificación no es válida",
         "scheduleEnabled": "activa",
         "scheduleDisabled": "inactiva",
         "scheduleNextRun": "próxima {when}",
