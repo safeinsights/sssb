@@ -227,7 +227,7 @@ function renderedCfnProperties(cfn, path = cfn?.node?.path) {
  * @param {string} forwardedHostArn the function's resolved ARN, as JSON
  * @returns {string[]}
  */
-export function unguardedServerBehaviors(config, functionUrlRef, forwardedHostArn) {
+function unguardedServerBehaviors(config, functionUrlRef, forwardedHostArn) {
     const serverOrigins = new Set(
         (config?.Origins ?? [])
             .filter((/** @type {any} */ o) => JSON.stringify(o?.DomainName ?? null).includes(functionUrlRef))
