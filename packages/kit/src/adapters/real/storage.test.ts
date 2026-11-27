@@ -409,10 +409,10 @@ describe('storage on an S3-compatible store', () => {
         },
     )
 
-    test.each(['', 'POST', 'put', 'true', ' post'])(
-        'STORAGE_UPLOAD_TARGET=%j fails at boot: it is post or none, and has no default',
+    test.each(['', 'POST', 'PUT', 'true', ' post', 'get'])(
+        'STORAGE_UPLOAD_TARGET=%j fails at boot: it is post, put or none, and has no default',
         (uploadTarget) => {
-            expect(() => compatible({ uploadTarget })).toThrow(/STORAGE_UPLOAD_TARGET must be post or none/)
+            expect(() => compatible({ uploadTarget })).toThrow(/STORAGE_UPLOAD_TARGET must be post, put or none/)
         },
     )
 
@@ -443,10 +443,85 @@ describe('storage on an S3-compatible store', () => {
 
         test('with `post` mints a presigned POST at the store’s endpoint, carrying the policy', async () => {
             const target = await compatible({ forcePathStyle: 'true' }).createUploadTarget('k/1.png', constraints)
+            if (target.method === 'PUT') throw new Error('expected a POST target')
             expect(target.url).toBe('https://acct123.r2.example.com/media')
             expect(target.fields).toMatchObject({ key: 'k/1.png', 'Content-Type': 'image/png' })
             const policy = JSON.parse(Buffer.from(target.fields['Policy']!, 'base64').toString('utf8'))
             expect(policy.conditions).toContainEqual(['content-length-range', 0, 1024])
+        })
+
+        test('with `post` ignores sizeBytes: the policy holds the ceiling, whatever the client claims', async () => {
+            const target = await compatible().createUploadTarget('k/1.png', { ...constraints, sizeBytes: 10 })
+            if (target.method === 'PUT') throw new Error('expected a POST target')
+            const policy = JSON.parse(Buffer.from(target.fields['Policy']!, 'base64').toString('utf8'))
+            expect(policy.conditions).toContainEqual(['content-length-range', 0, 1024])
+            expect(JSON.stringify(policy)).not.toMatch(/"10"|, 10\b/)
+        })
+
+        describe('with `put`', () => {
+            const put = (sizeBytes: number | 'absent' = 500) =>
+                compatible({ uploadTarget: 'put', forcePathStyle: 'true' }).createUploadTarget('k/a b.png', {
+                    ...constraints,
+                    ...(sizeBytes === 'absent' ? {} : { sizeBytes }),
+                })
+
+            test('mints a presigned PUT at the key, with the content type as the header the browser sends', async () => {
+                const target = await put()
+                if (target.method !== 'PUT') throw new Error('expected a PUT target')
+                const url = new URL(target.url)
+                expect(url.origin).toBe('https://acct123.r2.example.com')
+                expect(url.pathname).toBe('/media/k/a%20b.png')
+                expect(target.headers).toEqual({ 'Content-Type': 'image/png' })
+                expect(Object.keys(target)).toEqual(['method', 'url', 'headers'])
+            })
+
+            test('signs the content type and the exact length into the URL, and nothing else the browser must send', async () => {
+                const target = await put(500)
+                const params = new URL(target.url).searchParams
+                expect(params.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host')
+                expect(params.get('X-Amz-Expires')).toBe('900')
+                expect(params.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/)
+            })
+
+            test('a different size is a different signature, and so is a different content type', async () => {
+                const signature = async (size: number, contentType = 'image/png') => {
+                    const target = await compatible({ uploadTarget: 'put' }).createUploadTarget('k', {
+                        contentType,
+                        maxBytes: 1024,
+                        sizeBytes: size,
+                    })
+                    return new URL(target.url).searchParams.get('X-Amz-Signature')
+                }
+                // The clock's second can tick between two calls, which changes a signature on its own: pin it.
+                vi.useFakeTimers({ now: new Date('2026-11-27T12:00:00Z'), toFake: ['Date'] })
+                try {
+                    const base = await signature(500)
+                    expect(await signature(500)).toBe(base)
+                    expect(await signature(501)).not.toBe(base)
+                    expect(await signature(500, 'text/html')).not.toBe(base)
+                } finally {
+                    vi.useRealTimers()
+                }
+            })
+
+            test('carries no checksum: the default client setting would sign the CRC32 of an empty body', async () => {
+                const params = new URL((await put()).url).searchParams
+                expect([...params.keys()].filter((name) => /checksum/i.test(name))).toEqual([])
+            })
+
+            test('refuses a call without sizeBytes, or with one that is not a size within maxBytes', async () => {
+                await expect(put('absent')).rejects.toThrow(/needs constraints\.sizeBytes/)
+                for (const bad of [-1, 1.5, Number.NaN, 1025]) {
+                    await expect(put(bad)).rejects.toThrow(/sizeBytes must be an integer from 0 to maxBytes \(1024\)/)
+                }
+                expect(new URL((await put(0)).url).searchParams.get('X-Amz-SignedHeaders')).toContain('content-length')
+                await put(1024)
+            })
+
+            test('touches no store: the URL is computed locally', async () => {
+                await put()
+                expect(send).not.toHaveBeenCalled()
+            })
         })
 
         test('with `none` fails, naming STORAGE_UPLOAD_TARGET, and touches no store', async () => {

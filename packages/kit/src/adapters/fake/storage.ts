@@ -8,6 +8,7 @@ import type {
     StoragePort,
     StoredObject,
     StoredObjectInfo,
+    PutUploadTarget,
     UploadConstraints,
     UploadTarget,
 } from '../../ports/storage'
@@ -103,23 +104,27 @@ function uploadSecret(): Buffer {
 const UPLOAD_TARGET_TTL_SECONDS = 900
 
 /** Canonical string the signature covers — order-fixed so signer and verifier never disagree. The
- *  expiry is INSIDE the signature, so a caller can't extend a target's life by editing the field. */
-function canonical(key: string, contentType: string, maxBytes: number, expires: number): string {
-    return `${key}\n${contentType}\n${maxBytes}\n${expires}`
+ *  expiry is INSIDE the signature, so a caller can't extend a target's life by editing the field. A PUT target's
+ *  also holds its exact size, after a `PUT` marker, so a POST target's signature never verifies as a PUT's, nor the
+ *  other way round, whatever a caller adds or drops. */
+function canonical(key: string, contentType: string, maxBytes: number, expires: number, size?: number): string {
+    const base = `${key}\n${contentType}\n${maxBytes}\n${expires}`
+    return size === undefined ? base : `${base}\nPUT\n${size}`
 }
 
 /** HMAC-SHA256 (hex) over the upload target's constraints — module-internal (mint signs, verify checks). */
-function signUploadFields(key: string, contentType: string, maxBytes: number, expires: number): string {
+function signUploadFields(key: string, contentType: string, maxBytes: number, expires: number, size?: number): string {
     return createHmac('sha256', uploadSecret())
-        .update(canonical(key, contentType, maxBytes, expires))
+        .update(canonical(key, contentType, maxBytes, expires, size))
         .digest('hex')
 }
 
-/** The verified constraints carried by a fake upload target's signed fields. */
+/** The verified constraints carried by a fake upload target's signed fields. `size` is a PUT target's exact length. */
 export interface VerifiedUploadFields {
     key: string
     contentType: string
     maxBytes: number
+    size?: number
 }
 
 /**
@@ -133,19 +138,23 @@ export function verifyUploadFields(fields: Record<string, string | undefined>): 
     const contentType = fields['content-type']
     const maxBytesRaw = fields['max-bytes']
     const expiresRaw = fields['expires']
+    const sizeRaw = fields['size']
     const signature = fields['signature']
     if (!key || !contentType || !maxBytesRaw || !expiresRaw || !signature) return null
+    // Present for a PUT target only; a size that is not a whole number cannot have been signed.
+    const size = sizeRaw === undefined ? undefined : Number(sizeRaw)
+    if (size !== undefined && (!Number.isInteger(size) || size < 0)) return null
     const maxBytes = Number(maxBytesRaw)
     if (!Number.isInteger(maxBytes) || maxBytes < 0) return null
     const expires = Number(expiresRaw)
     if (!Number.isInteger(expires) || expires < 0) return null
-    const expected = signUploadFields(key, contentType, maxBytes, expires)
+    const expected = signUploadFields(key, contentType, maxBytes, expires, size)
     const got = Buffer.from(signature, 'utf8')
     const want = Buffer.from(expected, 'utf8')
     if (got.length !== want.length || !timingSafeEqual(got, want)) return null
     // Expiry check AFTER the signature check, so the timestamp we trust is the one that was signed.
     if (expires * 1000 < Date.now()) return null
-    return { key, contentType, maxBytes }
+    return size === undefined ? { key, contentType, maxBytes } : { key, contentType, maxBytes, size }
 }
 
 export const fakeStorage: StoragePort = {
@@ -275,6 +284,7 @@ export const fakeStorage: StoragePort = {
         // when the bytes finally land.
         const expires = Math.floor(Date.now() / 1000) + UPLOAD_TARGET_TTL_SECONDS
         return {
+            method: 'POST',
             url: '/api/storage-upload',
             fields: {
                 key,
@@ -285,4 +295,46 @@ export const fakeStorage: StoragePort = {
             },
         }
     },
+}
+
+/**
+ * The fake store, with `createUploadTarget` minting the form `uploadTarget` names: `post` (the default, which is
+ * `fakeStorage` itself) or `put`, so a test, or an app that registers it as its storage, can exercise the browser's
+ * PUT path against the local endpoint as it would a real one (the real adapter's form is `STORAGE_UPLOAD_TARGET`).
+ */
+export function createFakeStorage(options: { uploadTarget?: 'post' | 'put' } = {}): StoragePort {
+    if ((options.uploadTarget ?? 'post') === 'post') return fakeStorage
+    return {
+        ...fakeStorage,
+        async createUploadTarget(
+            key,
+            { contentType, maxBytes, sizeBytes }: UploadConstraints,
+        ): Promise<PutUploadTarget> {
+            // The PUT form, as the real adapter mints it: the exact size is signed in (a PUT has no policy), and the
+            // browser sends the file as the body with the content type as a header. The signed values ride in the
+            // URL's query, as a presigned URL's do, so the endpoint can verify them without a session.
+            if (sizeBytes === undefined) {
+                throw new Error('storage createUploadTarget: a PUT upload target needs constraints.sizeBytes')
+            }
+            if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > maxBytes) {
+                throw new Error(
+                    `storage createUploadTarget: sizeBytes must be an integer from 0 to maxBytes (${maxBytes}), got ${sizeBytes}`,
+                )
+            }
+            const expires = Math.floor(Date.now() / 1000) + UPLOAD_TARGET_TTL_SECONDS
+            const query = new URLSearchParams({
+                key,
+                'content-type': contentType,
+                'max-bytes': String(maxBytes),
+                size: String(sizeBytes),
+                expires: String(expires),
+                signature: signUploadFields(key, contentType, maxBytes, expires, sizeBytes),
+            })
+            return {
+                method: 'PUT',
+                url: `/api/storage-upload?${query.toString()}`,
+                headers: { 'Content-Type': contentType },
+            }
+        },
+    }
 }
