@@ -16,6 +16,7 @@ import { fakeJobs } from './fake/jobs'
 import { fakeLlm } from './fake/llm'
 import { fakeStorage } from './fake/storage'
 import { lazyJobs } from './lazy-jobs'
+import { failLostJob } from './fail-lost-job'
 import { appMode, isSimulated } from './run-mode'
 
 /**
@@ -106,7 +107,12 @@ if (isSimulated && process.env.NODE_ENV === 'production') {
 
 const real =
     appMode === 'real'
-        ? await (await import('./real/index')).createRealPorts({ inProcessJobs: buildInProcessJobs })
+        ? await (
+              await import('./real/index')
+          ).createRealPorts({
+              inProcessJobs: buildInProcessJobs,
+              failLostJob: failLostJobFromRegistry,
+          })
         : null
 
 // The simulated world runs the deployment's auth tenancy when its environment sets one (./fake/simulated-auth.ts).
@@ -130,6 +136,11 @@ async function buildInProcessJobs(
     return lazyJobs(async () =>
         (await import('./real/jobs-in-process')).createInProcessJobs(ports, notifyJobTerminalFromRegistry),
     )
+}
+
+/** The CodeBuild runner's sweep, failing a job whose build was lost: ./fail-lost-job.ts, with this registry's notifier. */
+function failLostJobFromRegistry(input: { tenantId: string; jobId: string; error: string; now: Date }) {
+    return failLostJob(db, notifyJobTerminalFromRegistry, input)
 }
 
 async function notifyJobTerminalFromRegistry(input: {
