@@ -8,9 +8,11 @@ import type { JobsPort, SubmittedJob } from '../ports/jobs'
 vi.mock('../server-lib/defer', () => ({ deferAfterResponse: async () => undefined }))
 
 const tmp = makeTestTmpDir('app-job-retries-')
-beforeAll(() => {
+beforeAll(async () => {
     process.env['APP_DATA_DIR'] = tmp
-})
+    // Open (and migrate) the simulated database once, here, rather than inside the first test's own time limit.
+    await world()
+}, 120_000)
 afterAll(() => {
     delete process.env['APP_DATA_DIR']
 })
