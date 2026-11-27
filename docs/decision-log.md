@@ -7629,6 +7629,7 @@ safeinsights/sssb#200, #193 and #180, together because all three are SSSB's real
   through Clerk's client by session id, and falls back to the sign-out route (the framework's `auth/signout`, which
   revokes the server-read session alone) until Clerk has loaded or if Clerk's sign-out fails, rather than signing
   nobody out as `RealAccountRefused` does: a menu has no place to say so. Added to the `real-auth-provider` check's forms.
+
 ## The secret scan reads the commits it is asked about, not every branch (2026-11-27, `fix/secret-scan-scope`)
 
 `safeinsights/sssb#106`: `secret-scan` ran `gitleaks git` with no `--log-opts`, which gitleaks 8.30.1 turns into
