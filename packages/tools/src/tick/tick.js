@@ -274,19 +274,22 @@ function count(value) {
  * `@sssb/kit/db/schedules`).
  *
  * A tick is bounded (`@sssb/kit/server-lib/scheduled-tick`), so it may leave due work for the next one: then the line
- * ends with how much, as the route's `deferred` counts say it (a lower bound).
+ * ends with how much, as the route's `deferred` counts say it (a lower bound), whenever either drain's `stoppedBy` is set.
  *
  * @param {Record<string, unknown>} body the route's JSON:
- *   `{ ok, spawned, failed, deferred, deliveries: { delivered, failed, dead, deferred } }`
+ *   `{ ok, spawned, failed, deferred, stoppedBy, deliveries: { delivered, failed, dead, deferred, stoppedBy } }`
  */
 export function summarizeTick(body) {
     const deliveries =
         body.deliveries && typeof body.deliveries === 'object'
             ? /** @type {Record<string, unknown>} */ (body.deliveries)
             : {}
+    // A drain that stopped on its bound says so even with nothing counted as left: one whose window had passed before it
+    // began listed nothing, so its `deferred` is 0.
+    const stopped = [body.stoppedBy, deliveries.stoppedBy].some((reason) => reason === 'items' || reason === 'time')
     const left =
-        count(body.deferred) > 0 || count(deliveries.deferred) > 0
-            ? `; left for the next tick: at least ${count(body.deferred)} schedule(s), ${count(deliveries.deferred)} delivery(ies)`
+        stopped || count(body.deferred) > 0 || count(deliveries.deferred) > 0
+            ? `; stopped on its bound, left for the next tick: at least ${count(body.deferred)} schedule(s), ${count(deliveries.deferred)} delivery(ies)`
             : ''
     return (
         `ticked: ${count(body.spawned)} job(s) spawned from due schedules, ${count(body.failed)} schedule(s) failed; ` +

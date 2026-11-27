@@ -69,14 +69,26 @@ const DEFAULT_TICK_BUDGET: TickBudget = {
 /**
  * Runs one tick: the jobs port's sweep, then the due schedules, then the due deliveries, each drain bounded by
  * `options.budget` (the defaults, for any value left out) and fair across tenants. `options.clock` is the wall clock
- * the windows are read against, `Date.now` unless a test passes its own; it never sets "now" for what is due.
+ * the windows are read against, `Date.now` unless a test passes its own; it never sets "now" for what is due. `options.random`
+ * picks where the tenants' rotation starts, `Math.random` unless a test passes its own.
  */
 export async function runScheduledTick(
-    options: { budget?: Partial<TickBudget>; clock?: () => number } = {},
+    options: {
+        budget?: { [K in keyof TickBudget]?: TickBudget[K] | undefined }
+        clock?: () => number
+        random?: () => number
+    } = {},
 ): Promise<ScheduledTickResult> {
     const clock = options.clock ?? Date.now
     const startedAt = clock()
-    const budget = { ...DEFAULT_TICK_BUDGET, ...options.budget }
+    // Field by field, so a field given as `undefined` (an unset environment value, say) means the default, never a hole.
+    const given = options.budget ?? {}
+    const budget: TickBudget = {
+        maxSchedules: given.maxSchedules ?? DEFAULT_TICK_BUDGET.maxSchedules,
+        maxDeliveries: given.maxDeliveries ?? DEFAULT_TICK_BUDGET.maxDeliveries,
+        schedulesWindowMs: given.schedulesWindowMs ?? DEFAULT_TICK_BUDGET.schedulesWindowMs,
+        deliveriesWindowMs: given.deliveriesWindowMs ?? DEFAULT_TICK_BUDGET.deliveriesWindowMs,
+    }
     const now = isSimulated ? worldNow() : new Date()
     // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
     // reported here, the failed jobs' errors say it.
@@ -94,11 +106,13 @@ export async function runScheduledTick(
         maxItems: budget.maxSchedules,
         deadline: startedAt + budget.schedulesWindowMs,
         clock,
+        ...(options.random && { random: options.random }),
     })
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook, {
         maxItems: budget.maxDeliveries,
         deadline: startedAt + budget.deliveriesWindowMs,
         clock,
+        ...(options.random && { random: options.random }),
     })
     return { spawned, failed, deferred, stoppedBy, deliveries }
 }

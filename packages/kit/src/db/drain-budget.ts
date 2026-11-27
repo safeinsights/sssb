@@ -5,15 +5,19 @@
  *
  * THE BOUND. A drain stops starting rows once it has started `maxItems`, or once its `deadline` has passed on the
  * wall clock (`clock`, `Date.now` by default: the server's time limit is wall-clock time, so a simulated world clock
- * never moves it). Work already started is never cut short; the bound is on what is STARTED, so the deadline has to
- * leave room for the longest item after it (`runScheduledTick` sets both drains' deadlines with that margin).
+ * never moves it). The deadline is checked before each tenant's listing query and before each row, so past it a drain
+ * lists nothing more and starts nothing more. Work already started is never cut short; the bound is on what is
+ * STARTED, so the deadline has to leave room for the longest item after it (`runScheduledTick` sets both drains'
+ * deadlines with that margin). A drain called with no budget at all is unbounded, as every drain was before the bound:
+ * the tick always passes one, and the Simulator's own controls, which run no server limit, pass none.
  *
  * FAIRNESS. Each tenant's due rows form a queue, oldest due first; the drain takes one row from each tenant in turn
  * (round-robin), so no tenant gets a second turn while another with due work has had none, and a tenant with a
- * thousand due rows, or one slow endpoint, costs every other tenant at most one of its turns per round. The tenants
- * themselves go in order of their oldest due row: a tenant left out when a tick ran out keeps that row, which only
- * grows older, while the rows of the tenants it served were claimed and moved on, so the next tick serves it first.
- * Nothing about the order is stored.
+ * thousand due rows, or one slow endpoint, costs every other tenant at most one of its turns per round. Which tenant
+ * goes first changes every tick: the tenants are put in id order and rotated by a random offset (`random`,
+ * `Math.random` by default), the same order for the listing and for the turns. A tick that can serve only some of
+ * them therefore serves each with the same chance whatever the others hold, so no tenant is kept out tick after tick
+ * by older or longer backlogs elsewhere. Nothing about the order is stored.
  *
  * THE REMAINDER. A row the drain does not start is not touched: no claim, no lock, no write. It is still due, and the
  * next tick lists it again. Nothing is lost, and nothing runs twice, since running twice is what each drain's own
@@ -22,12 +26,14 @@
 
 /** What one drain may start in a tick. */
 export interface DrainBudget {
-    /** The most due rows the drain starts, a positive whole number. */
+    /** The most due rows the drain starts: a positive whole number, or `Infinity` for no bound. */
     maxItems: number
-    /** The instant, in `clock`'s milliseconds, after which the drain starts nothing new. */
+    /** The instant, in `clock`'s milliseconds, after which the drain starts nothing new; `Infinity` for no bound. */
     deadline: number
     /** The clock `deadline` is read against: `Date.now` unless a test passes its own. */
     clock?: () => number
+    /** Where in the tenants' id order the tick's rotation starts, from [0, 1): `Math.random` unless a test passes one. */
+    random?: () => number
 }
 
 /** Why a drain stopped before it ran out of due rows: it started `maxItems`, or its deadline passed. */
@@ -38,18 +44,17 @@ export interface DrainLeft {
     /**
      * Due rows the drain listed and did not start, which the next tick lists again. A lower bound: a drain lists at
      * most one row more than `maxItems` for each tenant (enough to know it stopped on its bound, since no tick could
-     * start more of one tenant's), and a drain whose deadline had passed before it began lists none.
+     * start more of one tenant's), and lists no tenant once its deadline has passed.
      */
     deferred: number
-    /** What stopped the drain, or null when it started every due row it listed. */
+    /** What stopped the drain, or null when it started every due row there was. */
     stoppedBy: DrainStop | null
 }
 
 /** One tenant's due rows, oldest due first, as a drain lists them. */
 export interface TenantQueue<T> {
     tenantId: string
-    /** Oldest due first; `due` is the row's due instant in milliseconds. */
-    rows: readonly (T & { due: number })[]
+    rows: readonly T[]
 }
 
 /** The most due rows of each kind one tick starts, unless the caller says otherwise. */
@@ -60,62 +65,90 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
  * 30-second limit (@sssb/cdk's `SssbApp`; the tick runs inside the cron route's request), counted from the start of the
  * request: schedules first, then deliveries, so schedules may start work for 8 seconds and deliveries until 16. A
  * delivery started at 16 seconds may take the POST's 10 (`WEBHOOK_TIMEOUT_MS`, ../server-lib/webhook-dispatch.ts)
- * plus its claim, record and audit transactions, which leaves about four seconds for those and the response. Giving
- * deliveries a window of their own means a run of schedules cannot spend the whole tick: deliveries always get from
- * where schedules stopped until 16 seconds. A schedule's spawn under the in-process jobs runner runs the job itself
- * (`jobs.start`), which no window can bound; such work belongs on a runner with compute of its own.
+ * plus its claim, record and audit transactions, which leaves about four seconds for those, a listing query begun just
+ * before the deadline, and the response. Giving deliveries a window of their own means a run of schedules cannot spend
+ * the whole tick: deliveries always get from where schedules stopped until 16 seconds. A schedule's spawn under the
+ * in-process jobs runner runs the job itself (`jobs.start`), which no window can bound; such work belongs on a runner
+ * with compute of its own.
  */
 /** How long after the tick's start the schedules drain may start a spawn. */
 export const SCHEDULES_WINDOW_MS = 8_000
 /** How long after the tick's start the deliveries drain may start a delivery. */
 export const DELIVERIES_WINDOW_MS = 16_000
 
-/**
- * The budget a drain uses when its caller passes none: `DEFAULT_DRAIN_MAX_ITEMS`, and a deadline `windowMs` from now.
- * `runScheduledTick` passes its own, measured from the tick's start rather than from each drain's.
- */
-export function drainBudgetOrDefault(budget: DrainBudget | undefined, windowMs: number): DrainBudget {
-    const resolved = budget ?? { maxItems: DEFAULT_DRAIN_MAX_ITEMS, deadline: Date.now() + windowMs }
-    checkDrainBudget(resolved)
+/** No bound: what a drain called without a budget does (every due row, as before the bound). */
+const UNBOUNDED: DrainBudget = { maxItems: Number.POSITIVE_INFINITY, deadline: Number.POSITIVE_INFINITY }
+
+/** The caller's budget, checked, or no bound when it passes none. */
+export function resolveDrainBudget(budget: DrainBudget | undefined): DrainBudget {
+    const resolved = budget ?? UNBOUNDED
+    const { maxItems, deadline } = resolved
+    if (!(maxItems === Number.POSITIVE_INFINITY || (Number.isInteger(maxItems) && maxItems >= 1))) {
+        throw new RangeError(`a drain budget's maxItems must be a whole number, at least 1 (got ${maxItems})`)
+    }
+    if (Number.isNaN(deadline) || deadline === Number.NEGATIVE_INFINITY) {
+        throw new RangeError(`a drain budget's deadline must be an instant or Infinity (got ${deadline})`)
+    }
     return resolved
 }
 
-/** Refuses a budget no drain can honour, so a typo fails the tick loudly instead of draining nothing. */
-function checkDrainBudget(budget: DrainBudget): void {
-    if (!Number.isInteger(budget.maxItems) || budget.maxItems < 1) {
-        throw new RangeError(`a drain budget's maxItems must be a whole number, at least 1 (got ${budget.maxItems})`)
-    }
-    if (!Number.isFinite(budget.deadline)) {
-        throw new RangeError(`a drain budget's deadline must be a finite instant (got ${budget.deadline})`)
-    }
+/** How many rows to list per tenant: one more than the bound, or all of them when there is none. */
+export function listingLimit(budget: DrainBudget): number | null {
+    return Number.isFinite(budget.maxItems) ? budget.maxItems + 1 : null
 }
 
-/** Whether the drain may still begin: its deadline has not passed. Checked before it lists anything. */
-export function drainMayStart(budget: DrainBudget): boolean {
+/** Whether the deadline has not passed yet. */
+export function beforeDeadline(budget: DrainBudget): boolean {
     return (budget.clock ?? Date.now)() < budget.deadline
 }
 
+/** The tenants in id order, rotated to start at the tick's random offset: the order of the listing and of the turns. */
+export function tickOrder<T extends { id: string }>(tenants: readonly T[], budget: DrainBudget): T[] {
+    const byId = [...tenants].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    if (byId.length === 0) return byId
+    const draw = (budget.random ?? Math.random)()
+    const offset = Math.min(byId.length - 1, Math.max(0, Math.floor(draw * byId.length)))
+    return [...byId.slice(offset), ...byId.slice(0, offset)]
+}
+
 /**
- * Runs `run` over the queues' rows in the fair order above until the rows or the budget run out. `run` isolates its
- * own failures (each drain counts them); one that throws anyway stops the drain, as an unhandled error did before.
+ * Lists each tenant's due rows in the tick's order, stopping when the deadline passes (`listOne` runs one tenant's
+ * query), then runs `run` over them round-robin until the rows or the budget run out. `run` isolates its own failures
+ * (each drain counts them); one that throws anyway stops the drain, as an unhandled error did before.
  */
 export async function drainFairly<T>(
+    tenants: readonly { id: string }[],
+    budget: DrainBudget,
+    listOne: (tenantId: string) => Promise<readonly T[]>,
+    run: (row: T, tenantId: string) => Promise<void>,
+): Promise<DrainLeft> {
+    const queues: TenantQueue<T>[] = []
+    let cutShort = false
+    for (const tenant of tickOrder(tenants, budget)) {
+        if (!beforeDeadline(budget)) {
+            cutShort = true
+            break
+        }
+        const rows = await listOne(tenant.id)
+        if (rows.length > 0) queues.push({ tenantId: tenant.id, rows })
+    }
+    const left = await runRoundRobin(queues, budget, run)
+    // A listing the deadline cut short left tenants unlisted: say so even when every listed row was started.
+    return cutShort && left.stoppedBy === null ? { ...left, stoppedBy: 'time' } : left
+}
+
+/** The turns: one row from each queue in order, round after round, until the rows or the budget run out. */
+export async function runRoundRobin<T>(
     queues: readonly TenantQueue<T>[],
     budget: DrainBudget,
-    run: (row: T & { due: number }, tenantId: string) => Promise<void>,
+    run: (row: T, tenantId: string) => Promise<void>,
 ): Promise<DrainLeft> {
     const clock = budget.clock ?? Date.now
-    const ordered = queues
-        .filter((q) => q.rows.length > 0)
-        .sort(
-            (a, b) =>
-                a.rows[0]!.due - b.rows[0]!.due || (a.tenantId < b.tenantId ? -1 : a.tenantId > b.tenantId ? 1 : 0),
-        )
-    const total = ordered.reduce((sum, q) => sum + q.rows.length, 0)
-    const rounds = ordered.reduce((most, q) => Math.max(most, q.rows.length), 0)
+    const total = queues.reduce((sum, q) => sum + q.rows.length, 0)
+    const rounds = queues.reduce((most, q) => Math.max(most, q.rows.length), 0)
     let started = 0
     for (let round = 0; round < rounds; round++) {
-        for (const queue of ordered) {
+        for (const queue of queues) {
             const row = queue.rows[round]
             if (row === undefined) continue
             if (started >= budget.maxItems) return { deferred: total - started, stoppedBy: 'items' }
