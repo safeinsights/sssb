@@ -2182,6 +2182,23 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         ).toMatch(/declared with `declare`/)
     })
 
+    it('is null for a listed declaration the file changes or shares outside the read', () => {
+        for (const src of [
+            "import { db } from './db'\nconst cache: Record<string, unknown> = {}\n;(cache as never as { db: unknown }).db = db\nexport function GET() { return Response.json(cache) }",
+            "import { db } from './db'\nconst cache = new Map<string, unknown>()\nexport async function POST() { cache.set('k', await db.secret()); return Response.json({}) }\nexport function GET() { return Response.json([...cache]) }",
+            'const cache = { a: 1 }\nexport { cache }\nexport function GET() { return Response.json(cache) }',
+            "import { db } from './db'\nfunction f() { return 1 }\nnamespace f { export const d = db }\nexport function GET() { return Response.json(f.d) }",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf(
+                "import { db } from './db'\nconst box = {}\nObject.assign(box, { db })\nexport function GET() { return Response.json(box) }",
+                'GET',
+            ).outsideRefusal,
+        ).toMatch(/`box` is also used outside the read \(line 3\)/)
+    })
+
     it('is null for a handler exported by name that reads what is hung on it', () => {
         const self =
             "import { load } from './db'\n" +
@@ -2446,6 +2463,31 @@ describe('judging a handler against a policy', () => {
 })
 
 describe('a route group is not part of the path an exemption is matched against', () => {
+    it("drops a parallel route's @slot segment too, and keeps an interception marker", () => {
+        const root = { exemptDir: '/app/src/app/api' }
+        expect(exemptRel(root, '/app/src/app/api/@s/service/y/route.ts')).toBe('service/y/route.ts')
+        expect(exemptRel(root, '/app/src/app/api/(.)service/z/route.ts')).toBe('(.)service/z/route.ts')
+    })
+
+    it('refuses a route under an intercepting segment, which Next also serves at the URL it intercepts', () => {
+        for (const rel of ['(.)service/z/route.ts', 'a/(..)b/route.ts', '(...)x/route.ts', '(..)(..)x/route.ts']) {
+            const [route] = scanTree({ [rel]: 'export async function GET() { return Response.json({}) }' })
+            expect(route?.handlers, rel).toEqual([
+                { verb: '*', refusal: expect.stringMatching(/under an intercepting segment/) },
+            ])
+        }
+    })
+
+    it('names the path as written in a failure when a group or slot is dropped from it', () => {
+        const [route] = scanTree({
+            '(internal)/x/route.ts': 'export async function POST() { return Response.json({}) }',
+        })
+        const policy: ScanPolicy = { exemptPrefixes: {}, exemptFiles: {}, requiredAlongside: {} }
+        expect(judge(route!, route!.handlers[0]!, policy)).toMatch(
+            /^case: x\/route\.ts \(at \(internal\)\/x\/route\.ts\) POST /,
+        )
+    })
+
     it('drops (name) segments inside and above the exempt directory', () => {
         const root = { exemptDir: '/app/src/app/api' }
         expect(exemptRel(root, '/app/src/app/api/(internal)/service/x/route.ts')).toBe('service/x/route.ts')

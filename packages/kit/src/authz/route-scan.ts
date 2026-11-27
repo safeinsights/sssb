@@ -213,8 +213,10 @@ export type Handler =
 
 export interface ScannedRoute {
     root: string
-    /** Path relative to the root's `exemptDir`, `/`-separated, with route groups' `(name)` segments dropped (`exemptRel`). */
+    /** Path relative to the root's `exemptDir`, `/`-separated, with route groups' and slots' segments dropped (`exemptRel`). */
     rel: string
+    /** The path as written, relative to `exemptDir`, when it differs from `rel` (a route group or slot in it). */
+    written?: string
     file: string
     /** One entry per exported verb Next routes (`JUDGED_VERBS`). Empty for a file that exports none. */
     handlers: Handler[]
@@ -231,12 +233,31 @@ export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}
     return roots.flatMap((root) => {
         const scanner = new RootScanner(root, authorizeModules)
         const unreadable = new Map<string, string>()
-        const routes: ScannedRoute[] = routeFiles(root.dir, unreadable).map((file) => ({
-            root: root.label,
-            rel: exemptRel(root, file),
-            file,
-            handlers: scanner.handlers(file),
-        }))
+        const routes: ScannedRoute[] = routeFiles(root.dir, unreadable).map((file) => {
+            const written = path.relative(root.exemptDir, file).split(path.sep).join('/')
+            const rel = exemptRel(root, file)
+            const intercepting = path
+                .relative(root.dir, file)
+                .split(path.sep)
+                .some((s) => INTERCEPTING_SEGMENT.test(s))
+            return {
+                root: root.label,
+                rel,
+                ...(written === rel ? {} : { written }),
+                file,
+                handlers: intercepting
+                    ? [
+                          {
+                              verb: '*',
+                              refusal:
+                                  'the route is under an intercepting segment (`(.)x`, `(..)x`, `(...)x`), which Next ' +
+                                  'also serves at the URL it intercepts, so the scan cannot tell which rules apply; ' +
+                                  'serve the handler from a route that is not intercepting',
+                          },
+                      ]
+                    : scanner.handlers(file),
+            }
+        })
         for (const [dir, code] of unreadable) {
             routes.push({
                 root: root.label,
@@ -261,9 +282,23 @@ export function exemptRel(root: Pick<ScanRoot, 'exemptDir'>, file: string): stri
     const segments = path
         .relative(path.dirname(root.exemptDir), file)
         .split(path.sep)
-        .filter((segment) => !/^\(.*\)$/.test(segment))
+        .filter((segment) => !isUnroutedSegment(segment))
     return segments[0] === base ? segments.slice(1).join('/') : ['..', ...segments].join('/')
 }
+
+/**
+ * A segment that is not part of the URL Next serves a route at: a route group `(name)` and a parallel route's slot
+ * `@name` (Next's own `normalizeAppPath` drops both).
+ */
+export function isUnroutedSegment(segment: string): boolean {
+    return /^\(.*\)$/.test(segment) || segment.startsWith('@')
+}
+
+/**
+ * An intercepting route's segment, `(.)x`, `(..)x`, `(...)x` or `(..)(..)x`: Next serves what is under it at the URL it
+ * intercepts too, on a header the client sends, so a path-keyed rule cannot tell which URL it answers.
+ */
+const INTERCEPTING_SEGMENT = /^(?:\(\.{1,3}\))+/
 
 function routeFiles(dir: string, unreadable: Map<string, string>): string[] {
     return walkFiles(
@@ -607,7 +642,7 @@ export function describeGate(gate: Gate): string {
 
 /** Why `handler` fails the scan, or undefined if it passes. */
 export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy): string | undefined {
-    const where = `${route.root}: ${route.rel} ${handler.verb}`
+    const where = `${route.root}: ${route.rel}${route.written === undefined ? '' : ` (at ${route.written})`} ${handler.verb}`
     if (handler.refusal !== undefined) {
         return `${where} cannot be checked: ${handler.refusal}. The scan fails a handler it cannot follow rather than pass it.`
     }
@@ -2183,6 +2218,7 @@ function outsideNamesOf(
                 return refuse(`\`${id.text}\` is exported, so another module can change it`)
             }
             names.add(id.text)
+            followed(decl, id.text)
             follow(variable)
             return true
         }
@@ -2190,6 +2226,7 @@ function outsideNamesOf(
             if (isReassigned(src, decl) || isRedeclared(decl))
                 return refuse(`\`${id.text}\` is reassigned or redeclared`)
             names.add(id.text)
+            followed(decl, id.text)
             follow(decl)
             return true
         }
@@ -2199,6 +2236,51 @@ function outsideNamesOf(
         if (roots.includes(node)) return
         roots.push(node)
         visit(node)
+    }
+    /** Every declaration of the file a listed name stands for, by symbol: checked below for writes from elsewhere. */
+    const listed = new Map<ts.Symbol, string>()
+    const followed = (decl: ts.Declaration, name: string): void => {
+        const declName = (decl as ts.NamedDeclaration).name
+        const symbol = declName === undefined ? undefined : checker.getSymbolAtLocation(declName)
+        if (symbol !== undefined) listed.set(symbol, name)
+        else refuse(`\`${name}\` cannot be resolved`)
+    }
+    /** The symbol an identifier refers to, through a shorthand property and an export specifier. */
+    const symbolAt = (id: ts.Identifier): ts.Symbol | undefined => {
+        const parent = id.parent
+        if (ts.isShorthandPropertyAssignment(parent) && parent.name === id) {
+            return checker.getShorthandAssignmentValueSymbol(parent)
+        }
+        if (ts.isExportSpecifier(parent)) return checker.getExportSpecifierLocalTargetSymbol(parent)
+        return checker.getSymbolAtLocation(id)
+    }
+    /**
+     * A listed declaration of the file is what the walk read only if nothing else in the file can change it: no
+     * reference to it outside the walked code (a top-level write `cache.db = db`, another handler's `cache.set(…)`, an
+     * `export { cache }` an importer could fill), and one declaration only (a function merged with a namespace).
+     */
+    const untouchedElsewhere = (): void => {
+        for (const [symbol, name] of listed) {
+            if ((symbol.declarations?.length ?? 0) > 1) return void refuse(`\`${name}\` has more than one declaration`)
+        }
+        const check = (node: ts.Node): void => {
+            if (refusal !== null) return
+            if (
+                ts.isIdentifier(node) &&
+                !roots.some((root) => node.getStart(sf) >= root.getStart(sf) && node.end <= root.end)
+            ) {
+                const symbol = symbolAt(node)
+                const name = symbol === undefined ? undefined : listed.get(symbol)
+                if (name !== undefined) {
+                    const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1
+                    return void refuse(
+                        `\`${name}\` is also used outside the read (line ${line}), where it can be changed`,
+                    )
+                }
+            }
+            ts.forEachChild(node, check)
+        }
+        check(sf)
     }
     /** Records what `id` refers to; false when no name can excuse it. */
     const reference = (id: ts.Identifier): boolean => {
@@ -2248,6 +2330,7 @@ function outsideNamesOf(
         ts.forEachChild(node, visit)
     }
     visit(fn)
+    if (refusal === null && listed.size > 0) untouchedElsewhere()
     return refusal === null ? { names, refusal: null } : { names: null, refusal }
 }
 

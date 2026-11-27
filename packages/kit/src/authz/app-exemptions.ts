@@ -8,7 +8,9 @@ import {
     type ScannedRoute,
     type ScanRoot,
     type ScanPolicy,
+    exemptionFor,
     isReadVerb,
+    isUnroutedSegment,
     judge,
     judgeServerAction,
     scanRoutes,
@@ -54,8 +56,6 @@ const ROUTE_FILE = /(?:^|\/)route\.(?:mjs|[jt]sx?)$/
 const GLOB = /[*?[\]{}]/
 /** A dynamic segment Next routes by (`[id]`, `[...slug]`, `[[...slug]]`): literal in a key, never a glob. */
 const DYNAMIC_SEGMENT = /^(?:\[[\w-]+\]|\[\.\.\.[\w-]+\]|\[\[\.\.\.[\w-]+\]\])$/
-/** A route group (`(marketing)`): not part of the URL, so a key is matched without it, as a route's path is. */
-const ROUTE_GROUP = /^\(.*\)$/
 /**
  * The framework prefixes under which an app may name one file with a reads-only entry: `webhooks/` alone, for a
  * provider's verification handshake (safeinsights/sssb#220). `simulator/`'s guarantee is "404 in real mode", which a
@@ -87,6 +87,7 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
         ...Object.keys(FRAMEWORK_POLICY.exemptPrefixes),
         ...Object.keys(FRAMEWORK_POLICY.requiredAlongside),
     ]
+    const duplicated = new Set<string>()
     /** Validates one `{ files, prefixes }` space: the api one (keys relative to src/app/api) or `outsideApi`. */
     const space = (key: string, entries: unknown, outside: boolean): void => {
         const name = outside ? `outsideApi.${key}` : key
@@ -101,7 +102,7 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
             // Matched as the scan matches a route: by URL, so a route group's segment is dropped.
             const rel = written
                 .split('/')
-                .filter((segment) => !ROUTE_GROUP.test(segment))
+                .filter((segment) => !isUnroutedSegment(segment))
                 .join('/')
             if (
                 rel === '' ||
@@ -164,10 +165,16 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
                 )
                 continue
             }
-            ;(prefix ? exemptions.prefixes : exemptions.files)[outside ? OUTSIDE_API + rel : rel] = {
-                reason,
-                mustMatch,
+            const target = prefix ? exemptions.prefixes : exemptions.files
+            const stored = outside ? OUTSIDE_API + rel : rel
+            // Two written keys for one URL (`feed/route.ts` and `(site)/feed/route.ts`) would leave one silently in force.
+            if (Object.hasOwn(target, stored) || duplicated.has(stored)) {
+                problems.push(`${where} names the same route as another key once route groups and slots are dropped`)
+                delete target[stored]
+                duplicated.add(stored)
+                continue
             }
+            target[stored] = { reason, mustMatch }
         }
     }
     for (const [key, entries] of Object.entries(value)) {
@@ -238,7 +245,12 @@ function policyWithApp(app: AppExemptions): ScanPolicy {
 }
 
 /** App exemptions that match no judged route in the app's own tree (`judgedRels`, relative to its `src/app/api`). */
-function staleAppExemptions(app: AppExemptions, judged: readonly ScannedRoute[], label: string): string[] {
+function staleAppExemptions(
+    app: AppExemptions,
+    judged: readonly ScannedRoute[],
+    policy: ScanPolicy,
+    label: string,
+): string[] {
     // A reads-only entry applies to reads only, so it is in use only where a read handler is.
     const covers = (exemption: Exemption, matches: (rel: string) => boolean) =>
         judged.some(
@@ -259,11 +271,19 @@ function staleAppExemptions(app: AppExemptions, judged: readonly ScannedRoute[],
     const unused = (kind: string, rel: string, exemption: Exemption, matches: (r: string) => boolean): string[] => {
         const gate = exemption.mustMatch
         if (gate.kind !== 'reads-only') return []
+        // Only the reads this entry governs (not one under its own exact entry), and that rest on it (not one that
+        // authorizes anyway): a name only those use is in use.
         const read = new Set(
             judged
                 .filter((route) => matches(route.rel))
-                .flatMap((route) => route.handlers)
-                .filter((h) => isReadVerb(h.verb))
+                .flatMap((route) =>
+                    route.handlers.filter(
+                        (h) =>
+                            isReadVerb(h.verb) &&
+                            !h.facts?.reachesAuthorize &&
+                            exemptionFor(policy, route.rel, h.verb) === exemption,
+                    ),
+                )
                 .flatMap((h) => [...(h.facts?.outsideNames ?? [])]),
         )
         return gate.names
@@ -394,6 +414,6 @@ export async function scanApp(appDir: string): Promise<AppScan> {
         routes,
         actions,
         failures,
-        exemptionProblems: [...problems, ...staleAppExemptions(exemptions, judged, label)],
+        exemptionProblems: [...problems, ...staleAppExemptions(exemptions, judged, policy, label)],
     }
 }

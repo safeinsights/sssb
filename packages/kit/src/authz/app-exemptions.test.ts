@@ -347,6 +347,46 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         ).toEqual([expect.stringMatching(/must be a literal path/)])
     })
 
+    it('match a slot like a group: an @slot key under simulator/ overlaps the framework entry', () => {
+        const { problems } = appExemptionsFrom(
+            { files: { '@s/simulator/x/route.ts': { reason: 'r', mustMatch: { kind: 'calls', callees: ['noop'] } } } },
+            'x',
+        )
+        expect(problems).toEqual([expect.stringMatching(/overlaps the framework's own entry `simulator\/`/)])
+    })
+
+    it('refuse two keys that name one route once groups and slots are dropped, and apply neither', () => {
+        const entry = { reason: 'r', mustMatch: { kind: 'reads-only', names: ['posts'] } }
+        const { problems, exemptions } = appExemptionsFrom(
+            { files: { 'feed/route.ts': entry, '(g)/feed/route.ts': entry, '@s/feed/route.ts': entry } },
+            'x',
+        )
+        expect(exemptions.files).toEqual({})
+        expect(problems).toEqual([
+            'x: files `(g)/feed/route.ts` names the same route as another key once route groups and slots are dropped',
+            'x: files `@s/feed/route.ts` names the same route as another key once route groups and slots are dropped',
+        ])
+    })
+
+    it("count a prefix entry's names only from the reads it governs", async () => {
+        const exemptions =
+            `export default { prefixes: { 'cors/': ${readsOnly(['corsHeaders'])} }, ` +
+            `files: { 'cors/own/route.ts': ${readsOnly(['corsHeaders'])} } }\n`
+        const scan = await scanApp(
+            app(
+                {
+                    'api/cors/own/route.ts': PREFLIGHT,
+                    'api/cors/other/route.ts': `import { authorize } from '@sssb/kit/authz/authorize'\nimport { corsHeaders } from '../../../../cors'\nconst user = null as never\nexport function GET() { authorize(user, 'depot', 'read', { type: 'Docket', orgId: 'depot' }); return new Response(null, { headers: corsHeaders }) }\n`,
+                },
+                exemptions,
+            ),
+        )
+        expect(scan.failures).toEqual([])
+        expect(scan.exemptionProblems).toEqual([
+            'acme/authz-exemptions.mjs: prefixes `cors/` lists `corsHeaders`, which no read handler it covers names; list only what the read uses',
+        ])
+    })
+
     it('call a listed name stale when no read handler it covers names it', async () => {
         const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders', 'db'])} } }\n`
         const scan = await scanApp(app({ 'api/cors/route.ts': PREFLIGHT }, exemptions))
