@@ -8251,3 +8251,39 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   neither ends the wait nor counts as the database's answer. Rejected: **keeping at most a few in flight by not sending**,
   which would hold up a wait the probes in flight may never end. The SDK's pool size was not read; the bound does not
   depend on it.
+## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
+
+`safeinsights/sssb#230` and `safeinsights/sssb#241`, two leftovers of the `#98` and `#145` work.
+
+- **`#230`: what the SDK 1.8.0 gives for a connection that drops** (probed against its real classes, with a stubbed
+  `fetch` and no network): a streamed body that dies while it is read is a plain `AnthropicError('terminated')`, whose
+  `cause` is undici's `TypeError('terminated')`, whose `cause` has `code: 'UND_ERR_SOCKET'`; a non-streaming body that
+  dies reaches the caller as that bare `TypeError('terminated')`; `fetch` itself rejecting is an `APIConnectionError`
+  (the one the adapter already repeated, and then passed on unmapped). `adapters/real/llm.test.ts` pins the first shape
+  by asserting the thrown error's own classes and cause chain, so an SDK that changes it fails a test by name.
+- **It is `LlmUnavailableError('connection-lost')`, and repeated before any text.** The provider is not answering, and may
+  be soon: the same shape as a rate limit or an overload, so a route answers the 503 it already answers and a job
+  fails with a typed cause. A new reason, not `timed-out` (the deadline did not pass, and a caller that tells the two
+  apart may wait for one and not the other) and not `overloaded` (the provider said nothing). The reason union grows by
+  one, so an exhaustive `switch` on `reason` in an app needs a case (a type error, never a runtime one): the changeset
+  says so. `retryAfterSeconds` is the default 10.
+- **Detection is by what the error carries, not by its class:** `isConnectionDrop` (`adapters/real/llm.ts`) is an
+  `APIConnectionError`, or anything in a five-deep cause chain that is a `TypeError('terminated')` or has a code that
+  is undici's (`UND_ERR_*`) or a transport's (`ECONNRESET`, `ECONNREFUSED`, `ECONNABORTED`, `EPIPE`, `ENOTFOUND`,
+  `EAI_AGAIN`, `ENETUNREACH`, `EHOSTUNREACH`). Matching `AnthropicError` alone was rejected: the SDK also throws it for a
+  request it refuses to send, which no retry mends. An error with no transport cause passes through as before.
+  The check runs over what the provider's calls throw, never over what the app's tool throws: a tool loop's `execute`
+  failures are tagged on the way out (`ToolFailure`) and unwrapped by the adapter's error mapping, because a database
+  reset or a tool's own `fetch` that dropped carries the same codes and would otherwise be reported as the provider's
+  outage (found in review; a test per shape). The demo replay's failing entry still fails when it has no answer to give.
+- **The same rule retries and maps.** A call whose connection dropped is repeated once, as every other retryable failure,
+  inside the deadline and only when the wait fits; a stream only when it had delivered no text (the consumer has the rest
+  otherwise, so it ends in `connection-lost` after that text). A non-streaming call is repeated though its body had begun,
+  as the SDK's own policy repeated a failed connection: it may be billed twice.
+- **`#241`: the demo's `replayAssistant` chooses its answering entry as the fake's `lookupToolLoop` does:** the entry
+  recorded for the question, else the default entry, whose `conversation` is replayed with its tools, or, with none, its
+  `response` as a one-turn answer. Before, a default entry's conversation was answered by its `response` alone, so the
+  demo ran none of the tools the server's replay runs. Answered, from the open question: an unrecorded question's tools
+  do run live in the demo, as on the server, because a demo that skipped them would show a different world from the one
+  the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
+  (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.
