@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { clientAddressFrom, publicOriginFrom, VIEWER_ADDRESS_HEADER } from './edge-headers'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { clientAddress, clientAddressFrom, publicOrigin, publicOriginFrom, VIEWER_ADDRESS_HEADER } from './edge-headers'
 
 const EDGE = { SSSB_EDGE: 'cloudfront' }
 
@@ -98,5 +98,30 @@ describe('clientAddress', () => {
         expect(clientAddressFrom(EDGE, { headers: new Headers({ [VIEWER_ADDRESS_HEADER]: '203.0.113.9' }) })).toBe(
             '203.0.113.9',
         )
+    })
+})
+
+describe("the exported helpers read the server's own environment", () => {
+    afterEach(() => {
+        vi.unstubAllEnvs()
+    })
+
+    it('believe the edge headers under SSSB_EDGE=cloudfront, and PUBLIC_ORIGIN over them', () => {
+        vi.stubEnv('PUBLIC_ORIGIN', undefined)
+        vi.stubEnv('SSSB_EDGE', 'cloudfront')
+        const behind = request({ 'x-forwarded-host': 'app.example.org', [VIEWER_ADDRESS_HEADER]: '198.51.100.7' })
+        expect(publicOrigin(behind)).toBe('https://app.example.org')
+        expect(clientAddress(behind)).toBe('198.51.100.7')
+        vi.stubEnv('PUBLIC_ORIGIN', 'https://www.example.org')
+        expect(publicOrigin(behind)).toBe('https://www.example.org')
+        expect(publicOrigin()).toBe('https://www.example.org')
+    })
+
+    it('believe none of them without SSSB_EDGE', () => {
+        vi.stubEnv('PUBLIC_ORIGIN', undefined)
+        vi.stubEnv('SSSB_EDGE', undefined)
+        const forged = request({ 'x-forwarded-host': 'evil.example', [VIEWER_ADDRESS_HEADER]: '1.2.3.4' })
+        expect(publicOrigin(forged)).toBe('https://localhost:3000')
+        expect(clientAddress(forged)).toBeUndefined()
     })
 })
