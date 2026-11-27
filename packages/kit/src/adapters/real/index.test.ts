@@ -59,6 +59,8 @@ function stubEnv(env: Record<string, string | undefined>): void {
 
 beforeEach(() => {
     vi.resetModules()
+    // `./db` is the real one unless a test mocks it, and a test's `doMock` outlives the test.
+    vi.doUnmock('./db')
     for (const name of Object.keys(loaded) as (keyof typeof loaded)[]) loaded[name] = 0
     // Registered per test, not hoisted: a hoisted factory is cached across resetModules, so it would
     // count only the FIRST load in this file and every later "never loads" would pass vacuously.
@@ -96,6 +98,7 @@ beforeEach(() => {
         return { createInProcessJobs: () => ({}) }
     })
     stubEnv({ ...COMMON_ENV, DATABASE_TRANSPORT: undefined, DATABASE_URL: undefined })
+    stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: undefined })
     stubEnv(Object.fromEntries(Object.keys(DATA_API_ENV).map((name) => [name, undefined])))
     stubEnv(Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, undefined])))
     stubEnv({
@@ -152,6 +155,48 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
         }
         // A pg deployment does not read it.
         stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
+
+    it('DATABASE_SSL_MODE and DATABASE_SSL_ROOT_CERT reach the pg transport, and a malformed pair fails at boot', async () => {
+        const createRealDb = vi.fn().mockReturnValue({})
+        vi.doMock('./db', () => ({ createRealDb }))
+        const url = 'postgres://u:p@localhost:5432/app'
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: url })
+        const { assertRealEnv, createRealPorts } = await import('./index')
+        // Unset or empty is verify-full against Node's own roots: never no TLS.
+        for (const unset of [undefined, '']) {
+            stubEnv({ DATABASE_SSL_MODE: unset })
+            await createRealPorts(HOOKS)
+            expect(createRealDb).toHaveBeenLastCalledWith(url, { mode: 'verify-full', rootCert: undefined })
+        }
+        stubEnv({ DATABASE_SSL_MODE: 'verify-full', DATABASE_SSL_ROOT_CERT: '/var/runtime/ca-cert.pem' })
+        await createRealPorts(HOOKS)
+        expect(createRealDb).toHaveBeenLastCalledWith(url, {
+            mode: 'verify-full',
+            rootCert: '/var/runtime/ca-cert.pem',
+        })
+        stubEnv({ DATABASE_SSL_MODE: 'disable', DATABASE_SSL_ROOT_CERT: undefined })
+        await createRealPorts(HOOKS)
+        expect(createRealDb).toHaveBeenLastCalledWith(url, { mode: 'disable' })
+
+        // libpq's other modes are not modes here, and a mode's name has one spelling.
+        for (const bad of ['require', 'prefer', 'verify-ca', 'no-verify', 'VERIFY-FULL', 'true']) {
+            stubEnv({ DATABASE_SSL_MODE: bad, DATABASE_SSL_ROOT_CERT: undefined })
+            expect(() => assertRealEnv()).toThrow(/db-tls.*DATABASE_SSL_MODE must be one of verify-full, disable/s)
+        }
+        stubEnv({ DATABASE_SSL_MODE: 'disable', DATABASE_SSL_ROOT_CERT: '/var/runtime/ca-cert.pem' })
+        expect(() => assertRealEnv()).toThrow(
+            /db-tls.*DATABASE_SSL_ROOT_CERT is set, but DATABASE_SSL_MODE is disable/s,
+        )
+        stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: 'certs/rds.pem' })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*DATABASE_SSL_ROOT_CERT must be an absolute path/s)
+        // The boot check reads no file: the path SssbApp sets exists only on Lambda, and `sssb check-real-env` runs anywhere.
+        stubEnv({ DATABASE_SSL_ROOT_CERT: '/nowhere/ca.pem' })
+        expect(() => assertRealEnv()).not.toThrow()
+
+        // A Data API deployment does not read them.
+        stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, DATABASE_SSL_MODE: 'require' })
         expect(() => assertRealEnv()).not.toThrow()
     })
 
