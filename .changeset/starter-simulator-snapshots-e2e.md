@@ -20,5 +20,5 @@ tour or preset written with `/sssb:new-tour` or `/sssb:new-preset` can be watche
 
 **Now deletable.** A Simulator glue component of the app's own, kept beside SSSB's host only to reach reset,
 snapshots, flags, agreements, presets or tours on `pnpm dev`, with the per-path `api/simulator/<path>/route.ts` files
-it called (`reset`, `snapshots`, `flags`, `agreements`, `presets`); an app that registers its own tabs (Actors) or
-uses Events, Messages, Hooks or Errors still keeps its glue until SSSB's host serves those.
+it called (`reset`, `snapshots`, `flags`, `agreements`, `presets`). The host serves the other framework tabs in this
+release too, and takes an app's own tabs (`extraTabs`): their entries say what else of such a glue goes.

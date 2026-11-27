@@ -17,7 +17,7 @@ read its local showcase app instead).
    (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/tests/e2e/support`: `signInAs`,
    `openSimulatorPanel`), which a generated app lacks: sign in through the people picker as
    `tests/e2e/items.spec.ts` does, and point the reference's Simulator-panel pass at the tabs a generated app's
-   `pnpm dev` panel has (every tab but Actors), opening it by its pill as `tests/e2e/simulator.spec.ts` does. Fix any violations first: axe findings are never "noise". If Playwright complains about a missing
+   `pnpm dev` panel has (every tab but Actors, and Tours until the app registers one), opening it by its pill as `tests/e2e/simulator.spec.ts` does. Fix any violations first: axe findings are never "noise". If Playwright complains about a missing
    browser, run `pnpm --filter <app> exec playwright install chromium` once, then retry.
 2. With `pnpm dev` up, go beyond axe using Playwright or browser tools:
     - Keyboard-only pass across sign-in → dashboard → team switch and the app's own flows: tab order matches visual

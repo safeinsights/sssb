@@ -211,13 +211,19 @@ export function SimulatorHost({
     const mailTickets = useTickets()
     const jobsTickets = useTickets()
     const schedulesTickets = useTickets()
-    // A poll's answer must not overwrite a newer start or stop's: both take a ticket.
+    // A poll's answer must not overwrite a start or stop's: a start or stop takes its ticket once its POST has been
+    // answered, so a poll sent before or during it is older and is dropped.
     const tickerTickets = useTickets()
     const inboundTickets = useTickets()
     const messagesTickets = useTickets()
     const eventsTickets = useTickets()
     const auditTickets = useTickets()
     const hooksTickets = useTickets()
+    // The Snapshots tab's feeds: two of its actions can be in flight at once (bump one agreement, then another), and
+    // the refresh one triggers must not land over the next one's.
+    const snapshotsTickets = useTickets()
+    const flagsTickets = useTickets()
+    const agreementsTickets = useTickets()
     // The app's tours (`@sssb/app-config/tours`, read by the engine itself). A tour's starting world resolves the same
     // way on every host (`resolveWorldStart`): a reset, a registered demo preset, or here a saved snapshot. Each reloads
     // the page, and the engine's resume marker carries the tour across it.
@@ -287,19 +293,22 @@ export function SimulatorHost({
     // The Snapshots tab is fetched when it opens and after each of its own actions, never polled: its own actions
     // refetch or reload, and a change made elsewhere (an agreement edited on an app page) shows when it next opens.
     const refreshSnapshots = useCallback(async () => {
+        const ticket = snapshotsTickets.take()
         const next = await getJson<SimulatorSnapshots>('snapshots')
-        if (next) setSnapshotsData(next)
-    }, [])
+        if (next && snapshotsTickets.fresh(ticket)) setSnapshotsData(next)
+    }, [snapshotsTickets])
 
     const refreshFlags = useCallback(async () => {
+        const ticket = flagsTickets.take()
         const next = await getJson<SimulatorFlags>('flags')
-        if (next) setFlagsData(next)
-    }, [])
+        if (next && flagsTickets.fresh(ticket)) setFlagsData(next)
+    }, [flagsTickets])
 
     const refreshAgreements = useCallback(async () => {
+        const ticket = agreementsTickets.take()
         const next = await getJson<SimulatorAgreements>('agreements')
-        if (next) setAgreementsData(next)
-    }, [])
+        if (next && agreementsTickets.fresh(ticket)) setAgreementsData(next)
+    }, [agreementsTickets])
 
     const refreshInbound = useCallback(async () => {
         const ticket = inboundTickets.take()
@@ -481,8 +490,9 @@ export function SimulatorHost({
      * what the server holds, and the notice says what happened to the click. A 404 means the app has no such route.
      */
     async function postTicker(request: { action: 'start'; seconds: number } | { action: 'stop' }) {
-        const ticket = tickerTickets.take()
         const response = await post('ticker', request).catch(() => null)
+        // Taken once the server has answered, so every poll sent before or during this POST is older than it.
+        const ticket = tickerTickets.take()
         if (!response) return null
         if (response.status === 404) {
             tickerOffered.current = false

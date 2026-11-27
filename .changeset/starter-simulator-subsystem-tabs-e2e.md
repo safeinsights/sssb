@@ -18,5 +18,5 @@ your app's own `tests/e2e/simulator.spec.ts`, as the generator wrote it, fails o
 test with the starter's at this release.
 
 **Now deletable.** A Simulator glue of the app's own, with its `api/simulator/<path>/route.ts` files, kept only to
-reach Events, Messages, inbound mail, Hooks or Errors on `pnpm dev`; one that registers its own tabs (Actors) or drives
-the dev ticker still keeps its glue for those.
+reach Events, Messages, inbound mail, Hooks or Errors on `pnpm dev`. For a glue that adds an app's own tab or the dev
+ticker control, see the entry for `SimulatorHost`'s `extraTabs` in this release.

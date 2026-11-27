@@ -17,11 +17,11 @@ each one's subpath) is the framework's; each actor is app content.
 **What a generated app has.** A workspace `pnpm create @sssb` generated has two Simulator panels. On `pnpm dev` its
 locale layout mounts SSSB's `SimulatorHost` (`@sssb/kit/components/simulator/simulator-host`), served by its
 `src/app/api/simulator/[...path]/route.ts`: every framework tab, and no Actors tab (the host
-takes no app-registered tab). Its static demo's `src/demo-static/app.tsx` hands the framework's `DemoShell` an empty
+takes an app's own tabs as `extraTabs`, but the generated app hands it none). Its static demo's `src/demo-static/app.tsx` hands the framework's `DemoShell` an empty
 `extraTabs`, so that panel shows SSSB's own tabs and no Actors tab either. And `src/app-config/actors.ts` registers no
 actor, typed so that it cannot (`ActorId` is `never`, the list `readonly { id: string }[]`). So steps 1 to 5 add the
-actor where a panel takes an app's tab, the static demo. The server host is the last section, and it applies only once
-the app's `pnpm dev` panel takes app tabs, which SSSB's host does not yet: the reference app has its own glue for it.
+actor where it is simplest, the static demo. The server host is the last section: `SimulatorHost` takes the tab too,
+but an actor there needs routes and a page of the app's own, as the reference app's has.
 
 1. **Register** in `src/app-config/actors.ts`. The generated list's type has no room for an actor's copy, and the
    kit exports no actor-definition type, so replace both declarations with the reference app's shape
