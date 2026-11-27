@@ -1,5 +1,5 @@
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager'
-import { databaseTransport } from './database-transport'
+import { databaseSsl, databaseTransport } from './database-transport'
 import { createRealDb } from './db'
 
 /** How long the migrator waits for a paused cluster: no user is waiting, and its Lambda has five minutes (SssbApp). */
@@ -47,6 +47,9 @@ export async function handler(): Promise<{ ok: true }> {
 
     const secretArn = process.env['DB_SECRET_ARN']
     if (!secretArn) throw new Error('DB_SECRET_ARN is not set')
+    // TLS is the server's, from the same variables (DATABASE_SSL_MODE, DATABASE_SSL_ROOT_CERT), read before the secret
+    // so a wrong setting fails first. The URL built below carries no `sslmode`, and ./db.ts refuses one that does.
+    const ssl = databaseSsl()
 
     const client = new SecretsManagerClient({})
     const secret = await client.send(new GetSecretValueCommand({ SecretId: secretArn }))
@@ -66,6 +69,7 @@ export async function handler(): Promise<{ ok: true }> {
     // would otherwise be read as a path, a query or an escape, and connect to a different database.
     const db = createRealDb(
         `postgres://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`,
+        ssl,
     )
     await db.migrateToLatest()
     return { ok: true }

@@ -471,9 +471,9 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 145 subpaths your app may
+lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 86 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 87 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -651,6 +651,15 @@ the tenant for the transaction; each tenant table's policy compares the row's `t
   `app_user`) and grant itself the switch to it (0015). Those are needed, not enough: off AWS there is no migrate
   command yet, and SSSB's `pg` adapter has not been run against any deployed database. ADR-0015's "libsql and Turso"
   section lists the rest.
+- **Its TLS.** On `pg` the server and the Migrator connect over TLS that checks the database's certificate chains to a
+  trusted root and names the host in `DATABASE_URL` (libpq's `verify-full`), with nothing for you to set on `SssbApp`,
+  which trusts the Amazon CA bundle the Lambda Node.js runtime carries. Two variables change it, both optional:
+  `DATABASE_SSL_MODE` (`verify-full` when unset or empty; `disable` turns TLS off, for a server that has none, a local
+  one, never a deployed one) and `DATABASE_SSL_ROOT_CERT` (the absolute path of a PEM file whose certificates are then
+  the only roots trusted; unset, Node's own). Another host sets the root file to its own bundle unless its certificate
+  chains to a root Node trusts. `DATABASE_URL` may not set `sslmode` or any other `ssl*` parameter: the adapter refuses
+  it at boot, since `pg` would let it override the mode. The Data API transport has neither variable: the AWS SDK
+  speaks HTTPS. The `db-tls` row of your cutover checklist is the proof a deployment owes.
 
 ### SSSB on Postgres, your data elsewhere
 
@@ -770,6 +779,14 @@ domain" is a proof.
 
 SSSB's file opens with a worked row — closed, dated, owned, with a proof column that was thought through
 rather than restated. Read it once for the level of detail each row deserves before you fill in your own.
+
+**Running real mode under `next dev`.** Set `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1` wherever real mode runs outside
+a production build (the showcase's `dev:real` in SSSB's repository does). Outside one, Clerk's keyless fallback
+would read request data under a key Clerk publishes, so on a path your proxy's matcher skips a forged
+`x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter refuses to read a
+session or call Clerk's Backend API there until the variable and `CLERK_SECRET_KEY` are set, and names what is
+missing when it refuses. A production build (`next build`, then
+`next start`) needs nothing.
 
 ### Ports your app does not use
 

@@ -4,7 +4,7 @@ import { runOwnerPass, type Login } from '../../db/owner-pass'
 import { runRlsProofs } from '../../db/rls-proof-runner'
 import type { DB } from '../../db/schema'
 import type { DbPort } from '../../ports/db'
-import type { ContractServer } from './contract-postgres'
+import { CONTRACT_SSL, type ContractServer } from './contract-postgres'
 import { createRealDb } from './db'
 import { createRealDataApiDb } from './db-data-api'
 import { RdsDataEmulator, type EmulatedCall } from './rds-data-emulator'
@@ -49,7 +49,7 @@ export async function proveRlsThroughDataApi(server: ContractServer, database: s
  * its role switch inside withTenant did too (the one-statement setup, inside a transaction).
  */
 export async function runDataApiOwnerPass(server: ContractServer): Promise<void> {
-    const admin = createRealDb(server.urlFor(server.maintenanceDatabase)).getDb()
+    const admin = createRealDb(server.urlFor(server.maintenanceDatabase), CONTRACT_SSL).getDb()
     const opened = new Map<Kysely<DB>, { port: DbPort; emulator: RdsDataEmulator; login: Login }>()
     const closing: Promise<void>[] = []
     const connect = (login: Login): Kysely<DB> => {
