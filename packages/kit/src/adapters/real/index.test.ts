@@ -28,6 +28,13 @@ const loaded = vi.hoisted(() => ({
     storage: 0,
 }))
 
+/**
+ * A test's stand-in for a database transport module, set in the test and read by the one `doMock` each path gets in
+ * `beforeEach`. Never a second `doMock` of a path in the test: Vitest applies the queued mocks of one kind together
+ * (`Promise.all`, in its module mocker's `resolveMocks`), so two mocks of one path land in either order.
+ */
+const transportOverride = vi.hoisted(() => ({ db: null as object | null, dataApi: null as object | null }))
+
 vi.mock('./auth', () => ({ realAuth: { kind: 'clerk' }, clerkIdentitySource: {} }))
 vi.mock('./analytics', () => ({ createRealAnalytics: () => ({ kind: 'posthog' }) }))
 
@@ -59,8 +66,10 @@ function stubEnv(env: Record<string, string | undefined>): void {
 
 beforeEach(() => {
     vi.resetModules()
-    // `./db` is the real one unless a test mocks it, and a test's `doMock` outlives the test.
-    vi.doUnmock('./db')
+    transportOverride.db = null
+    transportOverride.dataApi = null
+    // The real `./db` unless a test sets its stand-in.
+    vi.doMock('./db', async (importOriginal) => transportOverride.db ?? importOriginal())
     for (const name of Object.keys(loaded) as (keyof typeof loaded)[]) loaded[name] = 0
     // Registered per test, not hoisted: a hoisted factory is cached across resetModules, so it would
     // count only the FIRST load in this file and every later "never loads" would pass vacuously.
@@ -70,7 +79,7 @@ beforeEach(() => {
     })
     vi.doMock('./db-data-api', async (importOriginal) => {
         loaded.dataApiTransport += 1
-        return importOriginal()
+        return transportOverride.dataApi ?? importOriginal()
     })
     // The optional ports' adapters, stubbed (their SDKs are not what is tested here), each counting its own loads.
     vi.doMock('./llm', () => {
@@ -139,7 +148,7 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
 
     it('DATABASE_RESUME_BUDGET_MS reaches the Data API transport, and a malformed one fails at boot', async () => {
         const createRealDataApiDb = vi.fn().mockReturnValue({})
-        vi.doMock('./db-data-api', () => ({ createRealDataApiDb }))
+        transportOverride.dataApi = { createRealDataApiDb }
         stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, DATABASE_RESUME_BUDGET_MS: '9000' })
         const { assertRealEnv, createRealPorts } = await import('./index')
         await createRealPorts(HOOKS)
@@ -160,7 +169,7 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
 
     it('DATABASE_SSL_MODE and DATABASE_SSL_ROOT_CERT reach the pg transport, and a malformed pair fails at boot', async () => {
         const createRealDb = vi.fn().mockReturnValue({})
-        vi.doMock('./db', () => ({ createRealDb }))
+        transportOverride.db = { createRealDb }
         const url = 'postgres://u:p@localhost:5432/app'
         stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: url })
         const { assertRealEnv, createRealPorts } = await import('./index')
