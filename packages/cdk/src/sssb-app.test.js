@@ -517,6 +517,39 @@ describe('the synth assertions fail', () => {
         ).toThrow(/E2E_BUILD is set/)
     })
 
+    it('when a behavior reaches the server without the forwarded-host function', () => {
+        const serverOrigin = (/** @type {any} */ app) =>
+            cdk.aws_cloudfront_origins.FunctionUrlOrigin.withOriginAccessControl(app.functionUrl)
+        expect(
+            withServer((app) => {
+                app.distribution.addBehavior('/api/extra/*', serverOrigin(app), {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                })
+            }),
+        ).toThrow(/\/api\/extra\/\* reaches the server without sssbApp.forwardedHost/)
+        // By an escape hatch on the default behavior too.
+        expect(
+            withServer((app) => {
+                const cfn = /** @type {cdk.CfnResource} */ (app.distribution.node.defaultChild)
+                cfn.addPropertyDeletionOverride('DistributionConfig.DefaultCacheBehavior.FunctionAssociations')
+            }),
+        ).toThrow(/the default behavior reaches the server without sssbApp.forwardedHost/)
+        // With the function, a behavior of the adopter's own is fine.
+        expect(
+            withServer((app) => {
+                app.distribution.addBehavior('/api/extra/*', serverOrigin(app), {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    functionAssociations: [
+                        {
+                            function: app.forwardedHost,
+                            eventType: cdk.aws_cloudfront.FunctionEventType.VIEWER_REQUEST,
+                        },
+                    ],
+                })
+            }),
+        ).not.toThrow()
+    })
+
     it('when the server does not come up in real mode', () => {
         expect(withServer((app) => app.server.addEnvironment('APP_MODE', 'simulated'))).toThrow(
             /APP_MODE is "simulated"/,
@@ -1404,8 +1437,14 @@ describe('the forwarded-host function', () => {
         expect(headers['cookie']).toEqual({ value: 'a=1' })
     })
 
-    it('lowercases the host and drops any port the Host carried', () => {
+    it("lowercases the host and drops any port, and a fully-qualified name's trailing dot, the Host carried", () => {
         expect(request({ host: { value: 'App.Example.ORG:8443' } })['x-forwarded-host']).toEqual({
+            value: 'app.example.org',
+        })
+        expect(request({ host: { value: 'app.example.org.' } })['x-forwarded-host']).toEqual({
+            value: 'app.example.org',
+        })
+        expect(request({ host: { value: 'app.example.org.:443' } })['x-forwarded-host']).toEqual({
             value: 'app.example.org',
         })
     })

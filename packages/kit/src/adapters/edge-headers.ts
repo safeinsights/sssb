@@ -12,12 +12,15 @@ import { originProblem } from './origin-form'
  * (`@sssb/cdk`'s `forwarded-host.js`) runs on every behavior that reaches the server and writes, over anything the
  * visitor sent, `x-forwarded-host` (the `Host` CloudFront routed by, port dropped) and `x-sssb-viewer-address`
  * (the address CloudFront took from the connection, `event.viewer.ip`). The Function URL admits only that
- * distribution (IAM auth, origin access control). Anywhere else, `pnpm dev` and a real-mode server of your own
- * included, those headers are the client's to write, so neither helper reads them.
+ * distribution (IAM auth, origin access control), and `SssbApp` refuses to synthesize a behavior that reaches the
+ * server without the function. Anywhere else, `pnpm dev` and a real-mode server of your own included, those headers
+ * are the client's to write, so neither helper reads them.
  *
- * `SSSB_EDGE` promises that every request crossed that function: set it on any other host only behind a proxy that
- * gives the same two guarantees, and associate `SssbApp.forwardedHost` with every behavior of your own that reaches
- * the server.
+ * `SSSB_EDGE` is `SssbApp`'s alone: it is refused off Lambda (no `AWS_LAMBDA_FUNCTION_NAME`), where a deployment's
+ * environment copied into `dev:real` would otherwise have the server believe headers any client writes. A request that
+ * reached the server without crossing the function (the scheduled tick invokes the server directly) carries no
+ * `x-sssb-viewer-address`, and Next fills a missing `x-forwarded-host` from `Host` (`base-server.js`), the Function
+ * URL's own: so `publicOrigin` takes the forwarded host only beside a viewer address, and only when it is not `Host`.
  */
 
 /** The header `SssbApp`'s viewer-request function writes the visitor's address into (`event.viewer.ip`). */
@@ -47,8 +50,8 @@ type HasHeaders = { readonly headers: Pick<Headers, 'get'> }
  *    a proxy or a tunnel of your own, set `PUBLIC_ORIGIN` instead.
  *
  * Throws, naming `PUBLIC_ORIGIN`, outside a request without it, and behind `SssbApp` on a request that reached the
- * server without crossing the distribution (the scheduled tick invokes it directly); and on a malformed
- * `PUBLIC_ORIGIN` or `SSSB_EDGE`, rather than build a link from it.
+ * server without crossing the distribution's function (the scheduled tick's, which invokes it directly); and on a
+ * malformed `PUBLIC_ORIGIN` or `SSSB_EDGE`, rather than build a link from it.
  */
 export function publicOrigin(request?: HasHeaders & { readonly url: string }): string {
     return publicOriginFrom(process.env, request)
@@ -58,7 +61,8 @@ export function publicOrigin(request?: HasHeaders & { readonly url: string }): s
  * The address the visitor connects from (`198.51.100.7`, `2001:db8::1`), for what keys on it: a rate limit, a
  * lockout, an audit record's "from". `undefined` where the server cannot know it: in `pnpm dev`, on a server that is
  * not behind `SssbApp` (`SSSB_EDGE` unset), and on a request that did not cross the distribution. A caller must treat
- * `undefined` as unknown (one shared bucket for a rate limit, say), never as a free pass.
+ * `undefined` as unknown (one shared bucket for a rate limit, say), never as a free pass. One IPv6 visitor usually
+ * holds a whole /64, so a limit keyed on the full address is one a visitor can multiply.
  *
  * It never reads `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP` or `Forwarded`: behind CloudFront each holds what
  * the visitor wrote (CloudFront appends its own `X-Forwarded-For` entry after the visitor's, and forwards the others
@@ -80,11 +84,14 @@ export function publicOriginFrom(env: Env, request?: HasHeaders & { readonly url
     }
     if (!behindSssbEdge(env)) return new URL(request.url).origin
     const host = request.headers.get('x-forwarded-host')
-    if (host === null || !HOST.test(host)) {
+    // The viewer address is the proof the request crossed the function, which writes it on every request; and a
+    // forwarded host equal to Host is the one Next filled in from the Function URL's own.
+    const crossed = clientAddressFrom(env, request) !== undefined && host !== request.headers.get('host')
+    if (!crossed || host === null || !HOST.test(host)) {
         throw new Error(
-            'publicOrigin(): behind SssbApp (SSSB_EDGE=cloudfront), the request carries no x-forwarded-host its ' +
-                "distribution wrote (it did not cross the distribution). Set the server's PUBLIC_ORIGIN to the " +
-                'origin the app is served from',
+            "publicOrigin(): behind SssbApp (SSSB_EDGE=cloudfront), the request carries no host the distribution's " +
+                'function wrote (it did not cross the distribution: the scheduled tick invokes the server directly). ' +
+                "Set the server's PUBLIC_ORIGIN to the origin the app is served from",
         )
     }
     return `https://${host}`
@@ -130,9 +137,14 @@ function behindSssbEdge(env: Env): boolean {
     if (value === undefined || value === '') return false
     if (value !== SSSB_EDGE_CLOUDFRONT) {
         throw new Error(
-            `SSSB_EDGE "${value}" is not "${SSSB_EDGE_CLOUDFRONT}", the one value there is (SssbApp sets it). Unset it ` +
-                'unless every request reaches the server through a proxy that overwrites x-forwarded-host and ' +
-                `${VIEWER_ADDRESS_HEADER}`,
+            `SSSB_EDGE "${value}" is not "${SSSB_EDGE_CLOUDFRONT}", the one value there is. SssbApp sets it on its ` +
+                'server; unset it anywhere else',
+        )
+    }
+    if (!env['AWS_LAMBDA_FUNCTION_NAME']) {
+        throw new Error(
+            'SSSB_EDGE is set off Lambda (no AWS_LAMBDA_FUNCTION_NAME). SssbApp sets it on its server, behind the ' +
+                'distribution that writes the headers it vouches for; anywhere else a client writes them. Unset it',
         )
     }
     return true

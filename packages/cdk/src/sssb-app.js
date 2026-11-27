@@ -210,6 +210,33 @@ function renderedProperties(fn) {
 }
 
 /**
+ * The behaviors of a rendered distribution that reach the server without the forwarded-host function on the viewer
+ * request: the server believes the headers that function writes (`SSSB_EDGE`), so a behavior without it lets a viewer
+ * write the host and address it believes. A behavior reaches the server when its origin's domain is the Function URL's.
+ * @param {any} config the rendered `DistributionConfig`
+ * @param {string} functionUrlRef the Function URL's resolved reference, as JSON
+ * @param {string} forwardedHostArn the function's resolved ARN, as JSON
+ * @returns {string[]}
+ */
+export function unguardedServerBehaviors(config, functionUrlRef, forwardedHostArn) {
+    const serverOrigins = new Set(
+        (config?.Origins ?? [])
+            .filter((/** @type {any} */ o) => JSON.stringify(o?.DomainName ?? null).includes(functionUrlRef))
+            .map((/** @type {any} */ o) => o.Id),
+    )
+    const behaviors = [config?.DefaultCacheBehavior, ...(config?.CacheBehaviors ?? [])]
+    return behaviors
+        .filter((b) => serverOrigins.has(b?.TargetOriginId))
+        .filter((b) => {
+            const viewerRequest = (b?.FunctionAssociations ?? []).filter(
+                (/** @type {any} */ a) => a?.EventType === 'viewer-request',
+            )
+            return viewerRequest.length !== 1 || JSON.stringify(viewerRequest[0].FunctionARN) !== forwardedHostArn
+        })
+        .map((b) => b?.PathPattern ?? 'the default behavior')
+}
+
+/**
  * The code esbuild staged for a NodejsFunction during this synth, and problems with what it deploys: a `Code`
  * other than the asset this synth staged (an escape-hatch override would deploy something the bundle check never
  * read). Compared with the asset's own bucket and key, as the stack's synthesizer assigned them, so a bucket
@@ -832,6 +859,22 @@ export class SssbApp extends Construct {
                 const migratorEnvironment = renderedProperties(migrator).Environment?.Variables ?? {}
                 for (const name of ['DEMO_MODE', 'E2E_BUILD']) {
                     if (name in migratorEnvironment) problems.push(`the migrator's environment sets ${name}`)
+                }
+                // A behavior of the adopter's own that reaches the server must run the forwarded-host function too.
+                const distributionConfig = renderedProperties(distribution).DistributionConfig
+                for (const path of unguardedServerBehaviors(
+                    distributionConfig,
+                    JSON.stringify(
+                        cdk.Stack.of(this).resolve(
+                            /** @type {cdk.CfnResource} */ (functionUrl.node.defaultChild).logicalId,
+                        ),
+                    ),
+                    JSON.stringify(cdk.Stack.of(this).resolve(forwardedHost.functionArn)),
+                )) {
+                    problems.push(
+                        `${path} reaches the server without sssbApp.forwardedHost on viewer-request: a viewer would ` +
+                            'write the host and address the server believes (SSSB_EDGE)',
+                    )
                 }
                 if (cdk.Stack.of(this).bundlingRequired) {
                     const bundle = stagedBundle(migrator)

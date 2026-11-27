@@ -306,31 +306,45 @@ export const a11yLiteralSelector = {
 // The visitor's origin and address (safeinsights/sssb#131, #132), read only through @sssb/kit/adapters/edge-headers
 // (`publicOrigin`, `clientAddress`). Behind SssbApp, `request.url` and `nextUrl` name the server's own bind address
 // (`https://localhost:3000`), and the first X-Forwarded-For entry, X-Real-IP, CF-Connecting-IP and Forwarded hold
-// whatever the visitor wrote. So: a header that names the visitor's host or address, by its name as a string, the
-// first argument of `.get`, `.has` or `.getAll` (Headers, `headers()` from next/headers) or a computed key (Node's
-// `req.headers[...]`), in any case; and the origin, host or hostname of `new URL(<x>.url)` or of `<x>.nextUrl`. A name
-// held in a variable, or an alias of the request, gets past, as any alias does: the fence catches the obvious form.
+// whatever the visitor wrote. The obvious forms, never an alias:
+// - a header that names the visitor's host or address, by its name as a string (any case), read from something that is
+//   plainly a request's headers: `.get`, `.has` or `.getAll` on `<x>.headers`, on `headers()` or `await headers()`
+//   (next/headers), or on a variable whose name says header; or a computed key on `<x>.headers` (Node's
+//   `req.headers[...]`). A `searchParams.get('host')` or `process.env['HOST']` is not a request's header;
+// - the `origin`, `host`, `hostname` or `href` of `new URL(<x>.url)` or of `<x>.nextUrl`, by member or destructuring;
+// - `new URL(path, <x>.url)` (or `<x>.nextUrl`), an absolute URL on the server's own host, but where it is handed
+//   straight to a `redirect` or `rewrite`: Next relativizes a same-origin redirect a proxy answers;
+// - `baseUrl: <x>.url`, the argument SSSB's own `sendOrgInvite` and `applyDemoPreset` take.
 // Path and search parameters of the same URLs are right and stay allowed.
 const VISITOR_HEADER =
     '/^(host|forwarded|x-forwarded-(for|host|proto|port)|x-real-ip|x-client-ip|cf-connecting-ip|true-client-ip|' +
     'cloudfront-viewer-address|x-sssb-viewer-address)$/i'
-const HEADER_READ = 'CallExpression[callee.type="MemberExpression"][callee.property.name=/^(get|has|getAll)$/]'
+const HEADERS_OBJECT = (at) =>
+    `:matches([${at}.property.name="headers"], [${at}.name=/header/i], [${at}.callee.name="headers"], ` +
+    `[${at}.argument.callee.name="headers"])`
+const HEADER_READ = `CallExpression[callee.property.name=/^(get|has|getAll)$/]${HEADERS_OBJECT('callee.object')}`
 export const visitorHeaderSelector = {
     selector:
         `:matches(${HEADER_READ}[arguments.0.value=${VISITOR_HEADER}], ` +
         `${HEADER_READ}[arguments.0.type="TemplateLiteral"][arguments.0.expressions.length=0]` +
         `[arguments.0.quasis.0.value.cooked=${VISITOR_HEADER}], ` +
-        `MemberExpression[computed=true][property.value=${VISITOR_HEADER}])`,
+        `MemberExpression[computed=true][property.value=${VISITOR_HEADER}]${HEADERS_OBJECT('object')})`,
     message:
         "Read the visitor's address with clientAddress(request), and their origin with publicOrigin(request), from " +
         '@sssb/kit/adapters/edge-headers, never from a forwarded header: behind CloudFront the first X-Forwarded-For ' +
         "entry, X-Real-IP, CF-Connecting-IP and Forwarded hold what the visitor wrote, and Host is the server's own.",
 }
+const REQUEST_URL = (at) =>
+    `:matches([${at}.type="NewExpression"][${at}.callee.name="URL"][${at}.arguments.length=1]` +
+    `[${at}.arguments.0.property.name="url"], [${at}.property.name="nextUrl"])`
+const ORIGIN_PART = '/^(origin|host|hostname|href)$/'
 export const requestOriginSelector = {
     selector:
-        'MemberExpression[property.name=/^(origin|host|hostname)$/]:matches(' +
-        '[object.type="NewExpression"][object.callee.name="URL"][object.arguments.length=1]' +
-        '[object.arguments.0.property.name="url"], [object.property.name="nextUrl"])',
+        `:matches(MemberExpression[property.name=${ORIGIN_PART}]${REQUEST_URL('object')}, ` +
+        `VariableDeclarator${REQUEST_URL('init')} > ObjectPattern > Property[key.name=${ORIGIN_PART}], ` +
+        'NewExpression[callee.name="URL"][arguments.length=2][arguments.1.property.name=/^(url|nextUrl)$/]' +
+        ':not(CallExpression[callee.property.name=/^(redirect|rewrite)$/] > NewExpression), ' +
+        'Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"])',
     message:
         'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
         "request's own URL names the server's bind address (https://localhost:3000), not the app's. Its path and " +

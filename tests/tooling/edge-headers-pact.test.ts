@@ -22,7 +22,7 @@ const handler = vm.runInNewContext(`${FORWARDED_HOST_SOURCE}\nhandler`, {}) as (
 }
 
 /** What CloudFront forwards to the server for a viewer request, after the function ran. */
-function forwarded(viewerIp: string, headers: Record<string, string>): Request {
+function forwarded(viewerIp: string, headers: Record<string, string>): { url: string; headers: Headers } {
     const cfHeaders = Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, { value }]))
     const out = handler({
         viewer: { ip: viewerIp },
@@ -32,11 +32,13 @@ function forwarded(viewerIp: string, headers: Record<string, string>): Request {
     for (const [name, { value }] of Object.entries(out.headers)) sent.set(name, value)
     // CloudFront appends the connection's address to the visitor's X-Forwarded-For.
     sent.set('x-forwarded-for', [headers['x-forwarded-for'], viewerIp].filter(Boolean).join(', '))
+    // The origin request policy sends every viewer header but Host, which is the Function URL's (CloudFront signs for it).
+    sent.set('host', 'abc123.lambda-url.us-east-1.on.aws')
     // Next's request.url behind SssbApp: its own bind address.
-    return new Request('https://localhost:3000/en', { headers: sent })
+    return { url: 'https://localhost:3000/en', headers: sent }
 }
 
-const ENV = { SSSB_EDGE: SSSB_EDGE_CLOUDFRONT }
+const ENV = { SSSB_EDGE: SSSB_EDGE_CLOUDFRONT, AWS_LAMBDA_FUNCTION_NAME: 'app-server' }
 
 describe("SssbApp's forwarded-host function and @sssb/kit's edge headers", () => {
     it('agree on the header names, so a forged visitor header never reaches the helpers', () => {

@@ -20,8 +20,19 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
         { code: "const p = new URL(request.url).searchParams.get('status')" },
         { code: 'const path = request.nextUrl.pathname' },
         { code: 'const path = new URL(request.url).pathname' },
-        // A redirect built against the request's URL: Next relativizes a same-origin Location.
+        // A redirect or rewrite built against the request's URL: Next relativizes a same-origin Location.
         { code: "NextResponse.redirect(new URL('/en', request.url))" },
+        { code: "NextResponse.rewrite(new URL('/en/x', request.nextUrl))" },
+        { code: "Response.redirect(new URL('/en', request.url), 307)" },
+        // Not a request's headers: search parameters, the environment, a map, a parsed DSN.
+        { code: "u.searchParams.get('host')" },
+        { code: "process.env['HOST']" },
+        { code: "config.get('host')" },
+        { code: "dsn['host']" },
+        { code: 'const { pathname, searchParams } = new URL(request.url)' },
+        { code: 'const { pathname } = request.nextUrl' },
+        { code: "const link = new URL('/x', publicOrigin(request))" },
+        { code: 'sendOrgInvite({ baseUrl: publicOrigin(request) })' },
         // Headers that name nothing about the visitor's host or address.
         { code: "request.headers.get('content-type')" },
         { code: "request.headers.get('x-forwarded-hostname')" },
@@ -50,6 +61,9 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
             'x-sssb-viewer-address',
         ].map((name) => ({ code: `request.headers.get('${name}')`, errors: [{ messageId: 'header' }] })),
         { code: "(await headers()).get('x-forwarded-for')", errors: [{ messageId: 'header' }] },
+        { code: "headers().get('x-forwarded-for')", errors: [{ messageId: 'header' }] },
+        { code: "headersList.get('x-forwarded-host')", errors: [{ messageId: 'header' }] },
+        { code: "requestHeaders.get('X-Real-IP')", errors: [{ messageId: 'header' }] },
         { code: "request.headers.has('x-real-ip')", errors: [{ messageId: 'header' }] },
         { code: 'request.headers.get(`x-forwarded-for`)', errors: [{ messageId: 'header' }] },
         { code: "req.headers['x-forwarded-for']", errors: [{ messageId: 'header' }] },
@@ -58,6 +72,16 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
         { code: 'const o = new URL(request.url).hostname', errors: [{ messageId: 'origin' }] },
         { code: 'const o = request.nextUrl.origin', errors: [{ messageId: 'origin' }] },
         { code: 'const o = request.nextUrl.host', errors: [{ messageId: 'origin' }] },
+        { code: 'const o = request.nextUrl.href', errors: [{ messageId: 'origin' }] },
+        { code: 'const o = new URL(request.url).href', errors: [{ messageId: 'origin' }] },
+        { code: 'const { origin } = new URL(request.url)', errors: [{ messageId: 'origin' }] },
+        { code: 'const { host: h } = request.nextUrl', errors: [{ messageId: 'origin' }] },
+        {
+            code: "const link = new URL('/en/accept-invite', request.url).toString()",
+            errors: [{ messageId: 'origin' }],
+        },
+        { code: "const link = new URL('/en', request.nextUrl)", errors: [{ messageId: 'origin' }] },
+        { code: 'sendOrgInvite({ baseUrl: request.url })', errors: [{ messageId: 'origin' }] },
     ],
 })
 
