@@ -145,9 +145,10 @@ export function RealSignInForm({ labels, returnTo }: { labels: SignInLabels; ret
                 }}
                 onBack={() => {
                     leaveStep(null)
-                    // After an accepted code the session is already on the browser's client: sign it out (above), back
-                    // to this page. Should Clerk refuse, the person is told they are still signed in.
-                    const sessionId = accepted ? attempt.createdSessionId : null
+                    // Once the attempt has a session (Clerk accepted the code) it is already on the browser's client:
+                    // sign it out (above), back to this page. Should Clerk refuse, the person is told they are still
+                    // signed in.
+                    const sessionId = attempt.createdSessionId
                     if (sessionId) {
                         void Promise.resolve()
                             .then(() => clerk.signOut({ sessionId, redirectUrl: window.location.href }))

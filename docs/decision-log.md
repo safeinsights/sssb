@@ -7664,3 +7664,20 @@ One branch's secret-like string failed the scan on every other open pull request
   that deletes a file holding a secret already on its base still reports nothing, as before (throwaway repository).
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
+
+## Two edges of real sign-in: before Clerk loads, and back after an accepted code (2026-11-27, `fix/sign-in-edges`)
+
+safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
+
+- **The password waits for `useClerk().loaded`**, and the button shows `loading` until then. `loaded` reads clerk-js
+  itself (`IsomorphicClerk`), and Clerk's provider re-memoizes its context on every status change, so the form
+  re-renders when clerk-js loads (@clerk/react 6.18.8, @clerk/shared 4.45.1). Rejected: **`useAuth().isLoaded`**,
+  which reads the auth state and can be true from a signed-out initial state before clerk-js has loaded; and
+  **re-reading the attempt after load**, which depends on what `GET /client` returns after a reload, the issue's open
+  question. A clerk-js that never loads leaves the button busy: there is nothing to sign in with then.
+- **Back from the step signs out `attempt.createdSessionId` when the attempt has one**, through Clerk's client by
+  session id with the sign-in page as `redirectUrl`, as `RealAccountRefused` does; with none, the attempt is only reset,
+  as before. The condition is the session, not the form's own "code accepted" flag: an attempt has a session only once
+  Clerk accepted a code, and any session it created is one the person going back does not expect to keep. A refused
+  sign-out shows the framework's existing `refusedSignOutError` copy. Rejected: **retrying `finalize` instead**, which
+  leaves the person no way to abandon a sign-in they started on a shared computer.
