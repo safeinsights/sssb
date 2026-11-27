@@ -127,6 +127,32 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         await runDataApiOwnerPass(server)
     })
 
+    // safeinsights/sssb#202: a drain lists each tenant in a transaction of its own, four calls a tenant. With due hints
+    // (0022), a tick after the first lists only tenants whose work has come due: with nothing due anywhere, one call.
+    test('a hinted drain over tenants with nothing due costs one call, after the tick that first lists them', async () => {
+        const stamp = Date.now()
+        await db()
+            .insertInto('tenants')
+            .values(Array.from({ length: 30 }, (_, i) => ({ slug: `hint-${stamp}-${i}`, name: 'hint proof' })))
+            .execute()
+        const { runDueSchedules } = await import('../../db/schedules')
+        // Far in the past, so nothing anywhere is due.
+        const now = new Date('2001-01-01T00:00:00.000Z')
+        const hinted = { maxItems: 100, deadline: Number.MAX_SAFE_INTEGER, dueHints: true }
+        const tenants = Number(
+            (
+                await db()
+                    .selectFrom('tenants')
+                    .select((eb) => eb.fn.countAll().as('n'))
+                    .executeTakeFirstOrThrow()
+            ).n,
+        )
+        const first = await callsDuring(() => runDueSchedules(dataApi, { start: async () => undefined }, now, hinted))
+        expect(first.length).toBeGreaterThanOrEqual(4 * tenants)
+        const second = await callsDuring(() => runDueSchedules(dataApi, { start: async () => undefined }, now, hinted))
+        expect(second.map((c) => c.operation)).toEqual(['ExecuteStatement'])
+    })
+
     test('withTenant is ONE transaction: the role and the tenant reach every statement until Commit', async () => {
         const [tenant] = await db()
             .insertInto('tenants')

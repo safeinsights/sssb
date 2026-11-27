@@ -3,6 +3,7 @@ import type { DbPort } from '../ports/db'
 import type { JobsPort } from '../ports/jobs'
 import { backoffDelayMs } from '../core/webhook-events'
 import { recordAuditEvent } from './audit'
+import { type HintedTenant, raiseHint, tenantsToList } from './due-hints'
 import {
     beforeDeadline,
     type DrainBudget,
@@ -77,14 +78,18 @@ export async function runDueSchedules(
     // lists it again.
     if (!beforeDeadline(limit)) return { spawned, failed, deferred: 0, stoppedBy: 'time' }
     await db.ready()
-    const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
+    // With due hints (the tick's), only the tenants whose hint has come are listed (./due-hints.ts, #202).
+    const hinted = limit.dueHints === true
+    const tenants: HintedTenant[] = hinted
+        ? await tenantsToList(db, 'schedules', now)
+        : (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({ id: t.id, hintVersion: null }))
     const perTenant = listingLimit(limit)
     const left = await drainFairly(
         tenants,
         limit,
         (tenantId) =>
-            db.withTenant(tenantId, (trx) =>
-                trx
+            db.withTenant(tenantId, async (trx) => {
+                const rows = await trx
                     .selectFrom('job_schedules')
                     .select('id')
                     .where('enabled', '=', true)
@@ -92,8 +97,17 @@ export async function runDueSchedules(
                     .orderBy('next_run_at', 'asc')
                     .orderBy('id', 'asc')
                     .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
-                    .execute(),
-            ),
+                    .execute()
+                if (!hinted || rows.length > 0) return { rows }
+                // Nothing due: when the tenant next has work, in the same transaction, so its hint can be raised.
+                const next = await trx
+                    .selectFrom('job_schedules')
+                    .select((eb) => eb.fn.min('next_run_at').as('next'))
+                    .where('enabled', '=', true)
+                    .where('next_run_at', '>', now)
+                    .executeTakeFirst()
+                return { rows, nextDue: next?.next ? new Date(next.next as Date | string) : null }
+            }),
         (row) => row.id,
         async (row, tenantId) => {
             try {
@@ -102,6 +116,9 @@ export async function runDueSchedules(
                 failed += 1
             }
         },
+        hinted
+            ? (tenant: HintedTenant, nextDue: Date | null) => raiseHint(db, tenant, 'schedules', now, nextDue)
+            : undefined,
     )
     return { spawned, failed, ...left }
 }

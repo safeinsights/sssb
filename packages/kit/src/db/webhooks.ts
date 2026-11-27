@@ -15,6 +15,7 @@ import type { DbPort } from '../ports/db'
 // TYPE-ONLY import (erased): keeps packages/kit/src/db free of a runtime @/adapters dependency — see WebhookDispatch.
 import type { WebhookDispatch } from '../server-lib/webhook-dispatch'
 import { recordAuditEvent } from './audit'
+import { type HintedTenant, raiseHint, tenantsToList } from './due-hints'
 import {
     beforeDeadline,
     type DrainBudget,
@@ -121,14 +122,18 @@ export async function runDueDeliveries(
     // next tick lists it again.
     if (!beforeDeadline(limit)) return { ...counts, deferred: 0, stoppedBy: 'time' }
     await db.ready()
-    const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
+    // With due hints (the tick's), only the tenants whose hint has come are listed (./due-hints.ts, #202).
+    const hinted = limit.dueHints === true
+    const tenants: HintedTenant[] = hinted
+        ? await tenantsToList(db, 'deliveries', now)
+        : (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({ id: t.id, hintVersion: null }))
     const perTenant = listingLimit(limit)
     const left = await drainFairly(
         tenants,
         limit,
         (tenantId) =>
-            db.withTenant(tenantId, (trx) =>
-                trx
+            db.withTenant(tenantId, async (trx) => {
+                const rows = await trx
                     .selectFrom('webhook_deliveries')
                     .select('id')
                     .where('status', 'in', ['pending', 'failed'])
@@ -136,8 +141,17 @@ export async function runDueDeliveries(
                     .orderBy('next_attempt_at', 'asc')
                     .orderBy('id', 'asc')
                     .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
-                    .execute(),
-            ),
+                    .execute()
+                if (!hinted || rows.length > 0) return { rows }
+                // Nothing due: when the tenant next has work, in the same transaction, so its hint can be raised.
+                const next = await trx
+                    .selectFrom('webhook_deliveries')
+                    .select((eb) => eb.fn.min('next_attempt_at').as('next'))
+                    .where('status', 'in', ['pending', 'failed'])
+                    .where('next_attempt_at', '>', now)
+                    .executeTakeFirst()
+                return { rows, nextDue: next?.next ? new Date(next.next as Date | string) : null }
+            }),
         (row) => row.id,
         async (row, tenantId) => {
             try {
@@ -151,6 +165,9 @@ export async function runDueDeliveries(
                 counts.failed += 1
             }
         },
+        hinted
+            ? (tenant: HintedTenant, nextDue: Date | null) => raiseHint(db, tenant, 'deliveries', now, nextDue)
+            : undefined,
     )
     return { ...counts, ...left }
 }

@@ -129,7 +129,7 @@ describe('drainFairly', () => {
             async (tenantId) => {
                 listed.push(tenantId)
                 now += 1 // each listing query takes a tick of the clock
-                return [`${tenantId}-0`]
+                return { rows: [`${tenantId}-0`] }
             },
             (row) => row,
             async (row) => {
@@ -146,7 +146,7 @@ describe('drainFairly', () => {
         const left = await drainFairly(
             [{ id: 'a' }],
             { maxItems: NONE, deadline: 0, clock: () => 0 },
-            async () => {
+            async (): Promise<{ rows: string[] }> => {
                 throw new Error('listed after the deadline')
             },
             (row: string) => row,
@@ -165,8 +165,9 @@ describe('drainFairly', () => {
             await drainFairly(
                 Object.keys(backlog).map((id) => ({ id })),
                 { maxItems: 2, deadline: NONE, random },
-                async (tenantId) =>
-                    Array.from({ length: Math.min(3, backlog[tenantId]!) }, (_, i) => `${tenantId}-${i}`),
+                async (tenantId) => ({
+                    rows: Array.from({ length: Math.min(3, backlog[tenantId]!) }, (_, i) => `${tenantId}-${i}`),
+                }),
                 (row) => row,
                 async (_row, tenantId) => {
                     served[tenantId]! += 1
@@ -188,7 +189,7 @@ describe('drainFairly', () => {
             await drainFairly(
                 tenants,
                 { maxItems: 1, deadline: NONE, random },
-                async (tenantId) => (tenantId === 'a' || tenantId === 'b' ? [tenantId] : []),
+                async (tenantId) => ({ rows: tenantId === 'a' || tenantId === 'b' ? [tenantId] : [] }),
                 (row) => row,
                 async (_row, tenantId) => {
                     served[tenantId] = (served[tenantId] ?? 0) + 1
@@ -212,7 +213,7 @@ describe('drainFairly', () => {
             await drainFairly(
                 tenants,
                 { maxItems: 100, deadline: NONE, random },
-                async (tenantId) => [tenantId],
+                async (tenantId) => ({ rows: [tenantId] }),
                 (row) => row,
                 async (_row, tenantId) => {
                     if (tenantId === 'zz-healthy') healthy += 1
@@ -231,7 +232,7 @@ describe('drainFairly', () => {
             await drainFairly(
                 [{ id: 't' }],
                 { maxItems: 1, deadline: NONE, random },
-                async () => ['t-0-stuck', 't-1-healthy'],
+                async () => ({ rows: ['t-0-stuck', 't-1-healthy'] }),
                 (row) => row,
                 async (row) => {
                     if (row === 't-1-healthy') healthy += 1
@@ -248,7 +249,7 @@ describe('drainFairly with no bound', () => {
         await drainFairly(
             [{ id: 't' }],
             resolveDrainBudget(undefined),
-            async () => ['t-0', 't-1', 't-2', 't-3'],
+            async () => ({ rows: ['t-0', 't-1', 't-2', 't-3'] }),
             (row) => row,
             async (row) => {
                 ran.push(row)

@@ -124,6 +124,7 @@ export async function runScheduledTick(
         maxItems: budget.maxSchedules,
         deadline: startedAt + budget.schedulesWindowMs,
         clock,
+        dueHints: true,
         ...(options.random && { random: options.random }),
     })
     const retries = await runDueRetries(
@@ -134,6 +135,7 @@ export async function runScheduledTick(
             maxItems: budget.maxRetries,
             deadline: startedAt + budget.retriesWindowMs,
             clock,
+            dueHints: true,
             ...(options.random && { random: options.random }),
         },
         notifyRetryEnd,
@@ -142,6 +144,7 @@ export async function runScheduledTick(
         maxItems: budget.maxDeliveries,
         deadline: startedAt + budget.deliveriesWindowMs,
         clock,
+        dueHints: true,
         ...(options.random && { random: options.random }),
     })
     return { spawned, failed, deferred, stoppedBy, retries, deliveries }

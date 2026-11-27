@@ -36,6 +36,11 @@ export interface DrainBudget {
     clock?: () => number
     /** The draws, from [0, 1), that shuffle the tick's order: `Math.random` unless a test passes its own. */
     random?: () => number
+    /**
+     * List only the tenants whose due hint has come (./due-hints.ts, safeinsights/sssb#202), and raise the hint of one
+     * that had nothing due. The scheduled tick sets it; a drain called without it lists every tenant.
+     */
+    dueHints?: boolean
 }
 
 /** Why a drain stopped before it ran out of due rows: it started `maxItems`, or its deadline passed. */
@@ -126,15 +131,18 @@ export function shuffled<T>(items: readonly T[], budget: DrainBudget, idOf: (ite
 
 /**
  * Lists each tenant's due rows, the tenants in a random order, stopping when the deadline passes (`listOne` runs one
- * tenant's query; `rowKey` is a row's id), shuffles each tenant's rows, then runs `run` over them round-robin until the rows or the budget run out. `run` isolates its own failures
+ * tenant's query; `rowKey` is a row's id), shuffles each tenant's rows, then runs `run` over them round-robin. A
+ * tenant listed with nothing due, whose listing also said when it next has work (`nextDue`), is handed to
+ * `listedNothing`, which raises its due hint (./due-hints.ts). until the rows or the budget run out. `run` isolates its own failures
  * (each drain counts them); one that throws anyway stops the drain, as an unhandled error did before.
  */
-export async function drainFairly<T>(
-    tenants: readonly { id: string }[],
+export async function drainFairly<T, Tenant extends { id: string }>(
+    tenants: readonly Tenant[],
     budget: DrainBudget,
-    listOne: (tenantId: string) => Promise<readonly T[]>,
+    listOne: (tenantId: string) => Promise<{ rows: readonly T[]; nextDue?: Date | null }>,
     rowKey: (row: T) => string,
     run: (row: T, tenantId: string) => Promise<void>,
+    listedNothing?: (tenant: Tenant, nextDue: Date | null) => Promise<void>,
 ): Promise<DrainLeft> {
     const queues: TenantQueue<T>[] = []
     const bounded = Number.isFinite(budget.maxItems) || Number.isFinite(budget.deadline)
@@ -144,11 +152,13 @@ export async function drainFairly<T>(
             cutShort = true
             break
         }
-        const rows = await listOne(tenant.id)
+        const listed = await listOne(tenant.id)
+        const rows = listed.rows
         // Under a bound a tenant's own rows are shuffled too, so one that fails every time without advancing (and so is
         // listed first every tick, being the oldest) does not take that tenant's turn tick after tick. With no bound
         // every row runs, so they keep their oldest-first order.
         if (rows.length > 0) queues.push({ tenantId: tenant.id, rows: bounded ? shuffled(rows, budget, rowKey) : rows })
+        else if (listedNothing && listed.nextDue !== undefined) await listedNothing(tenant, listed.nextDue)
     }
     const left = await runRoundRobin(queues, budget, run)
     // A listing the deadline cut short left tenants unlisted: say so even when every listed row was started.

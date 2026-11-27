@@ -70,6 +70,19 @@ the interesting reports are about that shape being wrong:
     any of them leak something beyond the above — or to reach tenant CONTENT through them — is very
     much in scope.
 
+    **One framework table is out of `app_user`'s reach altogether**: `due_hints`
+    (`packages/kit/src/db/migrations/0022_due_hints.ts`), which tells the scheduled tick when each
+    tenant may next have work due. It is cross-tenant and has no RLS, so `app_user` holds no privilege
+    on it (it would tell one tenant when another has work, or let it hide another's work from the
+    tick); only the migration owner, the role the server connects as, reads and writes it. Database
+    triggers keep it current through one `SECURITY DEFINER` function, `sssb_note_due`, with its
+    `search_path` pinned and `EXECUTE` revoked from `PUBLIC`. It writes only from the row being
+    written, which RLS has already confined to the writer's tenant, and it only ever lowers a hint.
+    The framework's RLS proofs (`packages/kit/src/db/rls-proofs.ts`) assert that `app_user` can
+    neither read nor write the table nor call the function, and that its own write still lowers its
+    tenant's hint. A way to read or write `due_hints` as `app_user`, or to make the function write a
+    row for another tenant, is in scope.
+
 - **Authorization.** `authorize()` is the single choke point for resource-level decisions. A build-time
   scan fails any mutating API route that neither calls it nor carries a justified exemption.
 - **Service-to-service auth.** RS256 JWTs, audience-pinned, with a required `iat`/`exp` and a maximum

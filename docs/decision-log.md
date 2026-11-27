@@ -8364,3 +8364,74 @@ catchRequests })`), which the conformance check uses so it never touches an app'
   do run live in the demo, as on the server, because a demo that skipped them would show a different world from the one
   the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
   (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.
+
+## The tick lists only the tenants with work due (2026-11-27, `fix/tick-listing`)
+
+safeinsights/sssb#202: each of the tick's drains lists due rows with one `withTenant` transaction per tenant, so
+listing costs every tenant every tick, whether or not it has anything due. Measured before deciding.
+
+- **The measurement** (1,000 tenants, nothing due, embedded Postgres on the maintainer's machine, through the real
+  adapters; the script and raw numbers are in the shared notes for this batch, not the repository):
+    - pg: about 0.3 ms a tenant a drain, so about 0.3 s a drain, 1,000 transactions.
+    - The RDS Data API, through the emulator: about 0.6 ms a tenant a drain locally, but 4,004 API calls a drain:
+      BeginTransaction, the tenant scope, the query, Commit, for every tenant. Real Data API calls are HTTPS round trips
+      to AWS. Their latency was not measured here (no live AWS). At 10 ms a call that is 40 s a drain; at 25 ms, 100 s.
+      Either is past the tick's whole 30-second limit, and far past the schedules' 6-second window. Since #97 a drain
+      stops listing at its deadline, so the tick would list a few dozen tenants and leave the rest to later ticks: work
+      in a 1,000-tenant deployment would wait many ticks.
+    - With 100 tenants: about 400 calls a drain, past the schedules' window at 15 ms a call.
+    - Verdict: not worth it on pg, and worth it for the Data API transport, which an adopter chooses for scale-to-zero
+      and which is where many tenants would hurt.
+- **The design: an owner-only due hint per tenant and drain, lowered by triggers, raised by the drain.** Migration
+  `0022_due_hints` adds `due_hints(tenant_id, drain, list_after, version)`. Three `AFTER` row triggers (on
+  `job_schedules`, `webhook_deliveries`, `jobs`) call one `SECURITY DEFINER` function, `sssb_note_due`, which lowers
+  the tenant's `list_after` to the row's due time (never raises it) and bumps `version`. They fire on each write that
+  can make work due: a schedule enabled or moved, a delivery pending or failed, a retry waiting.
+    - The drain reads the hints in one query (tenants left-joined to hints) and lists only tenants with no hint, a hint
+      that has come, or one more than `MAX_SKIP_MS` (a day) away.
+    - After listing a tenant with nothing due, the drain raises its hint to the tenant's next due time, at most a day
+      on. The next due time comes from one more statement in the same listing transaction. The raise is a
+      compare-and-set on the version read before listing, so a write that lowered the hint meanwhile is kept.
+    - The hint is never later than the truth, so no work is delayed by it. The day's cap bounds what a hint can skip,
+      and covers a simulated world whose clock was moved back.
+    - Measured after (same 1,000 tenants): the first tick after the migration lists every tenant once (6,007 Data API
+      calls a drain, about 1.5 times before). Every tick after that with nothing due: 1 call and 0 transactions a
+      drain, on both transports.
+- **Why triggers rather than the write paths noting it.** A trigger sees every write, the app's own included: an app
+  that inserts a schedule from its own route lowers the hint without knowing hints exist. Rejected: noting due work
+  from the framework's own write paths (`enqueueWebhookEvent`, `recordJobStatus`, …), which an app writing those tables
+  itself would bypass, so its work would wait up to the cap.
+- **Why owner-only, and the definer function.** `due_hints` is cross-tenant with no RLS. `app_user` holds no privilege
+  on it: reading it would tell one tenant when another has work; writing it could hide another's work from the tick.
+  So the trigger, which fires as `app_user`, writes it through `SECURITY DEFINER`. `search_path` is pinned to
+  `pg_catalog, public`, and `EXECUTE` is revoked from `PUBLIC`; a trigger function cannot be called directly anyway.
+  It writes only the tenant of the row being written, which RLS's `WITH CHECK` has already confined. `SECURITY.md` and
+  `rls-proofs.ts` say and prove it. The proofs run on pglite and in the contract suite on pg, the Data API, and the
+  non-superuser owner pass. Rejected:
+    - **One query across tenants** through a `SECURITY DEFINER` read of the due rows themselves. That would put tenant
+      content behind a definer function. The hint holds no content, only when.
+    - **A `BYPASSRLS` role for the tick**, which the guide forbids for good reason.
+- **Opt-in per call.** The budget's `dueHints: true` turns hints on. The tick sets it; a drain called without it lists
+  every tenant, so the Simulator's own controls, which drain two or three tenants, are untouched. A drain that cannot
+  read the hints (a server connecting as some role that does not own the table) logs and lists every tenant, as
+  before, and raises nothing.
+- **Not changed: the jobs port's sweep** still lists every tenant (the in-process runner's and the CodeBuild
+  runner's). It is the subject of safeinsights/sssb#252, its missing bound; hints for it are a step further, and the
+  sweep runs once a tick rather than three times.
+- **Recorded for the previous change** (`fix/lost-builds-and-failing-schedules`), whose limits were accepted there and
+  are now filed: a `starting` write that fails leaves a CodeBuild job queued with no ref (safeinsights/sssb#251); the
+  sweep has no bound of its own (safeinsights/sssb#252).
+- **Proofs.**
+    - `db/due-hints.test.ts`, on pglite, through the drains as the tick calls them:
+        - a future schedule's trigger sets the hint;
+        - a tenant with no hint is listed once and raised;
+        - the next tick skips it;
+        - a schedule written due lowers the hint, and the next tick lists the tenant and fires it;
+        - a drain without hints lists everyone;
+        - a delivery enqueued and a retry armed each lower the hint and are drained;
+        - a raise does not land over a write after the read;
+        - a hint more than a day off is read as come;
+        - unreadable hints list every tenant.
+    - `rls-proofs.ts`: `app_user` refused on all four operations and on the function; its own write lowers its hint.
+    - `rds-data.contract.test.ts`: a hinted drain over tenants with nothing due costs one Data API call, after the tick
+      that first lists them.
