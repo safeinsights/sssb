@@ -11,6 +11,8 @@
  * Its own module so the migrator Lambda (./migrate-handler.ts) reads the same switch without importing
  * ./index.ts and, with it, every other real adapter's SDK.
  */
+import { isAbsolute } from 'node:path'
+
 export const DATABASE_TRANSPORTS = ['pg', 'data-api'] as const
 export type DatabaseTransport = (typeof DATABASE_TRANSPORTS)[number]
 
@@ -48,4 +50,47 @@ export function databaseResumeBudgetMs(): number | undefined {
         )
     }
     return ms
+}
+
+/**
+ * How the `pg` transport protects its connection: DATABASE_SSL_MODE, with DATABASE_SSL_ROOT_CERT, both optional and
+ * read on `pg` only (the Data API speaks HTTPS through the AWS SDK, which verifies AWS's certificate itself). The server
+ * (./index.ts) and the migrator (./migrate-handler.ts) both read them here, so the two connect alike.
+ *
+ * - `verify-full` (the default, and what an unset or empty variable means): TLS, refusing a server whose certificate
+ *   does not chain to a trusted root or does not name the host the URL connects to (libpq's `verify-full`). The roots
+ *   are the file DATABASE_SSL_ROOT_CERT names, an absolute path to a PEM bundle, when it is set, and Node's own
+ *   otherwise (its bundled roots and any NODE_EXTRA_CA_CERTS adds). Aurora's certificates chain to Amazon RDS's own
+ *   roots, which Node does not trust, so `SssbApp` points DATABASE_SSL_ROOT_CERT at the Amazon CA bundle the Lambda
+ *   Node.js runtime carries (`/var/runtime/ca-cert.pem`).
+ * - `disable`: no TLS. For a Postgres that has none: a local server, a contract run's. Never a deployed database.
+ *
+ * No mode in between: `require` (TLS without checking whose certificate it is) stops a passive listener and not an
+ * active one, and a server whose root you cannot name is better served by naming it. docs/decision-log.md, "An SSL
+ * mode for the pg transport", says why, and why the mode is not a `config/params.ts` key.
+ */
+export const DATABASE_SSL_MODES = ['verify-full', 'disable'] as const
+export type DatabaseSslMode = (typeof DATABASE_SSL_MODES)[number]
+export type DatabaseSsl =
+    { readonly mode: 'verify-full'; readonly rootCert?: string | undefined } | { readonly mode: 'disable' }
+
+export function databaseSsl(): DatabaseSsl {
+    const mode = process.env['DATABASE_SSL_MODE'] || 'verify-full'
+    const rootCert = process.env['DATABASE_SSL_ROOT_CERT'] || undefined
+    if (!(DATABASE_SSL_MODES as readonly string[]).includes(mode)) {
+        throw new Error(`DATABASE_SSL_MODE must be one of ${DATABASE_SSL_MODES.join(', ')} (got "${mode}")`)
+    }
+    if (mode === 'disable') {
+        // A setting its choice does not use is refused rather than ignored: whoever set it meant TLS.
+        if (rootCert !== undefined) {
+            throw new Error(
+                'DATABASE_SSL_ROOT_CERT is set, but DATABASE_SSL_MODE is disable, which uses no certificate',
+            )
+        }
+        return { mode }
+    }
+    if (rootCert !== undefined && !isAbsolute(rootCert)) {
+        throw new Error(`DATABASE_SSL_ROOT_CERT must be an absolute path to a PEM file (got "${rootCert}")`)
+    }
+    return { mode: 'verify-full', rootCert }
 }

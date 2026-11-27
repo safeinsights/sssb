@@ -23,6 +23,13 @@ import { makeTestTmpDir } from '../../testing/tmp-dir'
  *    @sssb/kit, loaded only in this mode (docs/decision-log.md, "The contract runner ships in @sssb/kit/testing").
  */
 
+/**
+ * A contract run's connections use no TLS: the embedded server has none, and neither has CI's service container. A
+ * CONTRACT_DATABASE_URL that sets `sslmode` is refused by the adapter (./db.ts), as a deployment's would be. TLS itself
+ * is proven by ./db-tls.contract.test.ts, against a server of its own that refuses anything else.
+ */
+export const CONTRACT_SSL = { mode: 'disable' } as const
+
 export interface ContractServer {
     /** The server's SUPERUSER URL, to its maintenance database. */
     readonly url: string
@@ -131,7 +138,7 @@ export async function startContractServer(label: string, options: ContractServer
         // run proved a different driver configuration from the one it deploys (a `date` column came back as a JS Date
         // here and as a string from the deployed adapter). Destroying the Kysely ends the pool, which `stop` does for
         // every one still open.
-        const db = createRealDb(urlFor(login.database, login)).getDb()
+        const db = createRealDb(urlFor(login.database, login), CONTRACT_SSL).getDb()
         open.push(db)
         return db
     }

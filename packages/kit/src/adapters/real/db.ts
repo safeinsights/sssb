@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs'
+import type { ConnectionOptions } from 'node:tls'
 import { Kysely, PostgresDialect } from 'kysely'
 import { Pool, types, type CustomTypesConfig } from 'pg'
 import type { DB } from '../../db/schema'
 import type { DbPort } from '../../ports/db'
+import type { DatabaseSsl } from './database-transport'
 import { dbPortFor } from './db-port'
 
 /**
@@ -31,13 +34,18 @@ const pgTypes: CustomTypesConfig = {
 }
 
 /**
- * AUTHORED — CUTOVER (`cloud-accounts`): typechecked, never run against Aurora. The migrator
+ * AUTHORED — CUTOVER (`cloud-accounts`, `db-tls`): typechecked, never run against Aurora. The migrator
  * Lambda and the app share this adapter; connection details come from DATABASE_URL (Secrets
  * Manager-injected in deployed environments). This is the default transport (`DATABASE_TRANSPORT=pg`),
  * for a Lambda inside the database's VPC; the RDS Data API one is ./db-data-api.ts.
+ *
+ * `ssl` is the connection's TLS, always given, never left to the URL or to `pg`'s own defaults (which, with no
+ * `sslmode` in the URL and no PGSSLMODE, are no TLS at all): the deployment's `databaseSsl()`
+ * (./database-transport.ts), or `{ mode: 'disable' }` for a server that has none, as a contract run's.
  */
-export function createRealDb(databaseUrl: string): DbPort {
-    const pool = new Pool({ connectionString: databaseUrl, max: 5, types: pgTypes })
+export function createRealDb(databaseUrl: string, ssl: DatabaseSsl): DbPort {
+    refuseTlsInUrl(databaseUrl)
+    const pool = new Pool({ connectionString: databaseUrl, ssl: pgSslOptions(ssl), max: 5, types: pgTypes })
     // Every client gets its own listener as it connects, for its whole life, idle or checked out.
     pool.on('connect', (client) => client.on('error', logConnectionError))
     // pg-pool re-emits an IDLE client's error on the pool. The client's listener above has logged it, and
@@ -66,4 +74,58 @@ export function createRealDb(databaseUrl: string): DbPort {
  */
 function logConnectionError(error: Error & { code?: string }): void {
     console.warn(`SSSB db: a pooled database connection ended (${error.code ?? 'no code'}: ${error.message})`)
+}
+
+/**
+ * What `pg` hands `tls.connect` for a mode. `verify-full` is `rejectUnauthorized`, which checks the chain, and Node's
+ * default `checkServerIdentity`, which checks the certificate names the host: `pg` sets `servername` to the URL's host
+ * when it is a name, so a name in the URL is matched against the certificate's names, and an IP address only against
+ * its IP addresses. With a root file, its certificates are the only roots this connection trusts.
+ */
+export function pgSslOptions(ssl: DatabaseSsl): false | ConnectionOptions {
+    if (ssl.mode === 'disable') return false
+    if (ssl.rootCert === undefined) return { rejectUnauthorized: true }
+    let ca: string
+    try {
+        ca = readFileSync(ssl.rootCert, 'utf8')
+    } catch (error) {
+        throw new Error(`SSSB db: cannot read the database's root certificates at ${ssl.rootCert}`, { cause: error })
+    }
+    return { rejectUnauthorized: true, ca }
+}
+
+/**
+ * The URL may not set its own TLS. `pg` reads `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation`
+ * and `uselibpqcompat` from the query string, and what it reads there REPLACES the `ssl` option it is given
+ * (pg's ConnectionParameters merges the parsed URL over the config), so `?sslmode=disable` or `?sslmode=no-verify`
+ * would quietly undo the mode. Refused rather than stripped, so a URL that asks for something is never silently
+ * answered with something else; the message names the parameters and never the URL, which holds the password.
+ *
+ * The query is read as `pg-connection-string` reads it: the same re-encoding of a URL with a space or a bad escape,
+ * the same base, and the same retry for a URL with no host (`postgres://user@/db`). Any parameter whose name starts
+ * with `ssl`, in any case, is refused, which covers names `pg` does not read yet.
+ */
+function refuseTlsInUrl(databaseUrl: string): void {
+    if (databaseUrl.startsWith('/')) return // a socket path with a database name: no query string
+    let str = databaseUrl
+    if (/ |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(str)) str = encodeURI(str).replace(/%25(\d\d)/g, '%$1')
+    let url: URL
+    try {
+        url = new URL(str, 'postgres://base')
+    } catch {
+        try {
+            url = new URL(str.replace('@/', '@___DUMMY___/'), 'postgres://base')
+        } catch {
+            return // `pg` cannot parse it either, and says so when it connects
+        }
+    }
+    const names = [...new Set([...url.searchParams.keys()])].filter(
+        (name) => /^ssl/i.test(name) || name.toLowerCase() === 'uselibpqcompat',
+    )
+    if (names.length > 0) {
+        throw new Error(
+            `SSSB db: the database URL sets ${names.join(', ')}; remove it and set DATABASE_SSL_MODE (and ` +
+                'DATABASE_SSL_ROOT_CERT) instead, which the server and the migrator both read',
+        )
+    }
 }

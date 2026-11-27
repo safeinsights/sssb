@@ -13,7 +13,7 @@ import { configuredAuth } from '../configured-auth'
 import { orgNameForSlugs } from '../../db/org-lookup'
 import { clerkIdentitySource, realAuth } from './auth'
 import { clerkAuthorizedParties } from './clerk-authorized-parties'
-import { DATABASE_ENV, databaseResumeBudgetMs, databaseTransport } from './database-transport'
+import { DATABASE_ENV, databaseResumeBudgetMs, databaseSsl, databaseTransport } from './database-transport'
 import { noAnalytics } from './no-analytics'
 import { optionalPortsEnv, portChoice } from './optional-ports'
 import { assertEndpoint, parseForcePathStyle, parseUploadTarget } from './storage-settings'
@@ -81,6 +81,14 @@ export function assertRealEnv(): void {
         } catch (error) {
             throw new CutoverPendingError(['data-api'], (error as Error).message)
         }
+    } else {
+        // The TLS settings' shape only: the root file is read when the pool is built, on the deployment, since the path
+        // `SssbApp` sets (the Lambda runtime's bundle) exists only there and `sssb check-real-env` runs anywhere.
+        try {
+            databaseSsl()
+        } catch (error) {
+            throw new CutoverPendingError(['db-tls'], (error as Error).message)
+        }
     }
     // The auth settings: an unknown choice, a malformed slug, key or role, a setting its choice does not use, or a fixed
     // org source that would hand everyone the staff org's manage-all.
@@ -143,7 +151,7 @@ export async function createRealPorts(hooks: RealPortsHooks = {}): Promise<RealP
                   region: need('AWS_REGION'),
                   resumeBudgetMs: databaseResumeBudgetMs(),
               })
-            : (await import('./db')).createRealDb(need('DATABASE_URL'))
+            : (await import('./db')).createRealDb(need('DATABASE_URL'), databaseSsl())
     // Clerk, placed as the auth settings say (../auth-tenancy.ts), and Clerk itself on the defaults. Every port that
     // reaches the people (the in-process runner's job context included) is handed this one. A fixed org source names
     // its home org from the database's org row.
