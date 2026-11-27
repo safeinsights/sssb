@@ -11,6 +11,7 @@ import {
     type ScanRoot,
     type ScannedRoute,
     describeGate,
+    exemptRel,
     exemptionFor,
     gateHolds,
     judge,
@@ -2139,6 +2140,57 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
         expect(names('export function GET() { return Response.json({ ok: true }) }')).toEqual([])
     })
 
+    it('follows a listed declaration of the file, so what it reads is named too', () => {
+        expect(
+            names(
+                "import { db } from './db'\nconst corsHeaders = db\nexport function GET() { return Response.json(corsHeaders) }",
+            ),
+        ).toEqual(['corsHeaders', 'db'])
+        expect(
+            names(
+                "import { db } from './db'\nfunction publicPosts() { return db.all() }\nexport function GET() { return Response.json(publicPosts()) }",
+            ),
+        ).toEqual(['db', 'publicPosts'])
+        expect(
+            names(
+                "import { db } from './db'\nconst { posts } = db\nexport function GET() { return Response.json(posts) }",
+            ),
+        ).toEqual(['db', 'posts'])
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\nexport function OPTIONS() { return new Response(null, { headers: CORS }) }",
+                'OPTIONS',
+            ),
+        ).toEqual(['CORS'])
+    })
+
+    it('is null for a declared ambient, an import-equals, an exported or mutable name, and the handler itself', () => {
+        for (const src of [
+            "declare const fetch: (u: string) => Promise<Response>\nexport function GET() { return fetch('http://x') }",
+            "declare function fetch(u: string): Promise<Response>\nexport function GET() { return fetch('http://x') }",
+            'declare global { var process: { env: Record<string, string> } }\nexport function GET() { return Response.json(process.env) }',
+            "import db = require('./db')\nexport function GET() { return Response.json(db) }",
+            "export const cors = { allow: 'GET' }\nexport function GET() { return Response.json(cors) }",
+            "let cors = { allow: 'GET' }\nexport function GET() { return Response.json(cors) }",
+            "import { load } from './db'\nexport async function GET() { return Response.json(await (GET as never as { load: () => unknown }).load()) }\n;(GET as never as { load: unknown }).load = load",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf('declare const fetch: () => Response\nexport function GET() { return fetch() }', 'GET')
+                .outsideRefusal,
+        ).toMatch(/declared with `declare`/)
+    })
+
+    it('is null for a handler exported by name that reads what is hung on it', () => {
+        const self =
+            "import { load } from './db'\n" +
+            'async function handler() { return Response.json(await (handler as never as { load: () => unknown }).load()) }\n' +
+            ';(handler as never as { load: unknown }).load = load\nexport { handler as GET }'
+        expect(names(self)).toBeNull()
+        expect(factsOf(self, 'GET').outsideRefusal).toMatch(/refers to itself/)
+    })
+
     it('is null where no name can excuse what the handler does', () => {
         for (const src of [
             "import { corsHeaders as c } from './cors'\nexport function GET() { return Response.json(c) }",
@@ -2161,6 +2213,7 @@ describe('judging a handler against a policy', () => {
         calls: new Set(),
         opensWithSimulated404: false,
         outsideNames: null,
+        outsideRefusal: null,
         readsNothing: false,
         ...over,
     })
@@ -2337,6 +2390,33 @@ describe('judging a handler against a policy', () => {
         ).toMatch(/holds only when the handler is a read/)
     })
 
+    it('names, in the failure, what a reads-only read named or did that its gate does not allow', () => {
+        const withEntry: ScanPolicy = {
+            ...policy,
+            exemptFiles: { 'feed/route.ts': { reason: 'feed', mustMatch: { kind: 'reads-only', names: ['posts'] } } },
+        }
+        expect(
+            judge(
+                route('feed/route.ts'),
+                { verb: 'GET', facts: facts({ outsideNames: new Set(['posts', 'db']) }) },
+                withEntry,
+            ),
+        ).toMatch(/It names `db`, which the gate does not list\./)
+        expect(
+            judge(
+                route('feed/route.ts'),
+                { verb: 'GET', facts: facts({ outsideRefusal: '`fetch` is a global off the inert list' }) },
+                withEntry,
+            ),
+        ).toMatch(/It cannot pass one: `fetch` is a global off the inert list\./)
+        expect(judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /A read that reads nothing org-scoped can instead have a reads-only entry for its own file/,
+        )
+        expect(judge(route('hooks/a/route.ts'), { verb: 'POST', facts: facts({}) }, policy)).not.toMatch(
+            /reads-only entry/,
+        )
+    })
+
     it('a gate holds only on the facts it names', () => {
         const wrapped: Gate = { kind: 'wrapped-by', callees: ['withA', 'withB'] }
         expect(gateHolds(wrapped, facts({ wrappedBy: 'withB' }))).toBe(true)
@@ -2362,6 +2442,33 @@ describe('judging a handler against a policy', () => {
         expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(
             /opens with `if \(!isSimulated\) return new Response\(null, \{ status: 404 \}\)` \(an imported `isSimulated`/,
         )
+    })
+})
+
+describe('a route group is not part of the path an exemption is matched against', () => {
+    it('drops (name) segments inside and above the exempt directory', () => {
+        const root = { exemptDir: '/app/src/app/api' }
+        expect(exemptRel(root, '/app/src/app/api/(internal)/service/x/route.ts')).toBe('service/x/route.ts')
+        expect(exemptRel(root, '/app/src/app/(app)/api/webhooks/a/route.ts')).toBe('webhooks/a/route.ts')
+        expect(exemptRel(root, '/app/src/app/(marketing)/feed.xml/route.ts')).toBe('../feed.xml/route.ts')
+        expect(exemptRel(root, '/app/src/app/api-docs/route.ts')).toBe('../api-docs/route.ts')
+        expect(exemptRel(root, '/app/src/app/api/items/route.ts')).toBe('items/route.ts')
+    })
+
+    it('so a service route in a group still needs its required gate', () => {
+        const routes = scanTree({
+            '(internal)/service/x/route.ts': `${AUTHORIZE}${DECLS}export async function GET() { ${CALL} }`,
+        })
+        const required: ScanPolicy = {
+            exemptPrefixes: {},
+            exemptFiles: {},
+            requiredAlongside: {
+                'service/': { reason: 'caller', mustMatch: { kind: 'wrapped-by', callees: ['withCaller'] } },
+            },
+        }
+        const [route] = routes
+        expect(route?.rel).toBe('service/x/route.ts')
+        expect(judge(route!, route!.handlers[0]!, required)).toMatch(/must also satisfy/)
     })
 })
 

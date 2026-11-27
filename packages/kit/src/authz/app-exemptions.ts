@@ -52,6 +52,16 @@ const KEYS = ['files', 'prefixes', 'outsideApi'] as const
 const SPACE_KEYS = ['files', 'prefixes'] as const
 const ROUTE_FILE = /(?:^|\/)route\.(?:mjs|[jt]sx?)$/
 const GLOB = /[*?[\]{}]/
+/** A dynamic segment Next routes by (`[id]`, `[...slug]`, `[[...slug]]`): literal in a key, never a glob. */
+const DYNAMIC_SEGMENT = /^(?:\[[\w-]+\]|\[\.\.\.[\w-]+\]|\[\[\.\.\.[\w-]+\]\])$/
+/** A route group (`(marketing)`): not part of the URL, so a key is matched without it, as a route's path is. */
+const ROUTE_GROUP = /^\(.*\)$/
+/**
+ * The framework prefixes under which an app may name one file with a reads-only entry: `webhooks/` alone, for a
+ * provider's verification handshake (safeinsights/sssb#220). `simulator/`'s guarantee is "404 in real mode", which a
+ * reads-only read does not keep.
+ */
+const READS_ONLY_FRAMEWORK_PREFIXES: readonly string[] = ['webhooks/']
 /** Where `outsideApi` keys are measured from: the app's `src/app`, one level above `src/app/api`. */
 const OUTSIDE_API = '../'
 
@@ -77,7 +87,6 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
         ...Object.keys(FRAMEWORK_POLICY.exemptPrefixes),
         ...Object.keys(FRAMEWORK_POLICY.requiredAlongside),
     ]
-    const frameworkPrefixes = Object.keys(FRAMEWORK_POLICY.exemptPrefixes)
     /** Validates one `{ files, prefixes }` space: the api one (keys relative to src/app/api) or `outsideApi`. */
     const space = (key: string, entries: unknown, outside: boolean): void => {
         const name = outside ? `outsideApi.${key}` : key
@@ -87,14 +96,20 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
         }
         const prefix = key === 'prefixes'
         const base = outside ? "the app's src/app" : "the app's src/app/api"
-        for (const [rel, entry] of Object.entries(entries as Record<string, unknown>)) {
-            const where = `${label}: ${name} \`${rel}\``
+        for (const [written, entry] of Object.entries(entries as Record<string, unknown>)) {
+            const where = `${label}: ${name} \`${written}\``
+            // Matched as the scan matches a route: by URL, so a route group's segment is dropped.
+            const rel = written
+                .split('/')
+                .filter((segment) => !ROUTE_GROUP.test(segment))
+                .join('/')
             if (
                 rel === '' ||
+                rel === '/' ||
                 rel.startsWith('/') ||
                 rel.includes('\\') ||
                 rel.split('/').includes('..') ||
-                GLOB.test(rel)
+                rel.split('/').some((segment) => !DYNAMIC_SEGMENT.test(segment) && GLOB.test(segment))
             ) {
                 problems.push(`${where} must be a literal path relative to ${base}, with / separators (no glob)`)
                 continue
@@ -138,12 +153,14 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
                 !prefix &&
                 readsOnly &&
                 collisions.length > 0 &&
-                collisions.every((framework) => frameworkPrefixes.includes(framework) && rel.startsWith(framework))
+                collisions.every(
+                    (framework) => READS_ONLY_FRAMEWORK_PREFIXES.includes(framework) && rel.startsWith(framework),
+                )
             if (collisions.length > 0 && !underFrameworkPrefix) {
                 problems.push(
                     `${where} overlaps the framework's own entry \`${collisions[0]}\`; an app cannot replace or widen a ` +
-                        'framework exemption or gate (only a reads-only entry for one file may sit under a framework ' +
-                        'prefix, and it applies to reads only)',
+                        'framework exemption or gate (only a reads-only entry for one file may sit under `webhooks/`, ' +
+                        'and it applies to reads only)',
                 )
                 continue
             }
@@ -235,7 +252,37 @@ function staleAppExemptions(app: AppExemptions, judged: readonly ScannedRoute[],
     const tree = (rel: string) => (outside(rel) ? "the app's src/app" : "the app's src/app/api")
     const handler = (exemption: Exemption) =>
         exemption.mustMatch.kind === 'reads-only' ? 'read handler' : 'route handler'
+    /**
+     * A reads-only entry's names that no read handler it covers names: a name nobody reads would pre-approve it for the
+     * next edit, so each one listed has to be in use.
+     */
+    const unused = (kind: string, rel: string, exemption: Exemption, matches: (r: string) => boolean): string[] => {
+        const gate = exemption.mustMatch
+        if (gate.kind !== 'reads-only') return []
+        const read = new Set(
+            judged
+                .filter((route) => matches(route.rel))
+                .flatMap((route) => route.handlers)
+                .filter((h) => isReadVerb(h.verb))
+                .flatMap((h) => [...(h.facts?.outsideNames ?? [])]),
+        )
+        return gate.names
+            .filter((n) => !read.has(n))
+            .map(
+                (n) =>
+                    `${label}: ${key(kind, rel)} lists \`${n}\`, which no read handler it covers names; ` +
+                    'list only what the read uses',
+            )
+    }
     return [
+        ...Object.entries(app.files).flatMap(([rel, exemption]) =>
+            covers(exemption, (r) => r === rel) ? unused('files', rel, exemption, (r) => r === rel) : [],
+        ),
+        ...Object.entries(app.prefixes).flatMap(([prefix, exemption]) =>
+            covers(exemption, (r) => r.startsWith(prefix))
+                ? unused('prefixes', prefix, exemption, (r) => r.startsWith(prefix))
+                : [],
+        ),
         ...Object.entries(app.files)
             .filter(([rel, exemption]) => !covers(exemption, (r) => r === rel))
             .map(

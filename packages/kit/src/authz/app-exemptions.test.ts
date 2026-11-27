@@ -295,6 +295,67 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         ])
     })
 
+    it('refuse a reads-only entry under simulator/, whose guarantee is a 404 in real mode', () => {
+        const { problems } = appExemptionsFrom(
+            {
+                files: {
+                    'simulator/dump/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['world'] } },
+                },
+            },
+            'x',
+        )
+        expect(problems).toEqual([
+            expect.stringMatching(
+                /overlaps the framework's own entry `simulator\/`.*only a reads-only entry for one file may sit under `webhooks\/`/,
+            ),
+        ])
+    })
+
+    it('match keys by URL: a route group is dropped, so a group cannot reach back into api/ or under service/', () => {
+        const { problems, exemptions } = appExemptionsFrom(
+            {
+                outsideApi: {
+                    files: {
+                        '(g)/api/service/x/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['p'] } },
+                    },
+                },
+                files: { '(g)/service/x/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['p'] } } },
+            },
+            'x',
+        )
+        expect(exemptions).toEqual({ files: {}, prefixes: {} })
+        expect(problems).toEqual([
+            expect.stringMatching(/outsideApi\.files `\(g\)\/api\/service\/x\/route\.ts` is under src\/app\/api/),
+            expect.stringMatching(
+                /files `\(g\)\/service\/x\/route\.ts` overlaps the framework's own entry `service\/`/,
+            ),
+        ])
+    })
+
+    it('take a dynamic segment literally in a key, so a public read under [locale] can be named', async () => {
+        const exemptions = `export default { outsideApi: { files: { '(site)/[locale]/feed.xml/route.ts': ${readsOnly(['publicPosts'])} } } }\n`
+        const scan = await scanApp(
+            app({ 'api/dockets/route.ts': AUTHORIZED_POST, '(site)/[locale]/feed.xml/route.ts': FEED }, exemptions),
+        )
+        expect(scan.exemptionProblems).toEqual([])
+        expect(scan.failures).toEqual([])
+        expect(
+            appExemptionsFrom(
+                { files: { 'a/[*]/route.ts': { reason: 'r', mustMatch: { kind: 'calls', callees: ['x'] } } } },
+                'x',
+            ).problems,
+        ).toEqual([expect.stringMatching(/must be a literal path/)])
+    })
+
+    it('call a listed name stale when no read handler it covers names it', async () => {
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders', 'db'])} } }\n`
+        const scan = await scanApp(app({ 'api/cors/route.ts': PREFLIGHT }, exemptions))
+        expect(scan.failures).toEqual([])
+        expect(scan.exemptionProblems).toEqual([
+            'acme/authz-exemptions.mjs: files `cors/route.ts` lists `db`, which no read handler it covers names; list only what the read uses',
+        ])
+    })
+
     it('refuse a reads-only gate whose names are not names', () => {
         for (const names of [[], ['a.b'], [''], [3]]) {
             const { problems } = appExemptionsFrom(

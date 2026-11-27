@@ -197,6 +197,8 @@ export interface HandlerFacts {
      * does something no name can excuse. Empty exactly when `readsNothing` holds. What a `reads-only` gate reads.
      */
     outsideNames: ReadonlySet<string> | null
+    /** Why `outsideNames` is null (the first thing no name can excuse), or null when it is not. */
+    outsideRefusal: string | null
     /**
      * The handler is a function (not a wrapper's result) whose code, read lexically, names nothing from outside it
      * but inert globals, a few named imports and literal constants (`readsNothing`), so the only data in its reach is
@@ -211,7 +213,7 @@ export type Handler =
 
 export interface ScannedRoute {
     root: string
-    /** Path relative to the root's `exemptDir`, `/`-separated. */
+    /** Path relative to the root's `exemptDir`, `/`-separated, with route groups' `(name)` segments dropped (`exemptRel`). */
     rel: string
     file: string
     /** One entry per exported verb Next routes (`JUDGED_VERBS`). Empty for a file that exports none. */
@@ -231,20 +233,36 @@ export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}
         const unreadable = new Map<string, string>()
         const routes: ScannedRoute[] = routeFiles(root.dir, unreadable).map((file) => ({
             root: root.label,
-            rel: path.relative(root.exemptDir, file).split(path.sep).join('/'),
+            rel: exemptRel(root, file),
             file,
             handlers: scanner.handlers(file),
         }))
         for (const [dir, code] of unreadable) {
             routes.push({
                 root: root.label,
-                rel: path.relative(root.exemptDir, dir).split(path.sep).join('/'),
+                rel: exemptRel(root, dir),
                 file: dir,
                 handlers: [{ verb: '*', refusal: unreadableRefusal(code) }],
             })
         }
         return routes
     })
+}
+
+/**
+ * A route's path relative to the root's `exemptDir`, as Next serves it: a route group's `(name)` segment is not part of
+ * the URL, so it is dropped before the path is matched against an exemption or a required gate. Without that,
+ * `api/(internal)/service/x/route.ts`, served at `/api/service/x`, escaped the `service/` gate, and
+ * `(app)/api/x/route.ts` read as a route outside `api/`. Measured from the directory above `exemptDir`, so a group
+ * above it (`src/app/(app)/api/…`) is dropped too.
+ */
+export function exemptRel(root: Pick<ScanRoot, 'exemptDir'>, file: string): string {
+    const base = path.basename(root.exemptDir)
+    const segments = path
+        .relative(path.dirname(root.exemptDir), file)
+        .split(path.sep)
+        .filter((segment) => !/^\(.*\)$/.test(segment))
+    return segments[0] === base ? segments.slice(1).join('/') : ['..', ...segments].join('/')
 }
 
 function routeFiles(dir: string, unreadable: Map<string, string>): string[] {
@@ -605,10 +623,29 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
     const read = isReadVerb(handler.verb)
     if (!handler.facts.reachesAuthorize && read && handler.facts.readsNothing) return undefined
     if (!handler.facts.reachesAuthorize && exemption) {
+        const gate = exemption.mustMatch
+        const facts = handler.facts
+        // What a reads-only read did that its gate does not allow, named, so the author can see which name to drop.
+        const why =
+            gate.kind !== 'reads-only'
+                ? ''
+                : facts.outsideNames === null
+                  ? ` It cannot pass one: ${facts.outsideRefusal ?? 'it does something no name can excuse'}.`
+                  : ` It names ${[...facts.outsideNames]
+                        .filter((n) => !gate.names.includes(n))
+                        .map((n) => `\`${n}\``)
+                        .join(', ')}, which the gate does not list.`
+        // A read the prefix's guard does not cover (a provider's handshake under webhooks/) has one other way through.
+        const hint =
+            read && gate.kind !== 'reads-only'
+                ? ` A read that reads nothing org-scoped can instead have a reads-only entry for its own file in the ` +
+                  `app's authz-exemptions.mjs (under webhooks/ the framework allows one).`
+                : ''
         return (
-            `${where} sits under an exemption that holds only when ${describeGate(exemption.mustMatch)}, and this ` +
-            `handler does not: the exemption's justification does not hold here. Add the gate to THIS handler, or call ` +
-            `authorize(...). (A string, a comment, a look-alike, or the gate on another verb does not count.)`
+            `${where} sits under an exemption that holds only when ${describeGate(gate)}, and this ` +
+            `handler does not: the exemption's justification does not hold here.${why} Add the gate to THIS handler, ` +
+            `or call authorize(...). (A string, a comment, a look-alike, or the gate on another verb does not count.)` +
+            hint
         )
     }
     if (!handler.facts.reachesAuthorize && read) {
@@ -630,7 +667,7 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
                   `a \`reads-only\` gate listing the imports it reads, the only gate a route outside src/app/api can ` +
                   `match.`
                 : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs (a ` +
-                  `\`reads-only\` gate lists the imports a read may name).`) +
+                  `\`reads-only\` gate lists the imports and declarations of its file a read may name).`) +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -897,13 +934,14 @@ class RootScanner {
         const reach = new Reach(node.src, this.authorizeModules)
         if ('fn' in node) {
             reach.invoke(node.fn)
-            const outsideNames = outsideNamesOf(node.src, node.fn)
+            const { names: outsideNames, refusal: outsideRefusal } = outsideNamesOf(node.src, node.fn)
             return {
                 reachesAuthorize: reach.authorize,
                 wrappedBy: null,
                 calls: reach.calls,
                 opensWithSimulated404: opensWithSimulated404(node.src, node.fn),
                 outsideNames,
+                outsideRefusal,
                 readsNothing: outsideNames?.size === 0,
             }
         }
@@ -915,6 +953,7 @@ class RootScanner {
             opensWithSimulated404: false,
             // A wrapper is code the scan does not read, run on every request: what it reads is out of sight.
             outsideNames: null,
+            outsideRefusal: 'the handler is a call to a wrapper, whose code runs on every request out of sight',
             readsNothing: false,
         }
     }
@@ -2067,10 +2106,20 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  * declaration of this file by its own name. What a `reads-only` gate (`Gate`) matches against: a read that names
  * nothing outside it but inert values and the names the gate lists.
  */
-function outsideNamesOf(src: Source, fn: ts.FunctionLikeDeclaration): ReadonlySet<string> | null {
+function outsideNamesOf(
+    src: Source,
+    fn: ts.FunctionLikeDeclaration,
+): { names: ReadonlySet<string>; refusal: null } | { names: null; refusal: string } {
     const { checker, sf } = src
-    // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
-    const inside = (decl: ts.Declaration) => decl !== fn && decl.getStart(sf) >= fn.getStart(sf) && decl.end <= fn.end
+    /**
+     * What the walk reads: the handler, and every declaration of this file it names (followed below), so a listed
+     * name's own reads are counted too. A reference into any of them is a local one. The handler itself is not inside
+     * it: a property hung on it (`GET.load = load`) would be out of sight.
+     */
+    const roots: ts.Node[] = [fn]
+    const within = (decl: ts.Declaration, root: ts.Node) =>
+        decl.getStart(sf) >= root.getStart(sf) && decl.end <= root.end
+    const inside = (decl: ts.Declaration) => decl !== fn && roots.some((root) => within(decl, root))
     const assigned = new Map<string, boolean>()
     const assignedGlobal = (name: string): boolean => {
         let known = assigned.get(name)
@@ -2094,20 +2143,63 @@ function outsideNamesOf(src: Source, fn: ts.FunctionLikeDeclaration): ReadonlySe
             isPrimitiveLiteral(src, decl.initializer)
         )
     }
-    /** The name a non-inert outside declaration counts under, or null when no name can stand for it. */
-    const nameOf = (decl: ts.Declaration): string | null => {
+    const names = new Set<string>()
+    let refusal: string | null = null
+    const refuse = (why: string): false => {
+        refusal ??= why
+        return false
+    }
+    /**
+     * Counts a non-inert declaration from outside the handler under its name, or refuses it. An import counts under its
+     * exported name (a default import under its local one). A declaration of this file counts only as a `const` or a
+     * function the file neither exports, declares ambiently nor reassigns, and what IT names is walked too, so a
+     * listed `const cors = db` or `function posts() { return db.all() }` also names `db`.
+     */
+    const count = (decl: ts.Declaration, id: ts.Identifier): boolean => {
         const imported = valueImportOf(decl)
         if (imported !== undefined) {
-            if (imported.kind === 'namespace') return null
-            if (ts.isImportClause(decl)) return decl.name?.text ?? null
-            return ts.isImportSpecifier(decl) && decl.name.text === imported.name ? imported.name : null
+            if (imported.kind === 'namespace') return refuse(`\`${id.text}\` is a namespace import, the whole module`)
+            if (ts.isImportClause(decl)) return decl.name ? (names.add(decl.name.text), true) : refuse('an import')
+            if (ts.isImportSpecifier(decl) && decl.name.text === imported.name) return (names.add(imported.name), true)
+            return refuse(`\`${id.text}\` is an import under another name than its exported \`${imported.name}\``)
         }
-        if (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl)) return null
-        const name = (decl as ts.NamedDeclaration).name
-        return name !== undefined && ts.isIdentifier(name) ? name.text : null
+        if (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl)) {
+            return refuse(`\`${id.text}\` is a type-only import`)
+        }
+        if (ts.isImportEqualsDeclaration(decl))
+            return refuse(`\`${id.text}\` is an \`import … = require(…)\`, a whole module`)
+        if (isAmbient(decl)) {
+            return refuse(`\`${id.text}\` is declared with \`declare\`, so its value is out of sight`)
+        }
+        if ((ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Export) !== 0) {
+            return refuse(`\`${id.text}\` is exported, so another module can change it`)
+        }
+        const variable = ts.isBindingElement(decl) ? ts.walkUpBindingElementsAndPatterns(decl) : decl
+        if (ts.isVariableDeclaration(variable)) {
+            if (!isConst(variable) || variable.initializer === undefined) {
+                return refuse(`\`${id.text}\` is not a \`const\` with a value, so it can change`)
+            }
+            if ((ts.getCombinedModifierFlags(variable) & ts.ModifierFlags.Export) !== 0) {
+                return refuse(`\`${id.text}\` is exported, so another module can change it`)
+            }
+            names.add(id.text)
+            follow(variable)
+            return true
+        }
+        if (ts.isFunctionDeclaration(decl) && decl.body !== undefined) {
+            if (isReassigned(src, decl) || isRedeclared(decl))
+                return refuse(`\`${id.text}\` is reassigned or redeclared`)
+            names.add(id.text)
+            follow(decl)
+            return true
+        }
+        return refuse(`\`${id.text}\` is a ${ts.SyntaxKind[decl.kind]}, which no name can stand for`)
     }
-    const names = new Set<string>()
-    let excused = true
+    const follow = (node: ts.Node): void => {
+        if (roots.includes(node)) return
+        roots.push(node)
+        visit(node)
+    }
     /** Records what `id` refers to; false when no name can excuse it. */
     const reference = (id: ts.Identifier): boolean => {
         const parent = id.parent
@@ -2117,25 +2209,32 @@ function outsideNamesOf(src: Source, fn: ts.FunctionLikeDeclaration): ReadonlySe
                 : checker.getSymbolAtLocation(id)
         const decl = symbol?.declarations?.[0]
         if (decl === undefined) {
-            return (INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)
+            if ((INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)) return true
+            return refuse(`\`${id.text}\` is a global off the inert list`)
+        }
+        // The handler naming itself: what is hung on it (`GET.load = load`) is out of sight, whatever it is called.
+        const bound = variableOf(decl)?.initializer
+        if (decl === fn || (bound !== undefined && unwrap(bound) === fn)) {
+            return refuse('it refers to itself, and what is hung on a handler is out of sight')
         }
         if (inside(decl) || allowedOutside(decl)) return true
-        const name = nameOf(decl)
-        if (name === null) return false
-        names.add(name)
-        return true
+        return count(decl, id)
     }
     const visit = (node: ts.Node): void => {
-        if (!excused) return
+        if (refusal !== null) return
         // A type runs nothing, and names nothing the handler reads.
         // An instantiation expression (`load<T>`) is an ExpressionWithTypeArguments, which is a type node holding a value.
         if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression)
         if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) return
+        if (ts.isClassLike(node)) return void refuse('it declares a class, whose members run code out of sight')
+        if (ts.isMetaProperty(node)) return void refuse('it reads `import.meta` or `new.target`')
+        if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+            return void refuse('it loads a module with `import()`')
+        }
+        if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
+            return void refuse('it has a `using` declaration, whose disposer runs')
+        }
         if (
-            ts.isClassLike(node) ||
-            ts.isMetaProperty(node) ||
-            (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-            (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
             (ts.isPropertyAccessExpression(node) && ESCAPE_MEMBERS.has(node.name.text)) ||
             (ts.isBindingElement(node) &&
                 ESCAPE_MEMBERS.has((node.propertyName ?? node.name).getText(sf).replace(/^['"]|['"]$/g, ''))) ||
@@ -2143,17 +2242,27 @@ function outsideNamesOf(src: Source, fn: ts.FunctionLikeDeclaration): ReadonlySe
                 ts.isStringLiteralLike(node.argumentExpression) &&
                 ESCAPE_MEMBERS.has(node.argumentExpression.text))
         ) {
-            excused = false
-            return
+            return void refuse('it reads a `constructor` or `__proto__` member')
         }
-        if (ts.isIdentifier(node) && isReference(node) && !reference(node)) {
-            excused = false
-            return
-        }
+        if (ts.isIdentifier(node) && isReference(node) && !reference(node)) return
         ts.forEachChild(node, visit)
     }
     visit(fn)
-    return excused ? names : null
+    return refusal === null ? { names, refusal: null } : { names: null, refusal }
+}
+
+/** Whether a declaration is ambient: `declare`d itself, or inside a `declare global` or `declare module` block. */
+function isAmbient(decl: ts.Node): boolean {
+    for (let node: ts.Node | undefined = decl; node !== undefined && !ts.isSourceFile(node); node = node.parent) {
+        if (
+            ts.canHaveModifiers(node) &&
+            (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Ambient) !== 0
+        ) {
+            return true
+        }
+        if (ts.isModuleDeclaration(node)) return true
+    }
+    return false
 }
 
 /**
