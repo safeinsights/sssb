@@ -6,7 +6,8 @@ import type { CheckImpl } from './types'
 
 /**
  * `real-auth-provider`: a page that renders one of SSSB's real-mode auth forms sits under a layout that mounts their
- * provider. The forms (`@sssb/kit/adapters/real/sign-in-form`, `.../accept-invite-form`) call the auth vendor's client
+ * provider. The forms (`@sssb/kit/adapters/real/sign-in-form`, `.../accept-invite-form`, `.../account-refused-form`,
+ * `.../user-menu`) call the auth vendor's client
  * hooks, which throw outside its provider (`RealAuthProviders`, `@sssb/kit/adapters/real/providers`). In simulated mode
  * neither the form nor the provider loads, so nothing but real mode shows the gap: a real sign-in page that fails to
  * render. SSSB's own starter once shipped without the provider, and no gate saw it.
@@ -32,6 +33,7 @@ const FORMS: ReadonlySet<string> = new Set([
     '@sssb/kit/adapters/real/sign-in-form',
     '@sssb/kit/adapters/real/accept-invite-form',
     '@sssb/kit/adapters/real/account-refused-form',
+    '@sssb/kit/adapters/real/user-menu',
 ])
 const PROVIDER = '@sssb/kit/adapters/real/providers'
 /**

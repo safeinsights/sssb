@@ -37,6 +37,10 @@
             "what": "The role the app connects as (the one in `DATABASE_URL` on `pg`, the one the secret at `DATABASE_SECRET_ARN` holds on `data-api`) holds neither `SUPERUSER` nor `BYPASSRLS`"
         },
         {
+            "id": "db-tls",
+            "what": "On `pg`, the server and the Migrator reach the database over TLS that verifies its certificate (`DATABASE_SSL_MODE`: `verify-full` when unset, never `disable` deployed; `DATABASE_SSL_ROOT_CERT`: the roots)"
+        },
+        {
             "id": "origin-not-publicly-reachable",
             "what": "The Lambda origin answers only CloudFront"
         },

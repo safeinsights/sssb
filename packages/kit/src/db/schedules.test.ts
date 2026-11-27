@@ -170,3 +170,102 @@ describe('runDueSchedules', () => {
         expect(firedFor(jobs.calls, disabled)).toBe(0)
     })
 })
+
+describe('the schedules drain is bounded per tick and fair across tenants (safeinsights/sssb#97)', () => {
+    /** A due weekly schedule on `tenantSlug`/`orgSlug`, its next run `nextRunAt`; returns its id. */
+    async function scheduleOn(tenantSlug: string, orgSlug: string, nextRunAt: Date): Promise<string> {
+        const { fakeDb } = await import('../adapters/fake/db')
+        await fakeDb.ready()
+        const tenant = await fakeDb
+            .getDb()
+            .selectFrom('tenants')
+            .select('id')
+            .where('slug', '=', tenantSlug)
+            .executeTakeFirstOrThrow()
+        const org = await fakeDb
+            .getDb()
+            .selectFrom('organizations')
+            .select('id')
+            .where('tenant_id', '=', tenant.id)
+            .where('slug', '=', orgSlug)
+            .executeTakeFirstOrThrow()
+        const row = await fakeDb
+            .getDb()
+            .insertInto('job_schedules')
+            .values({
+                tenant_id: tenant.id,
+                org_id: org.id,
+                kind: 'digest-email',
+                spec: { type: 'weekly', utcDay: 1, atUtcHour: 13, atUtcMinute: 0 },
+                next_run_at: nextRunAt,
+                enabled: true,
+                created_by: 'test',
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        return row.id
+    }
+
+    test("a tenant with a backlog of due schedules cannot starve another tenant's, and what it leaves fires once, later", async () => {
+        const { runDueSchedules } = await import('./schedules')
+        const { fakeDb } = await import('../adapters/fake/db')
+        // Long before every other test's rows, so only this test's schedules are due at `now`.
+        const now = new Date('2024-03-01T00:00:00.000Z')
+        const busy: string[] = []
+        for (let i = 0; i < 5; i++) {
+            busy.push(await scheduleOn('harbor', 'annex', new Date(Date.UTC(2024, 0, 1, 0, i))))
+        }
+        // Due after every one of the busy tenant's, so a drain in due order would reach it last.
+        const quiet = await scheduleOn('lakeside', 'wharf', new Date('2024-02-01T00:00:00.000Z'))
+
+        const jobs = stubJobs()
+        const first = await runDueSchedules(fakeDb, jobs.port, now, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })
+        expect(first).toEqual({ spawned: 2, failed: 0, deferred: 2, stoppedBy: 'items' })
+        // One turn each: the quiet tenant's schedule, and one of the busy tenant's three oldest (the listing takes one
+        // more than the bound, and the drain shuffles what it listed).
+        expect(firedFor(jobs.calls, quiet)).toBe(1)
+        const firedBusy = busy.filter((id) => firedFor(jobs.calls, id) === 1)
+        expect(firedBusy).toHaveLength(1)
+        expect(busy.slice(0, 3)).toContain(firedBusy[0])
+        // What it left was not touched: still due at its own slot.
+        for (const id of busy.filter((b) => b !== firedBusy[0])) {
+            expect(firedFor(jobs.calls, id)).toBe(0)
+            expect((await nextRunAt(id)).getTime()).toBeLessThanOrEqual(now.getTime())
+        }
+
+        const second = await runDueSchedules(fakeDb, jobs.port, now, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })
+        expect(second).toEqual({ spawned: 2, failed: 0, deferred: 1, stoppedBy: 'items' })
+        const third = await runDueSchedules(fakeDb, jobs.port, now, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })
+        expect(third).toEqual({ spawned: 2, failed: 0, deferred: 0, stoppedBy: null })
+        for (const id of [...busy, quiet]) expect(firedFor(jobs.calls, id)).toBe(1)
+    })
+
+    test('spawns nothing after its deadline, and a drain whose deadline has passed lists nothing', async () => {
+        const { runDueSchedules } = await import('./schedules')
+        const { fakeDb } = await import('../adapters/fake/db')
+        const now = new Date('2023-03-01T00:00:00.000Z')
+        const ids = [
+            await scheduleOn('harbor', 'annex', new Date('2023-01-01T00:00:00.000Z')),
+            await scheduleOn('harbor', 'annex', new Date('2023-01-02T00:00:00.000Z')),
+            await scheduleOn('harbor', 'annex', new Date('2023-01-03T00:00:00.000Z')),
+        ]
+        // Each spawn takes five seconds of the tick's clock (a job the in-process runner runs inline, say).
+        let clock = 0
+        const calls: SubmittedJob[] = []
+        const slow: JobsPort = {
+            async start(job) {
+                calls.push(job)
+                clock += 5_000
+            },
+        }
+        const first = await runDueSchedules(fakeDb, slow, now, { maxItems: 100, deadline: 8_000, clock: () => clock })
+        // Started at 0 and 5 seconds; at 10 the deadline had passed.
+        expect(first).toEqual({ spawned: 2, failed: 0, deferred: 1, stoppedBy: 'time' })
+        const unfired = ids.filter((id) => firedFor(calls, id) === 0)
+        expect(unfired).toHaveLength(1)
+
+        const none = await runDueSchedules(fakeDb, slow, now, { maxItems: 100, deadline: 0, clock: () => 0 })
+        expect(none).toEqual({ spawned: 0, failed: 0, deferred: 0, stoppedBy: 'time' })
+        expect(firedFor(calls, unfired[0]!)).toBe(0)
+    })
+})

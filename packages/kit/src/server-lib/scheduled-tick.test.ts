@@ -137,6 +137,60 @@ describe('runScheduledTick', () => {
         expect(state.sweeps.filter((call) => call === 'start').length).toBeGreaterThan(0)
     })
 
+    test('spawns no more schedules than its bound, and the next tick spawns the rest (safeinsights/sssb#97)', async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        const ids = [
+            await insertSchedule(new Date(Date.now() - 2 * 60_000)),
+            await insertSchedule(new Date(Date.now() - 60_000)),
+        ]
+
+        const first = await runScheduledTick({ budget: { maxSchedules: 1 } })
+        expect(first).toMatchObject({ spawned: 1, failed: 0, stoppedBy: 'items' })
+        expect(first.deferred).toBeGreaterThanOrEqual(1)
+        expect(ids.map(firedFor).sort()).toEqual([0, 1])
+
+        const second = await runScheduledTick({ budget: { maxSchedules: 1 } })
+        expect(second).toMatchObject({ spawned: 1, deferred: 0, stoppedBy: null })
+        expect(ids.map(firedFor)).toEqual([1, 1])
+    })
+
+    test("measures each drain's window from the tick's start, and a spent schedules window leaves the deliveries theirs", async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        const id = await insertSchedule(new Date(Date.now() - 60_000))
+        // The tick starts at 0 and every later reading is 5 seconds: past a 4-second schedules window, inside the
+        // default deliveries one.
+        let readings = 0
+        const clock = () => (readings++ === 0 ? 0 : 5_000)
+
+        const result = await runScheduledTick({ budget: { schedulesWindowMs: 4_000 }, clock })
+        expect(result).toMatchObject({ spawned: 0, deferred: 0, stoppedBy: 'time' })
+        expect(result.deliveries.stoppedBy).not.toBe('time')
+        expect(firedFor(id)).toBe(0)
+
+        await runScheduledTick()
+        expect(firedFor(id), 'still due, so the next tick spawns it').toBe(1)
+    })
+
+    test("measures the deliveries window from the tick's start, not from where the deliveries drain begins", async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        // The tick starts at 0 and every later reading is 5 seconds: past a 4-second deliveries window counted from the
+        // tick's start, though the deliveries drain itself begins at 5.
+        let readings = 0
+        const clock = () => (readings++ === 0 ? 0 : 5_000)
+
+        const result = await runScheduledTick({ budget: { deliveriesWindowMs: 4_000 }, clock })
+        expect(result.deliveries).toMatchObject({ delivered: 0, failed: 0, dead: 0, stoppedBy: 'time' })
+    })
+
+    test('a budget field given as undefined means its default, not a broken tick', async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        const id = await insertSchedule(new Date(Date.now() - 60_000))
+        const unset: number | undefined = undefined
+        const result = await runScheduledTick({ budget: { maxSchedules: unset, deliveriesWindowMs: unset } })
+        expect(result.failed).toBe(0)
+        expect(firedFor(id)).toBe(1)
+    })
+
     test('reports the outbound-delivery drain beside the schedules', async () => {
         const { runScheduledTick } = await import('./scheduled-tick')
         const result = await runScheduledTick()
@@ -144,6 +198,8 @@ describe('runScheduledTick', () => {
             delivered: expect.any(Number),
             failed: expect.any(Number),
             dead: expect.any(Number),
+            deferred: expect.any(Number),
+            stoppedBy: null,
         })
     })
 })

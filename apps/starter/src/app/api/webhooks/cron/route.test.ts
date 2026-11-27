@@ -49,11 +49,20 @@ describe('POST /api/webhooks/cron', () => {
         const response = await tick(`Bearer ${devWebhookSecret()}`)
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
+        const body = (await response.json()) as { stoppedBy: unknown; deliveries: { stoppedBy: unknown } }
+        expect(body).toEqual({
             ok: true,
             spawned: expect.any(Number),
             failed: 0,
-            deliveries: { delivered: expect.any(Number), failed: expect.any(Number), dead: expect.any(Number) },
+            deferred: expect.any(Number),
+            stoppedBy: body.stoppedBy,
+            deliveries: {
+                delivered: expect.any(Number),
+                failed: expect.any(Number),
+                dead: expect.any(Number),
+                deferred: expect.any(Number),
+                stoppedBy: body.deliveries.stoppedBy,
+            },
         })
     })
 })

@@ -28,6 +28,13 @@ const loaded = vi.hoisted(() => ({
     storage: 0,
 }))
 
+/**
+ * A test's stand-in for a database transport module, set in the test and read by the one `doMock` each path gets in
+ * `beforeEach`. Never a second `doMock` of a path in the test: Vitest applies the queued mocks of one kind together
+ * (`Promise.all`, in its module mocker's `resolveMocks`), so two mocks of one path land in either order.
+ */
+const transportOverride = vi.hoisted(() => ({ db: null as object | null, dataApi: null as object | null }))
+
 vi.mock('./auth', () => ({ realAuth: { kind: 'clerk' }, clerkIdentitySource: {} }))
 vi.mock('./analytics', () => ({ createRealAnalytics: () => ({ kind: 'posthog' }) }))
 
@@ -59,6 +66,10 @@ function stubEnv(env: Record<string, string | undefined>): void {
 
 beforeEach(() => {
     vi.resetModules()
+    transportOverride.db = null
+    transportOverride.dataApi = null
+    // The real `./db` unless a test sets its stand-in.
+    vi.doMock('./db', async (importOriginal) => transportOverride.db ?? importOriginal())
     for (const name of Object.keys(loaded) as (keyof typeof loaded)[]) loaded[name] = 0
     // Registered per test, not hoisted: a hoisted factory is cached across resetModules, so it would
     // count only the FIRST load in this file and every later "never loads" would pass vacuously.
@@ -68,7 +79,7 @@ beforeEach(() => {
     })
     vi.doMock('./db-data-api', async (importOriginal) => {
         loaded.dataApiTransport += 1
-        return importOriginal()
+        return transportOverride.dataApi ?? importOriginal()
     })
     // The optional ports' adapters, stubbed (their SDKs are not what is tested here), each counting its own loads.
     vi.doMock('./llm', () => {
@@ -96,6 +107,7 @@ beforeEach(() => {
         return { createInProcessJobs: () => ({}) }
     })
     stubEnv({ ...COMMON_ENV, DATABASE_TRANSPORT: undefined, DATABASE_URL: undefined })
+    stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: undefined, NODE_PG_FORCE_NATIVE: undefined })
     stubEnv(Object.fromEntries(Object.keys(DATA_API_ENV).map((name) => [name, undefined])))
     stubEnv(Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, undefined])))
     stubEnv({
@@ -136,7 +148,7 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
 
     it('DATABASE_RESUME_BUDGET_MS reaches the Data API transport, and a malformed one fails at boot', async () => {
         const createRealDataApiDb = vi.fn().mockReturnValue({})
-        vi.doMock('./db-data-api', () => ({ createRealDataApiDb }))
+        transportOverride.dataApi = { createRealDataApiDb }
         stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, DATABASE_RESUME_BUDGET_MS: '9000' })
         const { assertRealEnv, createRealPorts } = await import('./index')
         await createRealPorts(HOOKS)
@@ -152,6 +164,55 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
         }
         // A pg deployment does not read it.
         stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
+
+    it('DATABASE_SSL_MODE and DATABASE_SSL_ROOT_CERT reach the pg transport, and a malformed pair fails at boot', async () => {
+        const createRealDb = vi.fn().mockReturnValue({})
+        transportOverride.db = { createRealDb }
+        const url = 'postgres://u:p@localhost:5432/app'
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: url })
+        const { assertRealEnv, createRealPorts } = await import('./index')
+        // Unset or empty is verify-full against Node's own roots: never no TLS.
+        for (const unset of [undefined, '']) {
+            stubEnv({ DATABASE_SSL_MODE: unset })
+            await createRealPorts(HOOKS)
+            expect(createRealDb).toHaveBeenLastCalledWith(url, { mode: 'verify-full', rootCert: undefined })
+        }
+        stubEnv({ DATABASE_SSL_MODE: 'verify-full', DATABASE_SSL_ROOT_CERT: '/var/runtime/ca-cert.pem' })
+        await createRealPorts(HOOKS)
+        expect(createRealDb).toHaveBeenLastCalledWith(url, {
+            mode: 'verify-full',
+            rootCert: '/var/runtime/ca-cert.pem',
+        })
+        stubEnv({ DATABASE_SSL_MODE: 'disable', DATABASE_SSL_ROOT_CERT: undefined })
+        await createRealPorts(HOOKS)
+        expect(createRealDb).toHaveBeenLastCalledWith(url, { mode: 'disable' })
+
+        // libpq's other modes are not modes here, and a mode's name has one spelling.
+        for (const bad of ['require', 'prefer', 'verify-ca', 'no-verify', 'VERIFY-FULL', 'true']) {
+            stubEnv({ DATABASE_SSL_MODE: bad, DATABASE_SSL_ROOT_CERT: undefined })
+            expect(() => assertRealEnv()).toThrow(/db-tls.*DATABASE_SSL_MODE must be one of verify-full, disable/s)
+        }
+        stubEnv({ DATABASE_SSL_MODE: 'disable', DATABASE_SSL_ROOT_CERT: '/var/runtime/ca-cert.pem' })
+        expect(() => assertRealEnv()).toThrow(
+            /db-tls.*DATABASE_SSL_ROOT_CERT is set, but DATABASE_SSL_MODE is disable/s,
+        )
+        stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: 'certs/rds.pem' })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*DATABASE_SSL_ROOT_CERT must be an absolute path/s)
+        // The boot check reads no file: the path SssbApp sets exists only on Lambda, and `sssb check-real-env` runs anywhere.
+        stubEnv({ DATABASE_SSL_ROOT_CERT: '/nowhere/ca.pem' })
+        expect(() => assertRealEnv()).not.toThrow()
+
+        // A URL that would override the mode fails here too, before the adapter would refuse it.
+        stubEnv({ DATABASE_SSL_ROOT_CERT: undefined, DATABASE_URL: `${url}?sslmode=require` })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*the database URL \(DATABASE_URL\) sets sslmode/s)
+        stubEnv({ DATABASE_URL: url, NODE_PG_FORCE_NATIVE: '1' })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*NODE_PG_FORCE_NATIVE is set/s)
+        stubEnv({ NODE_PG_FORCE_NATIVE: undefined })
+
+        // A Data API deployment does not read them.
+        stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, DATABASE_SSL_MODE: 'require' })
         expect(() => assertRealEnv()).not.toThrow()
     })
 

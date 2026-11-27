@@ -1,6 +1,6 @@
 import { type Kysely, type KyselyPlugin, RawNode, sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, onTestFinished, test, vi } from 'vitest'
-import { startContractServer, type ContractServer } from './contract-postgres'
+import { CONTRACT_SSL, startContractServer, type ContractServer } from './contract-postgres'
 import { randomUUID } from 'node:crypto'
 import { migrateToLatest } from '../../db/migrate'
 import { up as grantAppUser } from '../../db/migrations/0015_app_user_grant'
@@ -46,7 +46,7 @@ beforeAll(async () => {
     // Not migrated yet: the non-superuser pass below runs FIRST, so on a fresh server the owner's own
     // migration 0001 is what creates `app_user`, exactly as on a new Aurora cluster. The superuser pass
     // migrates `sssb_contract` when its turn comes.
-    realDb = createRealDb(url.toString())
+    realDb = createRealDb(url.toString(), CONTRACT_SSL)
 }, 120_000)
 
 afterAll(async () => {
@@ -93,7 +93,7 @@ function connect(login: { database: string; user: string; password: string }) {
     url.username = encodeURIComponent(login.user)
     url.password = encodeURIComponent(login.password)
     url.pathname = `/${login.database}`
-    return createRealDb(url.toString()).getDb()
+    return createRealDb(url.toString(), CONTRACT_SSL).getDb()
 }
 
 describe('SSSB fixture seam on real Postgres, through the real adapter (contract)', () => {
@@ -765,6 +765,70 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         await runRlsProofs(realDb.getDb(), expect)
     })
 
+    // safeinsights/sssb#97: the tick's drains list each tenant's due rows under FORCE RLS (inside withTenant, as
+    // app_user) with an ORDER BY and a LIMIT, then take the tenants in turn. Proven here on real Postgres, where RLS
+    // is not pglite's superuser default.
+    test("a bounded drain takes each tenant's due rows in turn under RLS, and leaves the rest due", async () => {
+        await realDb.migrateToLatest()
+        const admin = realDb.getDb()
+        const suffix = randomUUID().slice(0, 8)
+        const tenantOrg = async (slug: string) => {
+            const tenant = await admin
+                .insertInto('tenants')
+                .values({ slug: `${slug}-${suffix}`, name: slug })
+                .returning('id')
+                .executeTakeFirstOrThrow()
+            const org = await admin
+                .insertInto('organizations')
+                .values({ tenant_id: tenant.id, slug: `${slug}-org`, name: slug })
+                .returning('id')
+                .executeTakeFirstOrThrow()
+            return { tenantId: tenant.id, orgId: org.id }
+        }
+        const schedule = async (who: { tenantId: string; orgId: string }, nextRunAt: Date) =>
+            (
+                await admin
+                    .insertInto('job_schedules')
+                    .values({
+                        tenant_id: who.tenantId,
+                        org_id: who.orgId,
+                        kind: 'digest-email',
+                        spec: { type: 'weekly', utcDay: 1, atUtcHour: 13, atUtcMinute: 0 },
+                        next_run_at: nextRunAt,
+                        enabled: true,
+                        created_by: 'contract',
+                    })
+                    .returning('id')
+                    .executeTakeFirstOrThrow()
+            ).id
+        const busy = await tenantOrg('busy')
+        const quiet = await tenantOrg('quiet')
+        // Long before anything else in this database, so only these rows are due at `now`.
+        const busyIds: string[] = []
+        for (let i = 0; i < 4; i++) busyIds.push(await schedule(busy, new Date(Date.UTC(2001, 0, 1, 0, i))))
+        const quietId = await schedule(quiet, new Date(Date.UTC(2001, 1, 1)))
+        const now = new Date(Date.UTC(2001, 5, 1))
+
+        const { runDueSchedules } = await import('../../db/schedules')
+        const started: string[] = []
+        const jobs = {
+            async start(job: { payload: unknown }) {
+                started.push((job.payload as { scheduleId: string }).scheduleId)
+            },
+        }
+        const first = await runDueSchedules(realDb, jobs, now, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })
+        expect(first).toEqual({ spawned: 2, failed: 0, deferred: 2, stoppedBy: 'items' })
+        // One turn each, in whichever order the tick drew: the quiet tenant's row, and one of the busy tenant's three
+        // oldest (the listing takes one more than the bound, under RLS, oldest first).
+        expect(started).toContain(quietId)
+        expect(busyIds.slice(0, 3)).toContain(started.find((id) => id !== quietId))
+
+        const rest = await runDueSchedules(realDb, jobs, now, { maxItems: 100, deadline: Number.MAX_SAFE_INTEGER })
+        expect(rest).toEqual({ spawned: 3, failed: 0, deferred: 0, stoppedBy: null })
+        // Every schedule spawned exactly once across the two calls.
+        expect([...started].sort()).toEqual([...busyIds, quietId].sort())
+    })
+
     // The server can end a connection at any time: a failover, a reboot, an idle-session timeout, a socket
     // dropped while a Lambda sat frozen between invocations. pg reports that as an 'error' EVENT, and an
     // event with no listener is an uncaught exception, which crashes the process. The adapter must survive
@@ -773,7 +837,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         const url = new URL(serverUrl)
         url.pathname = `/${DATABASE}`
         url.searchParams.set('application_name', 'sssb_idle_probe')
-        const probe = createRealDb(url.toString())
+        const probe = createRealDb(url.toString(), CONTRACT_SSL)
         const admin = connect({
             database: new URL(serverUrl).pathname.slice(1) || 'postgres',
             user: decodeURIComponent(new URL(serverUrl).username),
@@ -807,7 +871,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
         const url = new URL(serverUrl)
         url.pathname = `/${DATABASE}`
         url.searchParams.set('application_name', 'sssb_busy_probe')
-        const probe = createRealDb(url.toString())
+        const probe = createRealDb(url.toString(), CONTRACT_SSL)
         const admin = connect({
             database: new URL(serverUrl).pathname.slice(1) || 'postgres',
             user: decodeURIComponent(new URL(serverUrl).username),
