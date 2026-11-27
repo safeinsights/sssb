@@ -87,6 +87,14 @@ describe('real-auth-provider', () => {
         expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/refused/page.tsx'])
     })
 
+    it("sees the header's real user menu, loaded by a layout", () => {
+        const appDir = app({
+            'layout.tsx': PLAIN_LAYOUT,
+            '(protected)/layout.tsx': `const { RealUserMenu } = await import('@sssb/kit/adapters/real/user-menu')\nexport default RealUserMenu\n`,
+        })
+        expect(realAuthProviderGaps(appDir).gaps).toEqual(['src/app/(protected)/layout.tsx'])
+    })
+
     it('sees a form loaded with require() or import = require(), and a provider loaded either way', () => {
         const appDir = app({
             'layout.tsx': PLAIN_LAYOUT,

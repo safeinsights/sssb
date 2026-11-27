@@ -1,5 +1,6 @@
 import { isClerkAPIResponseError } from '@clerk/nextjs/errors'
 import { auth, clerkClient, currentUser } from '@clerk/nextjs/server'
+import { cache } from 'react'
 import { DEFAULT_LOCALE, LOCALES, type Locale } from '../../core/locale'
 import { isRestricted, isRole, type Role } from '../../core/roles'
 import type {
@@ -15,6 +16,7 @@ import type {
 import { AuthRequiredError, ForbiddenError } from '../../ports/errors'
 import { authSettings } from '../auth-tenancy'
 import type { ProviderIdentitySource } from '../configured-auth'
+import { assertClerkKeylessClosed } from './clerk-keyless'
 
 /**
  * Clerk headless adapter (ADR-0003). Clerk organizations ARE our orgs
@@ -29,8 +31,13 @@ import type { ProviderIdentitySource } from '../configured-auth'
  *
  * AUTHORED — CUTOVER (`auth-dev`): typechecked against @clerk/nextjs, never run against a real
  * Clerk instance. Verify the full port contract suite against the dev instance at cutover.
- * Cutover perf checkpoint: getCurrentUser now issues an extra getOrganizationMembershipList per
- * request to resolve the active-org role — measure and cache if hot.
+ *
+ * What a request costs (safeinsights/sssb#200): reading the session (`auth()`) is local, since Clerk's middleware
+ * verified the token; the person's account (`currentUser()`) and their memberships
+ * (`users.getOrganizationMembershipList`, a page per 100 orgs) are Backend API calls. Each is read at most once per
+ * server render (`requestReads`), however many layouts, pages and components ask, so a render makes at most two calls
+ * (more only for a person in over 100 orgs) and `listMyOrgs` adds none. Nothing outlives the request: a role change, a
+ * removal from an org or a ban shows on the next one. A route handler is not a render, and reads once per call.
  */
 
 interface AppPublicMetadata {
@@ -105,6 +112,78 @@ function isProfileName(name: unknown): name is string {
     return typeof name === 'string' && name.trim() !== '' && name.length <= 256
 }
 
+/**
+ * The session Clerk's middleware verified, read only once ./clerk-keyless.ts has said that Clerk's keyless fallback,
+ * which would let a forged header stand in for the middleware, cannot be reached.
+ */
+async function sessionAuth() {
+    assertClerkKeylessClosed()
+    return auth()
+}
+
+type ClerkUser = Awaited<ReturnType<typeof currentUser>>
+type UserMembership = Awaited<
+    ReturnType<Awaited<ReturnType<typeof clerkClient>>['users']['getOrganizationMembershipList']>
+>['data'][number]
+
+/** One request's reads from Clerk about one person: each a promise, so callers that ask at once share one call. */
+interface PersonReads {
+    user?: Promise<ClerkUser>
+    memberships?: Promise<UserMembership[]>
+}
+
+/**
+ * The reads of the request being rendered, by user id. React's `cache` gives each server render its own map and
+ * shares it across the render's layouts, pages and components; outside a render (a route handler, a job, a script)
+ * every call gets a new one, so nothing is shared and nothing can outlive a request.
+ */
+const requestReads = cache((): Map<string, PersonReads> => new Map())
+
+function readsFor(userId: string): PersonReads {
+    const reads = requestReads()
+    let mine = reads.get(userId)
+    if (!mine) {
+        mine = {}
+        reads.set(userId, mine)
+    }
+    return mine
+}
+
+/** `load`'s answer, read once per request; a failed read is forgotten, so a later call in the request tries again. */
+function once<K extends keyof PersonReads>(
+    userId: string,
+    key: K,
+    load: () => NonNullable<PersonReads[K]>,
+): NonNullable<PersonReads[K]> {
+    const reads = readsFor(userId)
+    const pending = reads[key]
+    if (pending) return pending as NonNullable<PersonReads[K]>
+    const loaded = load()
+    reads[key] = loaded
+    loaded.catch(() => {
+        if (reads[key] === loaded) delete reads[key]
+    })
+    return loaded
+}
+
+/** The signed-in person's Clerk account, once per request. */
+function signedInAccount(userId: string): Promise<ClerkUser> {
+    return once(userId, 'user', () => currentUser())
+}
+
+/** Every org membership of the signed-in person, once per request. */
+function myMemberships(userId: string): Promise<UserMembership[]> {
+    return once(userId, 'memberships', async () => {
+        const client = await clerkClient()
+        return allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
+    })
+}
+
+/** After a write to the person's account, so the request's next read sees it. */
+function forgetReads(userId: string): void {
+    requestReads().delete(userId)
+}
+
 async function organizationIdForSlug(slug: string): Promise<string> {
     const client = await clerkClient()
     const org = await client.organizations.getOrganization({ slug })
@@ -113,17 +192,16 @@ async function organizationIdForSlug(slug: string): Promise<string> {
 
 export const realAuth: AuthPort = {
     async getCurrentUser(): Promise<AuthUser | null> {
-        const { userId } = await auth()
+        const { userId } = await sessionAuth()
         if (!userId) return null
-        const user = await currentUser()
+        // Both reads at once, each shared with the rest of the request.
+        const [user, memberships] = await Promise.all([signedInAccount(userId), myMemberships(userId)])
         if (!user) return null
         const metadata = (user.publicMetadata ?? {}) as AppPublicMetadata
         const locale = localeFrom(metadata)
 
         // Resolve the active org membership: the remembered currentOrgSlug if still a membership,
         // else the first one. Role comes from that membership (per-org), not the user object.
-        const client = await clerkClient()
-        const memberships = await allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
         const currentOrgSlug = (user.unsafeMetadata as { currentOrgSlug?: string })?.currentOrgSlug
         const active =
             memberships.find((m) => (m.organization.slug ?? m.organization.id) === currentOrgSlug) ?? memberships[0]
@@ -161,25 +239,30 @@ export const realAuth: AuthPort = {
     async signOut(): Promise<void> {
         // Server-side revocation only: the browser keeps its short-lived session token until it lapses, so a page that must
         // show the person signed out at once also signs out through Clerk's client (./account-refused-form.tsx does).
-        const { sessionId } = await auth()
+        const { sessionId } = await sessionAuth()
         if (!sessionId) return
         const client = await clerkClient()
         await client.sessions.revokeSession(sessionId)
     },
 
     async updateProfile(update: ProfileUpdate): Promise<AuthUser> {
-        const { userId } = await auth()
+        const { userId } = await sessionAuth()
         if (!userId) throw new AuthRequiredError()
         // Same guards the fake adapter enforces, and as early: before any write, so a refused update changes nothing.
         if (update.name !== undefined && !isProfileName(update.name)) throw new ForbiddenError('invalid name')
         if (update.locale !== undefined && !LOCALES.includes(update.locale)) throw new ForbiddenError('unknown locale')
         const client = await clerkClient()
-        if (update.name !== undefined) {
-            const [firstName = '', ...rest] = update.name.split(' ')
-            await client.users.updateUser(userId, { firstName, lastName: rest.join(' ') })
-        }
-        if (update.locale !== undefined) {
-            await client.users.updateUserMetadata(userId, { publicMetadata: { locale: update.locale } })
+        // Forgotten even when a write fails part way: the first may have landed.
+        try {
+            if (update.name !== undefined) {
+                const [firstName = '', ...rest] = update.name.split(' ')
+                await client.users.updateUser(userId, { firstName, lastName: rest.join(' ') })
+            }
+            if (update.locale !== undefined) {
+                await client.users.updateUserMetadata(userId, { publicMetadata: { locale: update.locale } })
+            }
+        } finally {
+            forgetReads(userId)
         }
         const user = await this.getCurrentUser()
         if (!user) throw new AuthRequiredError()
@@ -265,7 +348,7 @@ export const realAuth: AuthPort = {
      * (`localhost`), not the app's (safeinsights/sssb#131).
      */
     async createInvite(invite: InviteInput): Promise<CreatedInvite> {
-        const { userId } = await auth()
+        const { userId } = await sessionAuth()
         if (!userId) throw new AuthRequiredError()
         const client = await clerkClient()
         const organizationId = await organizationIdForSlug(invite.orgSlug)
@@ -288,10 +371,9 @@ export const realAuth: AuthPort = {
     },
 
     async listMyOrgs(): Promise<OrgRef[]> {
-        const { userId } = await auth()
+        const { userId } = await sessionAuth()
         if (!userId) return []
-        const client = await clerkClient()
-        const memberships = await allPages((page) => client.users.getOrganizationMembershipList({ userId, ...page }))
+        const memberships = await myMemberships(userId)
         return memberships.map((m) => ({
             slug: m.organization.slug ?? m.organization.id,
             name: m.organization.name,
@@ -300,12 +382,16 @@ export const realAuth: AuthPort = {
     },
 
     async setActiveOrg(orgSlug: string): Promise<void> {
-        const { userId } = await auth()
+        const { userId } = await sessionAuth()
         if (!userId) throw new AuthRequiredError()
         const mine = await this.listMyOrgs()
         if (!mine.some((o) => o.slug === orgSlug)) throw new ForbiddenError(`no membership in org: ${orgSlug}`)
         const client = await clerkClient()
-        await client.users.updateUserMetadata(userId, { unsafeMetadata: { currentOrgSlug: orgSlug } })
+        try {
+            await client.users.updateUserMetadata(userId, { unsafeMetadata: { currentOrgSlug: orgSlug } })
+        } finally {
+            forgetReads(userId)
+        }
     },
 }
 
@@ -316,9 +402,9 @@ export const realAuth: AuthPort = {
  */
 export const clerkIdentitySource: ProviderIdentitySource = {
     async current() {
-        const { userId } = await auth()
+        const { userId } = await sessionAuth()
         if (!userId) return null
-        const user = await currentUser()
+        const user = await signedInAccount(userId)
         if (!user) return null
         return {
             id: userId,

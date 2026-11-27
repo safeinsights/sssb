@@ -770,6 +770,13 @@ domain" is a proof.
 SSSB's file opens with a worked row — closed, dated, owned, with a proof column that was thought through
 rather than restated. Read it once for the level of detail each row deserves before you fill in your own.
 
+**Running real mode under `next dev`.** Set `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1` wherever real mode runs outside
+a production build (the showcase's `dev:real` in SSSB's repository does). Outside one, Clerk's keyless fallback
+would read request data under a key Clerk publishes, so on a path your proxy's matcher skips a forged
+`x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter refuses to read a
+session there until the variable is set, and names it when it refuses. A production build (`next build`, then
+`next start`) needs nothing.
+
 ### Ports your app does not use
 
 Real mode requires the settings of SSSB's optional ports only for the ones your app uses. Declare them in
