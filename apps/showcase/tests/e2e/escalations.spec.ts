@@ -109,7 +109,9 @@ test('an escalation is two-sided: frontline sends, a platform manager accepts, r
     await expect(page.getByTestId(`escalation-cancel-${id}`)).toHaveCount(0)
 })
 
-test('a platform MEMBER sees the escalation read-only and is denied respond at the server', async ({ page }) => {
+test('a platform MEMBER sees the escalation read-only and a forced respond 404s, as for a missing id', async ({
+    page,
+}) => {
     const subject = `member-${Date.now()}`
 
     // Dana raises frontline -> platform.
@@ -125,9 +127,12 @@ test('a platform MEMBER sees the escalation read-only and is denied respond at t
     await expect(page.getByTestId(`escalation-accept-${id}`)).toHaveCount(0)
     await expect(page.getByTestId(`escalation-reject-${id}`)).toHaveCount(0)
 
-    // Bypassing the missing UI: a raw respond POST (Sam's session) must still be forbidden.
+    // Bypassing the missing UI: a raw respond POST (Sam's session) is refused, and with the answer a missing id gets,
+    // so a denial never tells anyone that the id exists (safeinsights/sssb#137).
     const forced = await page.request.post(`/api/escalations/${id}/respond`, { data: { decision: 'accept' } })
-    expect(forced.status()).toBe(403)
+    expect(forced.status()).toBe(404)
+    expect(await forced.json()).toEqual({ error: 'not found' })
+    await expect(page.getByTestId(`escalation-received-${id}`)).not.toContainText('Accepted')
 })
 
 test('a bystander tenant cannot see the escalation and a forced respond 404s', async ({ page }) => {

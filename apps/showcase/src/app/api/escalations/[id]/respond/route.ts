@@ -3,14 +3,15 @@ import { authorize } from '@sssb/kit/authz/authorize'
 import { recordAuditEvent } from '@sssb/kit/db/audit'
 import { escalationForActiveOrg, transitionEscalation } from '@/domain/db/escalations'
 import { enqueueWebhookEvent } from '@sssb/kit/db/webhooks'
+import { ForbiddenError, NotFoundError } from '@sssb/kit/ports/errors'
 import { resolveOrgContext } from '../../../org-context'
 import { readJsonObject, requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
  * The receiving team decides an escalation (accept/reject). The request must have the active org
- * as one of its two sides — a foreign request is indistinguishable from a missing one (404), so ids
- * can't be probed (the jobForOrg doctrine). Only an org MANAGER on the RESPONDER side may respond
- * (authorize with the row's REAL org ids). The transition is validated by the state machine; deciding
+ * as one of its two sides — a foreign request is indistinguishable from a missing one (404, the jobForOrg
+ * doctrine). Only an org MANAGER on the RESPONDER side may respond (authorize with the row's REAL org ids,
+ * so after the lookup), and anyone else gets that same 404, so no id can be probed. The transition is validated by the state machine; deciding
  * an already-decided request (double-accept, accept-after-cancel) surfaces as 409 via withPortErrors.
  */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
@@ -29,11 +30,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const found = await escalationForActiveOrg(db, tenantId, activeOrgId, id)
         if (!found) return Response.json({ error: 'not found' }, { status: 404 })
 
-        authorize(user, activeOrgId, 'update', {
-            type: 'Escalation',
-            requesterOrgId: found.requesterOrgId,
-            responderOrgId: found.responderOrgId,
-        })
+        // The sides come from the row, so it is looked up first, and a person who may not act on it is told what a
+        // missing id tells them: the same 404, status and body (safeinsights/sssb#137). The catch always rethrows,
+        // so the denial still stops the handler.
+        try {
+            authorize(user, activeOrgId, 'update', {
+                type: 'Escalation',
+                requesterOrgId: found.requesterOrgId,
+                responderOrgId: found.responderOrgId,
+            })
+        } catch (error) {
+            throw error instanceof ForbiddenError ? new NotFoundError('not found') : error
+        }
 
         const next = decision === 'accept' ? 'accepted' : 'rejected'
         await transitionEscalation(db, tenantId, id, next, { byUserId: user.id })

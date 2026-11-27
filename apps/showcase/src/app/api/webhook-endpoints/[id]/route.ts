@@ -10,18 +10,23 @@ import { readJsonObject, requireUuidParam, withPortErrors } from '../../respond'
 
 /**
  * Enable/disable (PATCH) or remove (DELETE) one of the active org's webhook endpoints — both
- * authorize()-gated (WebhookEndpoint update/delete = canManageOrg && sameOrg). The endpoint must
- * belong to the active org (endpointForOrg → 404 otherwise, so ids can't be probed — the jobForOrg
- * doctrine). Deleting an endpoint cascades its deliveries (migration 0010).
+ * authorize()-gated (WebhookEndpoint update/delete = canManageOrg && sameOrg). Each authorizes FIRST,
+ * against the active org, so a person who may not manage endpoints gets the same 403 whether or not the
+ * id exists; only then must the endpoint belong to the active org (endpointForOrg → 404 otherwise, so
+ * ids can't be probed — the jobForOrg doctrine, safeinsights/sssb#137). Deleting an endpoint cascades
+ * its deliveries (migration 0010).
  */
-async function resolve(user: AuthUser, endpointId: string): Promise<{ tenantId: string; orgId: string }> {
+async function activeOrg(user: AuthUser): Promise<{ tenantId: string; orgId: string }> {
     const tenantId = await tenantIdForSlug(db, user.tenantSlug)
     if (!tenantId) throw new NotFoundError('unknown tenant')
     const orgId = await orgIdForSlug(db, tenantId, user.orgSlug)
     if (!orgId) throw new NotFoundError('unknown org')
-    const found = await endpointForOrg(db, tenantId, orgId, endpointId)
-    if (!found) throw new NotFoundError('endpoint not found')
     return { tenantId, orgId }
+}
+
+/** The endpoint must be one of the active org's: a foreign or missing id is the same 404. */
+async function requireEndpoint(tenantId: string, orgId: string, endpointId: string): Promise<void> {
+    if (!(await endpointForOrg(db, tenantId, orgId, endpointId))) throw new NotFoundError('endpoint not found')
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
@@ -32,8 +37,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         const { enabled } = await readJsonObject(request)
         if (typeof enabled !== 'boolean') return Response.json({ error: 'invalid-request' }, { status: 400 })
 
-        const { tenantId, orgId } = await resolve(user, id)
+        const { tenantId, orgId } = await activeOrg(user)
         authorize(user, orgId, 'update', { type: 'WebhookEndpoint', orgId })
+        await requireEndpoint(tenantId, orgId, id)
         await setEndpointEnabled(db, tenantId, id, enabled)
         await recordAuditEvent(db, {
             tenantId,
@@ -53,8 +59,9 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
         const { id } = await context.params
         requireUuidParam(id)
 
-        const { tenantId, orgId } = await resolve(user, id)
+        const { tenantId, orgId } = await activeOrg(user)
         authorize(user, orgId, 'delete', { type: 'WebhookEndpoint', orgId })
+        await requireEndpoint(tenantId, orgId, id)
         await deleteEndpoint(db, tenantId, id)
         await recordAuditEvent(db, {
             tenantId,

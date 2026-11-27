@@ -7,9 +7,11 @@ import { requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
  * The CONFIRM step of a two-step upload. After the browser has POSTed the file to the mint
- * step's upload target, it calls this to finalize the pending attachment row. We resolve the row
- * org-scoped (a foreign org's id is indistinguishable from a missing one — jobForOrg doctrine),
- * re-authorize the same create ability (finalizing one's own upload), then VERIFY the object actually
+ * step's upload target, it calls this to finalize the pending attachment row. We re-authorize the same
+ * create ability (finalizing one's own upload) FIRST, against the active org, so a person who may not
+ * finalize gets the same 403 whether or not the id exists; then resolve the row org-scoped (a foreign
+ * org's id is indistinguishable from a missing one — jobForOrg doctrine, safeinsights/sssb#137); then
+ * VERIFY the object actually
  * landed in storage before recording its true size and flipping status to ready. Verifying here is
  * what stops a caller minting + confirming without ever uploading, which would leave a dead download
  * link. Real-mode note: existence+size come from a GetObject (the storage port has no head); a
@@ -24,12 +26,12 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
 
-        const attachment = await attachmentForOrg(db, tenantId, orgId, id)
-        if (!attachment) return Response.json({ error: 'not found' }, { status: 404 })
-
-        // Authorization choke point: only a non-restricted member of the owning org may
+        // Authorization choke point, before the lookup: only a non-restricted member of the owning org may
         // finalize an upload — the same ability that gated minting it.
         authorize(user, orgId, 'create', { type: 'Attachment', orgId })
+
+        const attachment = await attachmentForOrg(db, tenantId, orgId, id)
+        if (!attachment) return Response.json({ error: 'not found' }, { status: 404 })
 
         const object = await storage.get(attachment.storageKey)
         if (!object) return Response.json({ error: 'upload-missing' }, { status: 400 })
