@@ -215,7 +215,7 @@ jobs:
                   # this is set explicitly.
                   E2E_BUILD: '1'
                   # TEMPORARY (safeinsights/sssb#99): the measurement of more workers; reverted before review.
-                  E2E_WORKERS: '4'
+                  E2E_WORKERS: '2'
             - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               if: ${{ !inputs.docs-only && failure() }}
               with:
