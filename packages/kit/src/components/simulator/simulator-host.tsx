@@ -211,6 +211,8 @@ export function SimulatorHost({
     const mailTickets = useTickets()
     const jobsTickets = useTickets()
     const schedulesTickets = useTickets()
+    // A poll's answer must not overwrite a newer start or stop's: both take a ticket.
+    const tickerTickets = useTickets()
     const inboundTickets = useTickets()
     const messagesTickets = useTickets()
     const eventsTickets = useTickets()
@@ -328,14 +330,17 @@ export function SimulatorHost({
 
     const refreshTicker = useCallback(async () => {
         if (!tickerOffered.current) return
+        const ticket = tickerTickets.take()
         const response = await fetch(`${API}/ticker`)
         if (response.status === 404) {
             tickerOffered.current = false
             setTickerData(null)
             return
         }
-        if (response.ok) setTickerData((await response.json()) as TickerStatus)
-    }, [])
+        if (!response.ok) return
+        const next = (await response.json()) as TickerStatus
+        if (tickerTickets.fresh(ticket)) setTickerData(next)
+    }, [tickerTickets])
 
     const refreshHooks = useCallback(async () => {
         const ticket = hooksTickets.take()
@@ -476,6 +481,7 @@ export function SimulatorHost({
      * what the server holds, and the notice says what happened to the click. A 404 means the app has no such route.
      */
     async function postTicker(request: { action: 'start'; seconds: number } | { action: 'stop' }) {
+        const ticket = tickerTickets.take()
         const response = await post('ticker', request).catch(() => null)
         if (!response) return null
         if (response.status === 404) {
@@ -487,7 +493,7 @@ export function SimulatorHost({
         // A body without the status (a 500 while the route compiles, say) leaves the control as it was.
         if (typeof body?.running !== 'boolean') return null
         // Stored whole, `error` and all (the control ignores it, and the next GET replaces it).
-        setTickerData(body)
+        if (tickerTickets.fresh(ticket)) setTickerData(body)
         return { error: body.error, status: body }
     }
 
