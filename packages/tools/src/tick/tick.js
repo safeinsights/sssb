@@ -278,25 +278,37 @@ function count(value) {
  * or either counts work left.
  *
  * @param {Record<string, unknown>} body the route's JSON:
- *   `{ ok, spawned, failed, deferred, stoppedBy, deliveries: { delivered, failed, dead, deferred, stoppedBy } }`
+ *   `{ ok, spawned, failed, deferred, stoppedBy, retries: { started, failed, deferred, stoppedBy },
+ *   deliveries: { delivered, failed, dead, deferred, stoppedBy } }` (`retries` absent from an older route)
  */
 export function summarizeTick(body) {
-    const deliveries =
-        body.deliveries && typeof body.deliveries === 'object'
-            ? /** @type {Record<string, unknown>} */ (body.deliveries)
-            : {}
+    const deliveries = section(body.deliveries)
+    // The job-retry drain's part (safeinsights/sssb#135), shown when the route reports one.
+    const retries = body.retries && typeof body.retries === 'object' ? section(body.retries) : null
     // A drain that stopped on its bound says so even with nothing counted as left: one whose window had passed before it
     // began listed nothing, so its `deferred` is 0.
-    const stopped = [body.stoppedBy, deliveries.stoppedBy].some((reason) => reason === 'items' || reason === 'time')
+    const stopped = [body.stoppedBy, retries?.stoppedBy, deliveries.stoppedBy].some(
+        (reason) => reason === 'items' || reason === 'time',
+    )
+    const leftRetries = retries ? `, ${count(retries.deferred)} job retry(ies)` : ''
     const left =
-        stopped || count(body.deferred) > 0 || count(deliveries.deferred) > 0
-            ? `; stopped on its bound, left for the next tick: at least ${count(body.deferred)} schedule(s), ${count(deliveries.deferred)} delivery(ies)`
+        stopped || count(body.deferred) > 0 || count(retries?.deferred) > 0 || count(deliveries.deferred) > 0
+            ? `; stopped on its bound, left for the next tick: at least ${count(body.deferred)} schedule(s)${leftRetries}, ${count(deliveries.deferred)} delivery(ies)`
             : ''
+    const retried = retries
+        ? `job retries: ${count(retries.started)} started, ${count(retries.failed)} failed to start; `
+        : ''
     return (
         `ticked: ${count(body.spawned)} job(s) spawned from due schedules, ${count(body.failed)} schedule(s) failed; ` +
+        retried +
         `webhook deliveries: ${count(deliveries.delivered)} delivered, ${count(deliveries.failed)} failed, ${count(deliveries.dead)} dead` +
         left
     )
+}
+
+/** @param {unknown} value one drain's part of the route's JSON, or `{}` when it is not an object */
+function section(value) {
+    return value && typeof value === 'object' ? /** @type {Record<string, unknown>} */ (value) : {}
 }
 
 /**
@@ -306,14 +318,22 @@ export function summarizeTick(body) {
  * @param {Record<string, unknown>} body
  */
 export function tickDidWork(body) {
-    const deliveries =
-        body.deliveries && typeof body.deliveries === 'object'
-            ? /** @type {Record<string, unknown>} */ (body.deliveries)
-            : {}
-    const stopped = [body.stoppedBy, deliveries.stoppedBy].some((reason) => reason === 'items' || reason === 'time')
+    const deliveries = section(body.deliveries)
+    const retries = section(body.retries)
+    const stopped = [body.stoppedBy, retries.stoppedBy, deliveries.stoppedBy].some(
+        (reason) => reason === 'items' || reason === 'time',
+    )
     return (
         stopped ||
-        [body.spawned, body.failed, deliveries.delivered, deliveries.failed, deliveries.dead].some((n) => count(n) > 0)
+        [
+            body.spawned,
+            body.failed,
+            retries.started,
+            retries.failed,
+            deliveries.delivered,
+            deliveries.failed,
+            deliveries.dead,
+        ].some((n) => count(n) > 0)
     )
 }
 

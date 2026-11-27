@@ -1,9 +1,17 @@
 import type { Kysely, Transaction } from 'kysely'
-import { exportKeyPrefix, type JobStatus, jobStatusMachine } from '../core/jobs'
+import { exportKeyPrefix, jobRetryFor, type JobStatus, jobStatusMachine, retryDelayMs } from '../core/jobs'
 import { InvalidTransitionError } from '../core/state-machine'
 import type { DbPort } from '../ports/db'
 import { NotFoundError } from '../ports/errors'
 import type { JobsPort } from '../ports/jobs'
+import {
+    beforeDeadline,
+    type DrainBudget,
+    type DrainLeft,
+    drainFairly,
+    listingLimit,
+    resolveDrainBudget,
+} from './drain-budget'
 import { family } from './family'
 import type { DB } from './schema'
 import { enqueueWebhookEvent } from './webhooks'
@@ -21,6 +29,10 @@ export interface JobView {
     createdAt: string
     resultKey: string | null
     error: string | null
+    /** Which attempt this row is, from 1; a kind that retries runs each attempt as a row of its own. */
+    attempt: number
+    /** The first attempt's id, on a retry; null on attempt 1. */
+    retryOf: string | null
     timeline: JobTimelineEntry[]
 }
 
@@ -63,6 +75,14 @@ export async function submitJob(
     return { id }
 }
 
+/** A retry `recordJobStatus` armed: the next attempt's row, queued until `runAfter`. */
+export interface ArmedRetry {
+    jobId: string
+    attempt: number
+    attempts: number
+    runAfter: Date
+}
+
 /**
  * THE choke point for every status change. One tenant-scoped transaction locks the job row
  * (FOR UPDATE — concurrent transitions for the same job serialize instead of double-writing under
@@ -70,22 +90,39 @@ export async function submitJob(
  * InvalidTransitionError and rolls back), updates the job row, and appends an immutable timeline
  * entry. Callers racing to *start* a job should treat InvalidTransitionError as "someone else
  * already did" — see the fake executor.
+ *
+ * RETRIES (safeinsights/sssb#135). A hop to `failed` of a kind whose `jobRetry` setting has attempts left also inserts,
+ * in the SAME transaction, the next attempt as a new row: queued, `run_after` the failure plus the kind's delay
+ * (`extra.now`, else the real clock, is when it failed), the same kind, org, payload and requester, `retry_of` naming the
+ * first attempt. Its opening timeline entry says which attempt it is and the error it follows; the failed entry says a
+ * retry was armed. So the failed row stays terminal, a redelivered failure (the row is already `failed`) arms nothing
+ * more, and the attempt is never lost between the failure and the retry. The scheduled tick's `runDueRetries` starts it.
+ * Returns the retry it armed, or null.
  */
 export async function recordJobStatus(
     db: DbPort,
     tenantId: string,
     jobId: string,
     next: JobStatus,
-    extra?: { message?: string; resultKey?: string | undefined; error?: string | undefined },
-): Promise<void> {
+    extra?: { message?: string; resultKey?: string | undefined; error?: string | undefined; now?: Date },
+): Promise<{ retry: ArmedRetry | null }> {
     const job = await db.withTenant(tenantId, async (trx) => {
         const current = await trx
             .selectFrom('jobs')
-            .select(['status', 'org_id', 'kind'])
+            .select(['status', 'org_id', 'kind', 'attempt', 'retry_of', 'payload', 'requested_by'])
             .where('id', '=', jobId)
             .$call(family.lockRow)
             .executeTakeFirstOrThrow()
         jobStatusMachine.assertTransition(current.status as JobStatus, next)
+        const policy = jobRetryFor(current.kind)
+        const retry: Omit<ArmedRetry, 'jobId'> | null =
+            next === 'failed' && current.attempt < policy.attempts
+                ? {
+                      attempt: current.attempt + 1,
+                      attempts: policy.attempts,
+                      runAfter: new Date((extra?.now ?? new Date()).getTime() + retryDelayMs(policy, current.attempt)),
+                  }
+                : null
         await trx
             .updateTable('jobs')
             .set({
@@ -96,11 +133,43 @@ export async function recordJobStatus(
             })
             .where('id', '=', jobId)
             .execute()
+        const armedNote = retry
+            ? `retry armed: attempt ${retry.attempt} of ${retry.attempts} at ${retry.runAfter.toISOString()}`
+            : null
         await trx
             .insertInto('job_status_changes')
-            .values({ tenant_id: tenantId, job_id: jobId, status: next, message: extra?.message ?? null })
+            .values({
+                tenant_id: tenantId,
+                job_id: jobId,
+                status: next,
+                message: [extra?.message, armedNote].filter((part) => part).join('; ') || null,
+            })
             .execute()
-        return { orgId: current.org_id, kind: current.kind }
+        if (!retry) return { orgId: current.org_id, kind: current.kind, retry: null }
+        const nextAttempt = await trx
+            .insertInto('jobs')
+            .values({
+                tenant_id: tenantId,
+                org_id: current.org_id,
+                kind: current.kind,
+                payload: current.payload,
+                requested_by: current.requested_by,
+                attempt: retry.attempt,
+                retry_of: current.retry_of ?? jobId,
+                run_after: retry.runAfter,
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        await trx
+            .insertInto('job_status_changes')
+            .values({
+                tenant_id: tenantId,
+                job_id: nextAttempt.id,
+                status: 'queued',
+                message: `attempt ${retry.attempt} of ${retry.attempts}, after: ${extra?.error ?? 'failed'}`,
+            })
+            .execute()
+        return { orgId: current.org_id, kind: current.kind, retry: { ...retry, jobId: nextAttempt.id } }
     })
 
     // Outbound webhooks: a job status change is an emitted event. Enqueue only — cheap; the
@@ -123,6 +192,103 @@ export async function recordJobStatus(
             console.warn(`SSSB jobs: job ${jobId} is ${next}, but enqueueing its webhook event failed: ${message}`)
         }
     }
+    return { retry: job.retry }
+}
+
+/**
+ * THE retry drain (safeinsights/sssb#135), the scheduled tick's third, beside the schedules' and the deliveries'. Finds
+ * every retry whose backoff has run out (`queued`, `run_after` at or before `now`), per tenant under `withTenant` as the
+ * other drains do, and for each: CLAIMS it in a row-locked transaction (re-checks it is still waiting and due, then
+ * clears `run_after`, after which it is an ordinary queued job, exactly as `submitJob` leaves one), and only after that
+ * commits hands it to the jobs port with its attempt and first attempt's id. A second tick racing the same row blocks
+ * on the lock and then sees nothing to claim, so a retry is started once. A start that throws records the attempt
+ * failed with the runner's error, which arms the next attempt when there is one; a start that never reached the runner
+ * (the invocation ended between the claim and the start) leaves a queued job like any other, which the in-process
+ * runner's sweep fails as lost, again arming the next attempt.
+ *
+ * BOUND (./drain-budget.ts): with a budget, at most `budget.maxItems` starts, none after its deadline, one tenant's
+ * retry at a time in turn; a due retry left over is not claimed and the next tick lists it again. Without a budget it
+ * starts every due retry. Returns how many it started, how many failed to start, and what it left.
+ */
+export async function runDueRetries(
+    db: DbPort,
+    jobs: JobsPort,
+    now: Date,
+    budget?: DrainBudget,
+): Promise<{ started: number; failed: number } & DrainLeft> {
+    const limit = resolveDrainBudget(budget)
+    let started = 0
+    let failed = 0
+    if (!beforeDeadline(limit)) return { started, failed, deferred: 0, stoppedBy: 'time' }
+    await db.ready()
+    const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
+    const perTenant = listingLimit(limit)
+    const left = await drainFairly(
+        tenants,
+        limit,
+        (tenantId) =>
+            db.withTenant(tenantId, (trx) =>
+                trx
+                    .selectFrom('jobs')
+                    .select('id')
+                    .where('status', '=', 'queued')
+                    .where('run_after', 'is not', null)
+                    .where('run_after', '<=', now)
+                    .orderBy('run_after', 'asc')
+                    .orderBy('id', 'asc')
+                    .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
+                    .execute(),
+            ),
+        (row) => row.id,
+        async (row, tenantId) => {
+            try {
+                if (await startRetry(db, jobs, now, tenantId, row.id)) started += 1
+            } catch {
+                // A bad row must not stall the rest (the runDueSchedules fault-isolation precedent).
+                failed += 1
+            }
+        },
+    )
+    return { started, failed, ...left }
+}
+
+/** Claims one due retry and starts it; false when the under-lock re-check finds nothing to claim. */
+async function startRetry(db: DbPort, jobs: JobsPort, now: Date, tenantId: string, jobId: string): Promise<boolean> {
+    const claimed = await db.withTenant(tenantId, async (trx) => {
+        const row = await trx
+            .selectFrom('jobs')
+            .select(['status', 'kind', 'org_id', 'payload', 'attempt', 'retry_of', 'run_after'])
+            .where('id', '=', jobId)
+            .$call(family.lockRow)
+            .executeTakeFirst()
+        if (!row || row.status !== 'queued' || row.run_after === null || new Date(row.run_after) > now) return null
+        await trx
+            .updateTable('jobs')
+            .set({ run_after: null, updated_at: family.currentTime() })
+            .where('id', '=', jobId)
+            .execute()
+        return row
+    })
+    if (!claimed) return false
+    try {
+        await jobs.start({
+            id: jobId,
+            kind: claimed.kind,
+            tenantId,
+            orgId: claimed.org_id,
+            payload: claimed.payload,
+            attempt: claimed.attempt,
+            firstJobId: claimed.retry_of ?? jobId,
+        })
+    } catch (error) {
+        // The runner refused it (CodeBuild's StartBuild failed, say): this attempt failed, which arms the next one.
+        await recordJobStatus(db, tenantId, jobId, 'failed', {
+            error: `the jobs runner did not start it: ${error instanceof Error ? error.message : String(error)}`,
+            now,
+        })
+        throw error
+    }
+    return true
 }
 
 /**
@@ -140,7 +306,7 @@ export async function listJobs(
     return db.withTenant(tenantId, async (trx) => {
         const rows = await trx
             .selectFrom('jobs')
-            .select(['id', 'kind', 'status', 'result_key', 'error', 'created_at'])
+            .select(['id', 'kind', 'status', 'result_key', 'error', 'attempt', 'retry_of', 'created_at'])
             .where('org_id', '=', orgId)
             .$if(opts?.kind !== undefined, (qb) => qb.where('kind', '=', opts!.kind!))
             .orderBy('created_at', 'desc')
@@ -158,6 +324,8 @@ export async function listJobs(
             createdAt: toIso(r.created_at),
             resultKey: r.result_key,
             error: r.error,
+            attempt: r.attempt,
+            retryOf: r.retry_of,
             timeline: timelines.get(r.id) ?? [],
         }))
     })
@@ -172,6 +340,10 @@ export interface ServiceJobView {
     createdAt: string
     resultKey: string | null
     error: string | null
+    /** Which attempt this row is, from 1. */
+    attempt: number
+    /** The first attempt's id, on a retry; null on attempt 1. */
+    retryOf: string | null
 }
 
 /**
@@ -189,7 +361,7 @@ export async function listServiceJobs(
     return db.withTenant(tenantId, async (trx) => {
         const rows = await trx
             .selectFrom('jobs')
-            .select(['id', 'kind', 'status', 'payload', 'result_key', 'error', 'created_at'])
+            .select(['id', 'kind', 'status', 'payload', 'result_key', 'error', 'attempt', 'retry_of', 'created_at'])
             .where('org_id', '=', orgId)
             .$if(opts?.status !== undefined, (qb) => qb.where('status', '=', opts!.status!))
             .orderBy('created_at', 'desc')
@@ -203,6 +375,8 @@ export async function listServiceJobs(
             createdAt: toIso(r.created_at),
             resultKey: r.result_key,
             error: r.error,
+            attempt: r.attempt,
+            retryOf: r.retry_of,
         }))
     })
 }
@@ -282,19 +456,40 @@ export async function recordWebhookCompletion(
  * needs both to decide whether a terminal job is user-facing and to address the org's admins.
  * Null when the job isn't in the tenant. A thin read, deliberately not folded into recordJobStatus so
  * the status choke point stays free of the notification/adapters layer (the webhook-enqueue precedent).
+ * `attempt` is which attempt the row is, and `retried` whether a later attempt of the same work exists, which a failure
+ * that armed a retry has (safeinsights/sssb#135): that failure is not the job's end.
  */
 export async function jobKindAndOrg(
     db: DbPort,
     tenantId: string,
     jobId: string,
-): Promise<{ kind: string; orgId: string | null; requestedBy: string | null } | null> {
+): Promise<{
+    kind: string
+    orgId: string | null
+    requestedBy: string | null
+    attempt: number
+    retried: boolean
+} | null> {
     return db.withTenant(tenantId, async (trx) => {
         const row = await trx
             .selectFrom('jobs')
-            .select(['kind', 'org_id', 'requested_by'])
+            .select(['kind', 'org_id', 'requested_by', 'attempt', 'retry_of'])
             .where('id', '=', jobId)
             .executeTakeFirst()
-        return row ? { kind: row.kind, orgId: row.org_id, requestedBy: row.requested_by } : null
+        if (!row) return null
+        const later = await trx
+            .selectFrom('jobs')
+            .select('id')
+            .where('retry_of', '=', row.retry_of ?? jobId)
+            .where('attempt', '>', row.attempt)
+            .executeTakeFirst()
+        return {
+            kind: row.kind,
+            orgId: row.org_id,
+            requestedBy: row.requested_by,
+            attempt: row.attempt,
+            retried: later !== undefined,
+        }
     })
 }
 

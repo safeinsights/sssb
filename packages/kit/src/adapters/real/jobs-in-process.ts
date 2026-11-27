@@ -86,7 +86,9 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                             .where('jobs.updated_at', '<', before)
                             .where((eb) =>
                                 eb.or([
-                                    eb('jobs.status', '=', 'queued'),
+                                    // A retry waiting out its backoff is the tick's to start, not lost (its run_after is
+                                    // cleared when the tick claims it, and from then on it is judged as any queued job).
+                                    eb.and([eb('jobs.status', '=', 'queued'), eb('jobs.run_after', 'is', null)]),
                                     eb.and([
                                         eb('jobs.status', '=', 'running'),
                                         eb.exists(
@@ -109,6 +111,7 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                 for (const { id, status } of lost) {
                     try {
                         await recordJobStatus(ports.db, tenant.id, id, 'failed', {
+                            now,
                             error:
                                 status === 'queued'
                                     ? 'lost: never started; the in-process runner did not claim it'
