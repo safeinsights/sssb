@@ -190,8 +190,19 @@ async function spawnInTransaction(
     })
 }
 
-/** How many characters of a failure's message a schedule keeps in `last_error`. */
+/** How many characters (code points) of a failure's message a schedule keeps in `last_error`. */
 const LAST_ERROR_MAX = 500
+
+/**
+ * How many of them the `schedule.disabled` audit event carries: few enough that, JSON-escaped, the detail stays under
+ * the audit log's byte limit (./audit.ts, `AUDIT_DETAIL_MAX_BYTES`) whatever the characters are.
+ */
+const AUDIT_ERROR_MAX = 120
+
+/** The first `max` code points of `text`: never half a surrogate pair. */
+function clip(text: string, max: number): string {
+    return Array.from(text).slice(0, max).join('')
+}
 
 /**
  * A schedule's spawn failed INSIDE its transaction, which rolled back, so the schedule is still due (safeinsights/sssb
@@ -214,7 +225,7 @@ async function recordSpawnFailure(
     schedule: { id: string; tenant_id: string },
     error: unknown,
 ): Promise<void> {
-    const message = (error instanceof Error ? error.message : String(error)).slice(0, LAST_ERROR_MAX)
+    const message = clip(error instanceof Error ? error.message : String(error), LAST_ERROR_MAX)
     try {
         const disabled = await db.withTenant(schedule.tenant_id, async (trx) => {
             const row = await trx
@@ -254,7 +265,7 @@ async function recordSpawnFailure(
             action: 'schedule.disabled',
             subjectType: 'JobSchedule',
             subjectId: schedule.id,
-            detail: { reason: 'spec does not parse', error: message },
+            detail: { reason: 'spec does not parse', error: clip(message, AUDIT_ERROR_MAX) },
         })
     } catch (failure) {
         console.warn(
@@ -269,7 +280,8 @@ async function recordSpawnFailure(
 export interface WorldSchedule {
     id: string
     kind: string
-    spec: ScheduleSpec
+    /** Null when the stored spec does not parse: such a schedule is shown, turned off, with its `lastError` (#215). */
+    spec: ScheduleSpec | null
     nextRunAt: string
     enabled: boolean
     /** Spawns in a row that failed inside the spawn transaction, and the latest one's message (#215). */
@@ -307,7 +319,7 @@ export async function listSchedulesForWorld(db: DbPort): Promise<WorldSchedule[]
     return rows.map((r) => ({
         id: r.id,
         kind: r.kind,
-        spec: parseScheduleSpec(r.spec),
+        spec: specOrNull(r.spec),
         nextRunAt: toIso(r.next_run_at),
         enabled: r.enabled,
         failureCount: r.failure_count,
@@ -315,4 +327,13 @@ export async function listSchedulesForWorld(db: DbPort): Promise<WorldSchedule[]
         tenantSlug: r.tenant_slug,
         orgSlug: r.org_slug,
     }))
+}
+
+/** The spec if it parses, else null: one bad row must not take the whole world view down with it. */
+function specOrNull(value: unknown): ScheduleSpec | null {
+    try {
+        return parseScheduleSpec(value)
+    } catch {
+        return null
+    }
 }

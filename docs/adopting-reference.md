@@ -473,7 +473,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 93 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 94 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import

@@ -25,6 +25,14 @@ export const CODEBUILD_LOST_AFTER_MS = 5 * 60_000
 /** The `runner_ref` written before StartBuild is called, replaced by the build's id once it returns. */
 export const CODEBUILD_STARTING = 'starting'
 
+/**
+ * How long a job may stay `starting` before the sweep takes its start for one that never reached CodeBuild: an hour.
+ * Longer than `CODEBUILD_LOST_AFTER_MS` because the sweep cannot ask CodeBuild about a build it has no id for, and a
+ * StartBuild that did start a build whose id went unrecorded (its response lost, the write refused) leaves a build
+ * running; an hour lets most such builds report their own end first.
+ */
+export const CODEBUILD_STARTING_LOST_AFTER_MS = 60 * 60_000
+
 /** BatchGetBuilds takes at most this many ids per call (the CodeBuild API reference). */
 const BATCH_GET_BUILDS_MAX = 100
 
@@ -54,7 +62,8 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  * - a job whose build ENDED (any status but IN_PROGRESS) at least that long ago without the job reaching an end: its
  *   webhook never came. A SUCCEEDED build counts: the job's result was never recorded.
  * - a job whose build CodeBuild has no record of (`buildsNotFound`).
- * - a job left `starting` that long: its StartBuild never returned, or the build's id was never recorded.
+ * - a job left `starting` for `CODEBUILD_STARTING_LOST_AFTER_MS` (an hour): its StartBuild never returned, or the
+ *   build's id was never recorded.
  *
  * A build still IN_PROGRESS is left alone, however long: CodeBuild's own timeout ends it, and a later sweep sees that.
  * Failing a lost job is `failLost`'s (the registry's: `recordJobStatus`, so a kind whose `jobRetry` has attempts left
@@ -119,12 +128,12 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                 return 0
             }
             for (const tenant of tenants) {
-                let open: { id: string; runner_ref: string | null }[]
+                let open: { id: string; runner_ref: string | null; updated_at: unknown }[]
                 try {
                     open = await db.withTenant(tenant.id, (trx) =>
                         trx
                             .selectFrom('jobs')
-                            .select(['id', 'runner_ref'])
+                            .select(['id', 'runner_ref', 'updated_at'])
                             .where('status', 'in', ['queued', 'running'])
                             .where('runner_ref', 'is not', null)
                             .where('updated_at', '<', quietSince.toISOString())
@@ -135,7 +144,12 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                     continue
                 }
                 const lost: { id: string; error: string }[] = open
-                    .filter((job) => job.runner_ref === CODEBUILD_STARTING)
+                    .filter(
+                        (job) =>
+                            job.runner_ref === CODEBUILD_STARTING &&
+                            new Date(job.updated_at as string | Date).getTime() <
+                                now.getTime() - CODEBUILD_STARTING_LOST_AFTER_MS,
+                    )
                     .map((job) => ({ id: job.id, error: 'lost: its CodeBuild build was never recorded as started' }))
                 const byBuild = new Map<string, string>()
                 for (const job of open) {

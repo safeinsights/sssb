@@ -100,23 +100,14 @@ async function world() {
     return { fakeDb, tenantId: tenant.id, orgId: org.id }
 }
 
-/** The runner as the registry builds it: its `failLost` is the registry's, recording the failure and noting a notify. */
+/** The runner as the registry builds it: its `failLost` is the registry's (../fail-lost-job.ts), with a notifier that notes. */
 async function runner() {
     const { fakeDb } = await world()
     const { createRealJobs } = await import('./jobs')
-    const { recordJobStatus } = await import('../../db/jobs')
-    const { InvalidTransitionError } = await import('../../core/state-machine')
+    const { failLostJob } = await import('../fail-lost-job')
     const notified: string[] = []
-    const jobs = createRealJobs('proj', 'us-east-1', fakeDb, async ({ tenantId, jobId, error, now }) => {
-        try {
-            await recordJobStatus(fakeDb, tenantId, jobId, 'failed', { error, now })
-        } catch (failure) {
-            if (failure instanceof InvalidTransitionError) return false
-            throw failure
-        }
-        notified.push(jobId)
-        return true
-    })
+    const notify = async (input: { jobId: string }) => void notified.push(input.jobId)
+    const jobs = createRealJobs('proj', 'us-east-1', fakeDb, (input) => failLostJob(fakeDb, notify, input))
     return { jobs, notified }
 }
 
@@ -245,12 +236,42 @@ describe('the CodeBuild jobs runner: the sweep for lost builds (safeinsights/sss
         const { jobs } = await runner()
         const forgotten = await submitted(jobs, 'export-dockets', 30 * MINUTE) // no entry in the fake: buildsNotFound
         codebuild.nextIds.push(undefined)
-        const unstarted = await submitted(jobs, 'export-dockets', 30 * MINUTE)
+        const unstarted = await submitted(jobs, 'export-dockets', 61 * MINUTE)
         expect((await row(unstarted)).runner_ref).toBe('starting')
 
         expect(await jobs.sweep!(new Date())).toBe(2)
         expect((await row(forgotten)).error).toBe('lost: CodeBuild has no record of its build')
         expect((await row(unstarted)).error).toBe('lost: its CodeBuild build was never recorded as started')
+    })
+
+    test('gives a job left starting an hour before it is taken for one whose build never started', async () => {
+        const { jobs } = await runner()
+        codebuild.nextIds.push(undefined)
+        const unstarted = await submitted(jobs, 'export-dockets', 30 * MINUTE)
+        expect(await jobs.sweep!(new Date())).toBe(0)
+        expect((await row(unstarted)).status).toBe('queued')
+        expect(await jobs.sweep!(new Date(Date.now() + 31 * MINUTE))).toBe(1)
+        expect((await row(unstarted)).error).toBe('lost: its CodeBuild build was never recorded as started')
+    })
+
+    test('judges a job its webhook walked to running, or a service caller did, as it judges a queued one', async () => {
+        const { fakeDb, tenantId } = await world()
+        const { jobs } = await runner()
+        const { recordJobStatus } = await import('../../db/jobs')
+        const id = await submitted(jobs)
+        await recordJobStatus(fakeDb, tenantId, id, 'running', { message: 'service caller' })
+        await fakeDb
+            .getDb()
+            .updateTable('jobs')
+            .set({ updated_at: new Date(Date.now() - 30 * MINUTE).toISOString() })
+            .where('id', '=', id)
+            .execute()
+        codebuild.builds.set((await row(id)).runner_ref!, {
+            buildStatus: 'FAILED',
+            endTime: new Date(Date.now() - 20 * MINUTE),
+        })
+        expect(await jobs.sweep!(new Date())).toBe(1)
+        expect((await row(id)).status).toBe('failed')
     })
 
     test('does not judge a job quiet for less than the grace, one with no runner_ref, or one already ended', async () => {

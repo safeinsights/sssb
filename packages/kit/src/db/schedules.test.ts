@@ -355,6 +355,31 @@ describe('a schedule whose spawn keeps failing (safeinsights/sssb#215)', () => {
         })
     })
 
+    test('a long, many-byte error is clipped so the audit event is still written, and the world view shows the schedule', async () => {
+        const { runDueSchedules, listSchedulesForWorld } = await import('./schedules')
+        const { fakeDb } = await import('../adapters/fake/db')
+        const now = new Date('2016-03-01T00:00:00.000Z')
+        // The parse error echoes the type, so the stored error is long and four bytes a character.
+        const id = await insertSchedule({
+            nextRunAt: new Date('2016-02-01T00:00:00.000Z'),
+            spec: { type: '\u{1F600}'.repeat(400) } as unknown as ScheduleSpec,
+        })
+        await runDueSchedules(fakeDb, stubJobs().port, now)
+        expect((await scheduleRow(id)).enabled).toBe(false)
+        const audit = await fakeDb
+            .getDb()
+            .selectFrom('audit_events')
+            .select('detail')
+            .where('subject_id', '=', id)
+            .where('action', '=', 'schedule.disabled')
+            .executeTakeFirst()
+        expect(audit, 'the audit event was written despite the error').toBeDefined()
+        const stored = (await scheduleRow(id)).last_error!
+        expect(stored.isWellFormed?.() ?? true).toBe(true)
+        const world = (await listSchedulesForWorld(fakeDb)).find((s) => s.id === id)
+        expect(world).toMatchObject({ spec: null, enabled: false, failureCount: 1 })
+    })
+
     test('any other failure backs off, longer each time, and the next spawn that commits clears it', async () => {
         const { runDueSchedules } = await import('./schedules')
         const db = await failingInserts()
