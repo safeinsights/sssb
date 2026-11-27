@@ -145,7 +145,7 @@ export async function createTicket(
 /**
  * Resolves a ticket id to its row ONLY when it belongs to `orgId` within `tenantId` — returns null both
  * when the ticket is absent AND when it belongs to another team, so a foreign ticket is
- * indistinguishable from a missing one and ids cannot be probed (the jobForOrg doctrine).
+ * indistinguishable from a missing one and another team's ids cannot be probed (the jobForOrg doctrine).
  */
 export async function ticketForOrg(
     db: DbPort,

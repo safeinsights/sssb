@@ -7590,6 +7590,41 @@ standing rule for these sessions: decide, and record the rejected alternative.
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
 
+## The authorization scan judges reads (2026-11-27, `fix/authz-scan-get`)
+
+safeinsights/sssb#103. The design is ADR-0012's 2026-11-27 addendum; the calls it did not settle:
+
+- **Every read handler is judged, deny by default.** Rejected: **the issue's trigger** (judge a GET only when it calls
+  `orgIdForSlug`, the app's org resolver, or a tenant-scoped db call with an org id). It fails open on a helper in
+  another module, which the framework cannot name in an adopter's tree; the showcase's service job poll read an org's
+  jobs through such a helper and would have stayed unjudged.
+- **"Reads nothing" is an analyser fact, not a gate kind.** A gate has to be named in an entry, so every adopter's
+  health route would need an exemption for a property the scan can check by itself. Its test is lexical over the whole
+  handler (nested functions, defaults and dead branches count): every name declared outside the handler must be on an
+  allow-list (inert globals, a primitive `const` of the file, `NextResponse`, `next/navigation`'s `redirect`,
+  `permanentRedirect` and `notFound`, SSSB's `appMode` and `isSimulated`). Then only inert values and the request are in
+  reach, so calls on locals and parameters are allowed (`new URL(request.url).searchParams.get`). Rejected: **a check on
+  call heads** (any call whose head is a global the file does not declare), the first version: review found it passed
+  `fetch` to an upstream service, a `declare global` client, and an import in any argument but a bare one
+  (`{ dockets: store }`). Rejected: **an object or array `const`** as inert: `const` fixes the binding, and the file
+  can fill it (`cache[org] = await load(org)`). `fetch` is out: a probe of an upstream service authorizes or names an
+  exemption. It excuses reads only; a mutation that reads nothing still authorizes, as before.
+- **Any `authorize` call counts on a read**, not only `'read'`: the scan does not evaluate the action argument, and a
+  read that checks a stronger action is correct.
+- **OPTIONS is judged** with GET and HEAD, which closes an OPTIONS that reads: a preflight that builds its headers
+  inline from literals (or primitive consts) reads nothing and passes; one that shares a headers object or reads
+  `process.env` authorizes or names an exemption (safeinsights/sssb#220).
+- **The showcase's three unauthorized reads authorize** rather than being exempted: the notification feed (`read
+Notification`, self-only), the preferences (`read NotificationPref`, self-only) and the service job poll (`read Job`,
+  its machine actor). Each subject's rule already granted the read; behaviour for a caller is unchanged.
+- **`storage/[...key]/route.ts` is a framework exemption**, not the showcase's: it is the download twin of the
+  framework's `storage-upload/route.ts`, and an app's exemption key cannot hold `[`, which the app file reads as a glob.
+- **The check keeps its id**, `authz-mutations`, since an app's `optOut` names it; its title says "route
+  handler", and its test "every handler reaches authorize(...), reads nothing, or passes its exemption's gate".
+- **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
+  who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
+  of this fix.
+
 ## A bounded, fair scheduled tick (2026-11-27, `fix/bounded-drains`)
 
 safeinsights/sssb#97: `runDueSchedules` and `runDueDeliveries` drained every due row of every tenant in one tick, one
@@ -7912,3 +7947,169 @@ is answered here.
       same advance, as the server's tick does.
     - **The showcase's static bundle has about 11 KB of its size budget left** after this change (`pnpm check:demo-size`
       passes with a warning).
+
+## One answer for a missing id and a refused one (2026-11-27, `fix/id-existence-oracle`)
+
+safeinsights/sssb#137. The showcase's mutating `[id]` routes looked the row up, answered 404 when it was missing, and
+only then authorized, so a person in the active org who may not act got 403 for an id that exists and 404 for one that
+does not: one bit of existence, against the routes' own comments.
+
+- **Both of the issue's designs, each where it fits.** Where the subject's org is the active org the session resolves
+  to (tickets, attachment confirm, webhook endpoints), `authorize` moves before the lookup: a refusal is the same 403
+  for any id, and an allowed caller still gets 404 for a missing or foreign id. Where the subject's orgs come from the
+  row (the two-sided escalation, cancel and respond), the lookup has to come first, and the refusal is rethrown as
+  `NotFoundError`, the same status and body (`{ error: 'not found' }`, `withPortErrors`) as a missing row. Rejected:
+  **mapping every refusal to 404**, which would tell a restricted member who can see the queue that a ticket they are
+  looking at does not exist, where the reorder gives them an honest 403 that reveals nothing.
+- **The class, not only the five routes.** Review found the same oracle in `POST /api/escalations`, on an org slug in
+  the body: the responder org was resolved, and 404 `unknown responder org` returned, before `authorize`, so a person
+  with no standing (refused the list that shows the targets) could learn which org slugs exist. It now authorizes once
+  on the requester side before the responder is resolved (the create rule reads only that side), and again with both
+  sides after. `service/jobs/[id]/status` moves its `authorize` before the lookup too; its only callers are service
+  keys in their own org, which the framework's machine rule always grants, so nothing leaked there today, but it was
+  the example that contradicted the rule. The guide's rule is stated for any lookup keyed by request input.
+- **The escalation routes' missing row throws the same `NotFoundError` the refusal is rethrown as**, so one mapper
+  (`withPortErrors`) writes both answers rather than two literals agreeing by hand.
+- **A malformed id is still a 404 before `authorize`** (`requireUuidParam`), on every route: a refused caller gets 404
+  for a non-uuid and 403 for a uuid, which tells them only the id's shape, which they wrote.
+- **A responder-side member who may not decide gets 404 for an escalation they can see**, which is what the
+  reorder was chosen to avoid for tickets. The issue's "Done when" requires it, and the dashboard shows that member no
+  decide controls, so only a forced request meets it.
+- **Rejected for escalations: authorizing the read first**, then the action after the lookup. It hides existence from
+  anyone who may not read escalations, but a reader who may not decide would still get 403 for an existing id and 404
+  for a missing one, which the issue's "Done when" rules out.
+- **The rethrow sits in a `catch` that always throws**, so the authorization scan still counts the `authorize` call
+  (a `catch` that returns would swallow it). It is written inline in each route: a helper in another module would not
+  count.
+- **A refused attempt is not audited.** The issue asked whether the audit trail should record one; no route records a
+  refusal today, and doing so is a design of its own (an audit action per refusal, and who reads them).
+- **The starter gains no `[id]` route.** Its Items slice has none, and adding one to demonstrate the rule would grow the
+  scaffold every adopter deletes (`sssb remove-items`'s diffs with it). The rule goes in the app guide instead.
+- **No conformance check.** The authorization scan proves a handler may reach `authorize`, not the order of calls, and
+  it cannot tell which call is the row lookup in an app's own code, so an order check would be a guess about names.
+  The guide says to pin the rule with a route test, as the showcase's routes now do.
+
+## Two edges of real sign-in: before Clerk loads, and a session a failed finalize left (2026-11-27, `fix/sign-in-edges`)
+
+safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
+
+- **The password waits for `useClerk().loaded`**, and the button shows `loading` until then. `loaded` reads clerk-js
+  itself (`IsomorphicClerk`), and Clerk's provider re-memoizes its context on every status change, so the form
+  re-renders when clerk-js loads (@clerk/react 6.18.8, @clerk/shared 4.45.1). Rejected: **`useAuth().isLoaded`**,
+  which reads Clerk's auth state rather than clerk-js itself; and **re-reading the attempt after load**, which depends
+  on what `GET /client` returns after a reload, the issue's open question. A clerk-js that never loads leaves the
+  button busy: there is nothing to sign in with then.
+- **The form holds the session from the moment an attempt is complete** (`held`, `attempt.createdSessionId`, read
+  before `finalize`, rather than later from an attempt a failed `finalize` may have changed). That covers both routes to a
+  complete attempt: the password alone and an accepted code. While a session is held, Back from the step, or a
+  "Sign out" button on the password form (the existing `auth.signOut` copy), signs it out with Clerk's `signOut`
+  (`useClerk()`) by id, and only while `clerk.client.signedInSessions` still has it; one the client no longer holds is only forgotten. The
+  password cannot be submitted while a session is held. Under the app router Clerk navigates with the router's `push`
+  (@clerk/nextjs 7.10, `useAwaitablePush`; that `signOut`'s `redirectUrl` goes through it is clerk-js's, unread here),
+  which keeps the form, so the form resets itself, its error included, once the sign-out answers and the client no longer
+  holds the session; a sign-out that fails, or answers but leaves the session, shows the existing
+  `refusedSignOutError` copy with the button still there. A finished sign-in clears `held` and keeps the form busy
+  while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
+  nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
+  **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
+
+## The LLM adapter has a deadline, and the provider's limits are a port error (2026-11-27, `fix/llm-timeout`)
+
+`safeinsights/sssb#98`: `createRealLlm` built the SDK client with a key and nothing else. The SDK's timeout is ten minutes
+per attempt and it retries twice, while the app server's function has 30 s (`packages/cdk/src/sssb-app.js`), so a slow
+call ended as a killed invocation, and a provider 429 or 529 ended as the SDK's own error, a plain 500 in a route.
+
+- **One deadline per port call, enforced by an abort signal.** `complete`, `stream` and `runToolLoop` each start a timer
+  and pass its signal (and the same figure, rounded up to the integer the SDK wants, as the SDK's per-attempt `timeout`)
+  to every SDK call they make; the SDK's `timeout` alone covers one attempt, which a retry restarts. A tool loop's
+  deadline covers every turn **and the app's `execute`** between them, since a person waits through those as well:
+  `execute` takes no signal and cannot be stopped, so the loop stops _waiting_ for it when the deadline passes (the
+  tool runs on) and the call ends as `timed-out` on time; an `execute` that throws first surfaces as it threw, never as
+  an LLM error. A stream's deadline starts when it is first iterated and ends when it is left, early exit included,
+  which also aborts the request. Two places where an abort does not arrive as the SDK's `APIUserAbortError`, both
+  mapped to `timed-out`: the platform's own `AbortError` when the deadline passes while a non-streaming body is being
+  read, and a stream whose iteration the SDK ends quietly, with no error, when the deadline passes while the consumer is
+  busy between chunks (the adapter awaits the stream's `done()` after the loop, which throws what ended it, so a cut-off answer
+  never reads as a complete one: a deadline, a mid-stream overload and a dropped connection alike). Rejected: `AbortSignal.timeout`, which a fake clock does not drive.
+- **25 s by default.** The function has 30 s and a route needs a few seconds to answer; a call still waiting at 25 s ends
+  as an error the route turns into a 503, where one that waits to 30 s ends as a killed invocation.
+  Exported as `LLM_DEFAULT_TIMEOUT_MS` from `core/llm-timeout.ts`, which also holds `llmTimeoutMs`, shared with the fake
+  adapter so a bad value (`0`, `NaN`, `Infinity`, a string, more than 2^31 - 1 ms, which Node's timers fire after 1 ms)
+  is a `RangeError` in both: a timer would read `0` as "now" and `Infinity` as "never".
+- **The adapter retries, once, and the SDK does not.** The SDK's own retries are off (`maxRetries: 0`): it sleeps a
+  provider's whole `Retry-After`, so a 429 that asks for 60 s idled the call to its deadline and ended as `timed-out`
+  with the provider's figure lost. The adapter repeats a call the SDK's policy would have (408, 409, 429, 5xx, a dropped
+  connection) plus a rate limit or overload however it arrived, never one marked `x-should-retry: false`, waiting the
+  provider's `Retry-After-Ms` or `Retry-After`, else 0.5 s doubling to 8 s, **only when twice that wait is less than
+  what is left of the deadline**, so the retry gets at least as long as the wait (a provider wait that only just fit was
+  slept almost whole and then left the retry no time: found in review); otherwise it answers at once with `rate-limited` or `overloaded` and the provider's figure.
+  A stream starts again only if it has delivered no text. One retry per request to the provider (a tool loop's turns each get one; the deadline bounds the total), because a second would spend most of a 25 s
+  deadline on a provider that is not answering; `RealLlmOptions.maxRetries` changes it for an app that builds the adapter
+  itself. Rejected: the SDK's retries with a signal (the loss above); a retry loop that keeps the last provider error
+  and prefers it after a timeout, which would still idle the server for nothing.
+- **A job's call may have longer, per request, not by default.** `timeoutMs` is an optional field of `LlmRequest` and
+  `LlmToolLoopRequest`: the handler knows its work, the adapter cannot tell a job's call from a route's (both get the
+  same `llm` from the registry), and the runner's own limit differs (the in-process runner runs inside the server's invocation and shares its limit, so there 25 s stays right:
+  `packages/kit/src/adapters/real/jobs-in-process.ts:28-32` says work that may outrun it belongs on the CodeBuild runner). Rejected: a second port instance for jobs, which every
+  adopter's job context would then have to wire; an environment variable, which would change `required-env.json` for a
+  figure most deployments leave alone and could not differ between two calls of one process. An app that builds the
+  adapter itself sets the default with `createRealLlm(key, { timeoutMs })`, as `apps/showcase/scripts/llm-record.ts`
+  does (two minutes: nobody waits on a recording).
+- **`LlmUnavailableError` is a port error (`@sssb/kit/ports/errors`),** the sibling of `DatabaseUnavailableError`: a
+  `reason` in no vendor's words (`rate-limited` for a 429 or a `rate_limit_error`, `overloaded` for a 529 or an
+  `overloaded_error`, which the provider also sends mid-stream on a 200 with no status, and `timed-out` for the deadline
+  or the SDK's attempt timeout), the SDK's error as its `cause`, and a `retryAfterSeconds` that is the provider's `Retry-After-Ms` or `Retry-After`
+  (whole seconds, clamped to 1 to 120; a date or nonsense is ignored) or 10. 10, not the database's 5: a rate limit or an
+  overload does not clear in the seconds a resume takes. Every other provider error (400, 401, 500, a dropped
+  connection) is returned as the SDK threw it: they are bugs or outages a retry does not mend, and a 503 for them would
+  tell the client to ask again. Rejected: a status on the error (a vendor's number in the port), and a flag saying the
+  work did not happen: a `timed-out` call may have been billed and a tool loop may have run some tools.
+- **Both apps' `withPortErrors` answers it with a 503, `Retry-After: retryAfterSeconds`, `{ error: 'llm-unavailable',
+reason }` and a logged warning,** the shape of the database's answer. That function is the app's, so an adopter applies
+  it by hand (a scaffold changeset for `@sssb/create`). A job handler lets it propagate, which fails the job (`runJobInProcess` records the error message).
+  A stream that has begun its response cannot change the status: the error ends the iteration, and the guide says so.
+- **The fake adapter replays instantly, so it checks `timeoutMs` and nothing else.** It cannot rate-limit or time out
+  without a fixture format for failures, which would be a feature of its own; the 503 mapping is proved with the error
+  thrown by hand (`respond.test.ts`), and the adapter's mapping with the SDK's real error classes behind a stubbed
+  `fetch` (`adapters/real/llm.test.ts`: no network, the SDK's retry and abort code runs).
+- **A large `maxTokens` is no longer refused locally.** The SDK refused a non-streaming call whose `max_tokens` implies
+  more than ten minutes, but only when it chose the timeout; passing one skips that check, so `complete` and
+  `runToolLoop` with a large `maxTokens` are now sent, bounded by the deadline instead.
+- **The kit changeset is Kind seam, Action required (a `minor`).** A call that took longer than 25 s used to succeed and now
+  fails, so an app whose job runs on a runner without the server's 30 s limit (CodeBuild) breaks if it does nothing: its
+  handler passes a longer `timeoutMs`. A request-path call, and a job the in-process runner runs inside the server's
+  function, need nothing. (First written as optional; `.changeset/README.md`'s rule is that a change an adopter who does
+  nothing breaks on is required.)
+- **Not done here.** The `llm-key` cutover row still holds the live check; its verification list gains nothing, since a
+  live 429 or a slow call is not something to provoke on purpose.
+
+## The Data API emulator reads a plain literal's backslash as the Data API does (2026-11-27, `fix/emulator-backslash`)
+
+`safeinsights/sssb#201`: an app's query with `ESCAPE '\'` and a parameter after it passed the contract run, and the real
+Data API answered `syntax error at or near ":"` (seen live, 2026-11-24). Postgres, with `standard_conforming_strings` on,
+reads `'\'` as a complete literal; the Data API finds `:name` parameters with a scanner of its own, and the error says a
+`:` reached Postgres, so that scanner did not see the parameter as code.
+
+- **What the emulator does.** Its parameter scan (`toPositional`) now reads SQL with `sqlSegments(sql, { dataApiReading:
+true })`, in which a backslash escapes the next character in a plain `'…'` literal too, so `'\'` does not close and the
+  literal runs on to the next quote. A `:name` in that stretch is left in the text; Postgres is handed a bare `:kp1` and
+  answers `syntax error at or near ":"`, the message the live Data API gave; the emulator wraps it as `DatabaseErrorException`, as it does any database error. The
+  dialect keeps Postgres's rules for `$n` (`rewritePlaceholders`): it rewrites the SQL the app wrote for node-postgres.
+  A statement is refused only when a `:name` falls in the stretch where the two readings differ, which is exactly the
+  evidence. The SQL text Postgres receives is otherwise unchanged.
+- **Proven and inferred.** One live observation: a plain literal ending in a backslash, a parameter after it, that error
+  (the issue records the error and the `ESCAPE '\'`, not the statement's full text). Inferred: that the Data API treats `\'` as an escaped quote in every plain
+  literal (so the escaped-quote reading, and the way it shifts every later literal, follow from one rule); not known: a
+  statement with no parameter after the literal, or only before it, which is not refused; `E'…'`, `--` and `$$` are
+  assumed read as Postgres reads them (the runbook's step 2 checks the first two). The runbook's step 2 now ends with the
+  live check, `a` (the observed shape) and `b` (the `E'\\'` spelling), and says which line each result corrects.
+- **Rejected: rewriting `'\'` to `E'\\'` in the dialect.** It would make the statement work on both transports, but it
+  means rewriting SQL the dialect cannot parse (a literal is one thing to the Data API's scanner and another to
+  Postgres's, and the divergence is itself unconfirmed past one case), and an adopter who wrote `'\'` would never learn
+  the statement is not portable. Rejected: **refusing every plain literal that ends in a backslash**, which is broader
+  than the evidence: a parameterless statement may well be fine. Rejected: **refusing in the dialect**
+  (`unsupportedStatement`) with a clearer message: the brief and the issue ask for the emulator's refusal, and a
+  production refusal on an inferred rule is a decision for the owner; the emulator is test-only. The spellings both
+  scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
+- **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
+  the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).

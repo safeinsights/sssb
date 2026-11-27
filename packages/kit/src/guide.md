@@ -28,6 +28,13 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   real adapter only with `import()`, a fake, and the real adapter in `adapters/real/`, the one directory that imports
   the SDK. Nothing imports `adapters/real/` statically, and a fake never imports it at all. Add the SDK to the ban in
   the app's own `package.json`: `"sssb": { "vendors": ["stripe", "stripe/*"] }`.
+- An LLM call (`llm.complete`, `llm.stream`, `llm.runToolLoop`) has a deadline of 25 s by default, under the 30 s the
+  server function has. A provider rate limit, an overloaded provider and a call past its deadline all arrive as
+  `LlmUnavailableError` (`@sssb/kit/ports/errors`), which `withPortErrors` answers with a 503 and `Retry-After`: let it
+  propagate. A job handler run by the CodeBuild runner, where no person waits and the process lives longer, passes a
+  longer `timeoutMs` on the request; a route, and a job the in-process runner runs inside the server's function, never
+  pass more than that function allows. `stream` throws it from the iteration, so a route that has begun its response cannot
+  change the status.
 - Read `process.env` only in `adapters/real/` (and never the run mode there), in Next's instrumentation hooks, in
   tests and in the app-root tool configs (Playwright, Vite). Every other module imports the resolved value: deployment
   parameters from `config/params.ts`, the run mode from `isSimulated`.
@@ -107,10 +114,11 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 
 ## Authorization
 
-- Every exported mutating route handler (POST, PUT, PATCH, DELETE) in a `route.ts` anywhere under `src/app`, not only
-  under `src/app/api`, calls `authorize(...)` from `@sssb/kit/authz/authorize` on its own path, as
-  `src/app/api/items/route.ts` does (the generated app's; once you have removed it, read it in SSSB's repository at your
-  release). The conformance suite's `authz-mutations` check reads each handler: a string, a
+- Every exported route handler in a `route.ts` anywhere under `src/app`, not only under `src/app/api`, calls
+  `authorize(...)` from `@sssb/kit/authz/authorize` on its own path: a mutation (POST, PUT, PATCH, DELETE) and a read
+  (GET, HEAD, OPTIONS) alike, as `src/app/api/items/route.ts` does for both (the generated app's; once you have removed
+  it, read it in SSSB's repository at your release). The conformance suite's `authz-mutations` check reads each
+  handler: a string, a
   comment, a dead branch or a helper in another module does not count. Neither does a call whose denial cannot stop
   the handler: in an `async` helper or a callback whose promise the handler neither awaits nor returns, in a callback
   handed to a function the route file defines, in a callback a timer, a listener, `after()` or a `.catch`/`.finally`
@@ -118,19 +126,41 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
   neither does a `.then(...)` chained after it.
 - The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
-  comes before the mutation. Call it before the mutation and before any `try`, on a path every request takes: after
-  `auth.requireUser()` and the lookups that give it the org, never inside a condition or a loop.
+  comes before the mutation. Call it before the mutation and before any `try` (except one whose `catch` always
+  rethrows, as in the next rule), on a path every request takes: after `auth.requireUser()` and the lookups that give it the org, never
+  inside a condition or a loop.
+- A person who may not act gets the same answer, status and body, whether or not a thing the request names exists:
+  a row by its id in the path, an org by a slug in the body, anything a lookup keyed by request input finds. So no such
+  lookup answers before `authorize` when the session alone can decide: authorize on the active org the session
+  resolves to first, then look the thing up, scoped to the active org (another org's row is missing too). When the
+  decision needs the row itself (a two-sided subject, whose requester and responder orgs only the row knows), the
+  lookup comes first, and a missing row and a refusal are the one error:
+  `if (!row) throw new NotFoundError()`, then
+  `try { authorize(…) } catch (error) { throw error instanceof ForbiddenError ? new NotFoundError() : error }`, both
+  errors from `@sssb/kit/ports/errors`, so `withPortErrors` gives both one answer. That `catch` always rethrows, so the
+  check still counts the call. The check cannot see the order of a lookup and an `authorize`, so this rule is kept by
+  hand; pin it with a route test that sends an existing id and a missing one as a person who may not act, and expects
+  identical answers.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
   app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
   `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
-  `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
-  exemption.
+  `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names, each judged on
+  its own. A route outside `src/app/api` can match no exemption.
 - A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
   (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
   The role `none` (a fixed org source gives it to every signed-in user by default: `params.auth`) is placed in the home
-  org with no standing in it.
+  org with no standing in it. The check enforces it for route handlers (a screen and a metadata route such as
+  `sitemap.ts` or `opengraph-image.tsx` are kept by hand), and does not guess which reads are org-scoped: a read
+  handler that names an import (other than those below), a helper, `fetch` or `process.env` authorizes. A
+  read of the caller's own things authorizes its self-only subject (`Notification`, `NotificationPref`), and a service
+  caller its machine actor. A read handler that reads nothing passes without it: it names nothing from outside itself
+  but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
+  array), `NextResponse`, `redirect`, `permanentRedirect` and `notFound` from `next/navigation`, and SSSB's `appMode`
+  and `isSimulated`, so it works only on its request, as a liveness probe does, or a CORS preflight whose headers are
+  written inline. Any other read that is genuinely not org-scoped (a public one)
+  names an exemption.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.

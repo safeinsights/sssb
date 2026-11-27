@@ -3,10 +3,10 @@
         {
             "id": "authz-mutations",
             "runner": "unit",
-            "title": "every mutating route handler is authorized",
+            "title": "every route handler is authorized",
             "tests": [
                 "the app's src/app is really walked",
-                "every mutating handler reaches authorize(...) or passes its exemption's gate",
+                "every handler reaches authorize(...), reads nothing, or passes its exemption's gate",
                 "the app's own exemptions are well formed, collide with no framework entry, and are not stale"
             ]
         },

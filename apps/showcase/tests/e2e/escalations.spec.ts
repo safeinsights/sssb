@@ -8,7 +8,7 @@ import { reachDashboard, signInAs } from './support/people'
  * Cross-org escalations, end to end. An escalation is TWO-SIDED: the org that raised it sees it under
  * "sent", the org it's addressed to sees the SAME row under "received". The requester may withdraw an
  * open escalation; the responder may accept/reject — but only an org MANAGER may respond (the demoable
- * asymmetry: a platform member sees the escalation but can't decide it, and a forced POST still 403s).
+ * asymmetry: a platform member sees the escalation but can't decide it, and a forced POST 404s, as a missing id does).
  * A bystander tenant sees nothing and a forced POST 404s. All backed by real routes + RLS on pglite.
  */
 
@@ -109,7 +109,9 @@ test('an escalation is two-sided: frontline sends, a platform manager accepts, r
     await expect(page.getByTestId(`escalation-cancel-${id}`)).toHaveCount(0)
 })
 
-test('a platform MEMBER sees the escalation read-only and is denied respond at the server', async ({ page }) => {
+test('a platform MEMBER sees the escalation read-only and a forced respond 404s, as for a missing id', async ({
+    page,
+}) => {
     const subject = `member-${Date.now()}`
 
     // Dana raises frontline -> platform.
@@ -125,9 +127,18 @@ test('a platform MEMBER sees the escalation read-only and is denied respond at t
     await expect(page.getByTestId(`escalation-accept-${id}`)).toHaveCount(0)
     await expect(page.getByTestId(`escalation-reject-${id}`)).toHaveCount(0)
 
-    // Bypassing the missing UI: a raw respond POST (Sam's session) must still be forbidden.
+    // Bypassing the missing UI: a raw respond POST (Sam's session) is refused, and with the answer a missing id gets,
+    // so a denial never tells anyone that the id exists (safeinsights/sssb#137).
     const forced = await page.request.post(`/api/escalations/${id}/respond`, { data: { decision: 'accept' } })
-    expect(forced.status()).toBe(403)
+    const missing = await page.request.post(`/api/escalations/${crypto.randomUUID()}/respond`, {
+        data: { decision: 'accept' },
+    })
+    expect(forced.status()).toBe(404)
+    expect([forced.status(), await forced.json()]).toEqual([missing.status(), await missing.json()])
+    // And the refusal decided nothing: read back from the server, the escalation is still open.
+    const listed = await page.request.get('/api/escalations')
+    const { received } = (await listed.json()) as { received: Array<{ id: string; status: string }> }
+    expect(received.find((row) => row.id === id)?.status).toBe('open')
 })
 
 test('a bystander tenant cannot see the escalation and a forced respond 404s', async ({ page }) => {

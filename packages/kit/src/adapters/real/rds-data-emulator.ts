@@ -31,6 +31,9 @@ import type { RdsDataClientLike, RdsDataCommand } from './rds-data-dialect'
  * - a response over 1 MiB is refused, and an unknown transaction id is TransactionNotFoundException;
  * - database errors come back as a message only, WITHOUT a SQLSTATE — the least the Data API is
  *   reported to give, so what is proven is that SSSB's error handling survives the worst case;
+ * - a `:name` the Data API's scanner reads as inside a plain string literal (after one that ends in a backslash, as in
+ *   `ESCAPE '\'`) is left unreplaced, so Postgres answers `syntax error at or near ":"`, the message the live Data API
+ *   gave for that query (#201; `toPositional` says what is observed and what is inferred);
  * - a result with a column of a type the Data API refuses is refused whole, rows or none, with its
  *   `UnsupportedResultException`, after the statement has run (REFUSED_RESULT_TYPES says which types, and on what
  *   evidence, some of it inferred).
@@ -260,8 +263,11 @@ function awsError(name: string, message: string, cause?: unknown): Error {
 
 /**
  * `:name` placeholders to `$n`, in code only — not in strings, E-strings, quoted identifiers, nested
- * comments or dollar quotes, by the dialect's own scanner (`sqlSegments`), so the two cannot disagree —
- * and never the second colon of a `::` cast. Each is bound the way the Data API binds it: an untyped
+ * comments or dollar quotes, by the dialect's own scanner (`sqlSegments`) — and never the second colon of a `::` cast.
+ * One difference from the dialect's reading, on purpose (`dataApiReading`): a backslash escapes
+ * the next character in a plain literal too, as the Data API's scanner appears to read it, so a `:name` after
+ * `'\'` is left in the text, Postgres is handed a bare `:kp1`, and the statement fails as it did live
+ * (`syntax error at or near ":"`, safeinsights/sssb#201). Each is bound the way the Data API binds it: an untyped
  * string as `varchar`, a typeHint as its type, a long as `int8` — which is what makes a missing cast fail
  * here.
  */
@@ -275,7 +281,7 @@ function toPositional(sql: string, parameters: readonly SqlParameter[]): { text:
         if (index === -1) index = order.push(name) - 1
         return `($${index + 1}${bindType(parameter)})`
     }
-    const text = sqlSegments(sql)
+    const text = sqlSegments(sql, { dataApiReading: true })
         .map((segment) =>
             segment.code ? segment.text.replace(/(?<!:):([A-Za-z_][A-Za-z0-9_]*)/g, bind) : segment.text,
         )

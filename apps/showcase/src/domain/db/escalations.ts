@@ -87,7 +87,7 @@ export async function transitionEscalation(
 /**
  * Resolves a request id to its status + both sides ONLY when the active org is one of the two parties
  * — returns null both when the request is absent and when the active org is a bystander (a foreign
- * request must be indistinguishable from a missing one, so ids can't be probed; the jobForOrg
+ * request must be indistinguishable from a missing one, so a bystander org can't probe ids; the jobForOrg
  * doctrine). The route uses the returned side ids to authorize with the REAL org ids.
  */
 export async function escalationForActiveOrg(
