@@ -8223,3 +8223,29 @@ catchRequests })`), which the conformance check uses so it never touches an app'
 - **Not done.** The check proves the adapters, not an app's own consumer: whether a route or a screen shows the failure is
   its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
   can throw and how to test the path.
+
+## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
+
+safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "DatabaseUnavailableError" and the
+18 s `DATABASE_RESUME_BUDGET_MS` above).
+
+- **#189: kept in `runWithTenant`, not in the dialect.** Kysely's `execute()` catches the work's error, awaits
+  `driver.rollbackTransaction`, and rethrows the work's error; if the rollback throws, that replaces it. A controlled
+  transaction's `rollback()` calls the same driver method with the same connection, and nothing tells the driver which
+  caller it has, so a rule in `rollbackTransaction` (swallow a failure) would also hide a deliberate rollback's: the
+  issue's open question. `runWithTenant`, which every framework transaction goes through (both transports, the Data
+  API and `pg`), sees the work's error, so it throws that when something else was thrown after it, and keeps the
+  rollback's failure as a warning and as a non-enumerable `rollbackError` on the work's error when that is an object that
+  takes one (a thrown string or a frozen error gets the warning alone). The rollback's error is never `cause`: the work's
+  error may carry its own. A transaction opened on the raw handle keeps Kysely's behaviour, and a commit that fails is
+  thrown as it was: nothing the work threw is there to keep. Rejected: **a Kysely subclass or a proxy of
+  `TransactionBuilder`**, to catch the same on the raw handle: private fields, and the builder's methods each return
+  another builder. Rejected: **swallowing every failed rollback**, which hides a deliberate one.
+- **#190: a probe is aborted after three of its turns, and when the wait ends.** `RdsDataClientLike.send` takes the
+  SDK's `{ abortSignal }`, which `RDSDataClient.send` accepts (the SDK's own request option, which closes the socket).
+  A probe is sent every 3 s at the soonest (its 2 s turn plus the 1 s wait), so 6 s (`PROBE_ABORT_MS`) leaves at most
+  three out, and a probe that is slow but answers inside it still ends the wait, as before. The wait aborts every probe
+  still out when it ends, by an answer or by nobody waiting. A rejection after an abort is ours and is read as nothing: it
+  neither ends the wait nor counts as the database's answer. Rejected: **keeping at most a few in flight by not sending**,
+  which would hold up a wait the probes in flight may never end. The SDK's pool size was not read; the bound does not
+  depend on it.
