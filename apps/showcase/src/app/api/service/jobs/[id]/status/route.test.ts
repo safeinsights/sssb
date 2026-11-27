@@ -139,6 +139,20 @@ describe('POST /api/service/jobs/[id]/status', () => {
         expect(h.record).not.toHaveBeenCalled()
     })
 
+    test('a denied machine gets the same 403 for a job that exists as for one that does not (safeinsights/sssb#137)', async () => {
+        h.authorize.mockImplementation(() => {
+            throw new ForbiddenError('cannot update Job')
+        })
+        h.jobForOrg.mockResolvedValue({ id: 'd0000000-0000-4000-8000-000000000001', status: 'running' })
+        const existing = await post({ status: 'completed' })
+        h.jobForOrg.mockResolvedValue(null)
+        const missing = await post({ status: 'completed' })
+
+        expect(existing.status).toBe(403)
+        expect([existing.status, await existing.json()]).toEqual([missing.status, await missing.json()])
+        expect(h.jobForOrg).not.toHaveBeenCalled()
+    })
+
     test('200 records the transition with its optional fields', async () => {
         h.jobForOrg.mockResolvedValue({ id: 'd0000000-0000-4000-8000-000000000001', status: 'running' })
         h.record.mockResolvedValue(undefined)
