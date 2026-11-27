@@ -38,7 +38,7 @@
         },
         {
             "id": "db-tls",
-            "what": "On `pg`, the server and the Migrator reach the database over TLS that verifies its certificate: `DATABASE_SSL_MODE` (`verify-full` when unset; `disable` only for a server with no TLS) and `DATABASE_SSL_ROOT_CERT` (the roots to trust)"
+            "what": "On `pg`, the server and the Migrator reach the database over TLS that verifies its certificate (`DATABASE_SSL_MODE`: `verify-full` when unset, never `disable` deployed; `DATABASE_SSL_ROOT_CERT`: the roots)"
         },
         {
             "id": "origin-not-publicly-reachable",

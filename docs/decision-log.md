@@ -7653,6 +7653,46 @@ both connect with one explicit mode, read by one function (`databaseSsl` in
   suggestion): a compose network's `db` is not loopback either, and the docs and the cutover row already confine
   `disable` to a server with no TLS.
 
+## The Clerk adapter: one read per render, the keyless fallback closed, a client sign-out (2026-11-27, `fix/clerk-adapter`)
+
+safeinsights/sssb#200, #193 and #180, together because all three are SSSB's real Clerk adapter.
+
+- **#200: a per-render memo, not a cross-request cache or session claims.** `getCurrentUser` and `listMyOrgs` share
+  two reads (the account, the memberships) through React's `cache`, which gives each server render its own store and
+  is a pass-through anywhere else. So reading the signed-in person costs a page render at most two Backend API calls
+  (a page per 100 orgs more; other calls, such as a team's members, are not shared),
+  and nothing outlives the request: a role change, a removal or a ban shows on the next one, with no bound to
+  document beyond that. Writes the adapter makes (`updateProfile`, `setActiveOrg`) drop the person's reads, so the rest
+  of the render sees them. Rejected: **a time-bounded cache per user**, which on a deployment of several server
+  instances serves a stale org right after a switch (the switcher reloads the page; another instance answers it) and
+  cannot be invalidated across instances; and **custom session claims** (the role and metadata in the token), which
+  need a Clerk dashboard change per instance, SSSB's role lives on the membership rather than in Clerk's active-org
+  claim, and the claims lag a switch until the token refreshes. Both need a live measurement first: filed as safeinsights/sssb#214.
+  Route handlers are not memoized (React's `cache` has no store there), and read on each call. Proven
+  with React's `cache` simulated in `auth.test.ts`, never in a real Next render.
+- **#193: the adapter refuses to read a session while Clerk's keyless fallback can be reached.** Clerk decrypts the
+  request data its middleware writes under a published key outside a production build (when no secret key is set, or,
+  in keyless mode, after the real key fails) and then trusts the secret key that data names to check the token header.
+  On a path the proxy skips, nothing overwrites a caller's headers, so anyone could be signed in. `clerk-keyless.ts`
+  is asked before every `auth()` and `clerkClient()` in `auth.ts` (Clerk's client decrypts the same data and takes
+  its API URL from it): outside `NODE_ENV=production` it requires `CLERK_SECRET_KEY` itself (with an encryption key
+  alone, Clerk checks the token header against an empty key) and `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` `1` or `true`, a subset of what Clerk's `isTruthy` reads as set. Stricter
+  than Clerk on purpose: it ignores Clerk's CI exemption and holds under `NODE_ENV=test`, so it copies none of Clerk's
+  environment lists. The showcase's `dev:real` sets the variable. `clerk-keyless.clerk.test.ts` drives Clerk's real
+  `auth()` with forged headers: signed in as Clerk ships, refused by the adapter, and refused by Clerk once the variable
+  is set. Rejected: **only setting the variable in scripts**, which an adopter's own `next dev` would miss silently;
+  **re-checking the token header's HMAC against `CLERK_SECRET_KEY` in the adapter**, which copies Clerk's header names
+  and signature scheme; **a marker header from `withClerk`**, which needs a secret shared between the proxy and the
+  route and breaks where the proxy runs apart from the server; and **guarding `withAuthProxy`**, which a skipped path
+  never reaches. The matcher's dot rule stays (the guide says a page path has none); this closes the hole whatever the
+  matcher skips.
+- **#180: `RealUserMenu`, rendered by the server layout and handed to the client header glue.** The layout loads it by
+  `import()` in real mode, as the sign-in page loads `RealSignInForm`, and passes it as a `userMenu` node; its props are
+  plain data (`profileHref`, `signedOutHref`) because a function cannot cross from a server component. It signs out
+  through Clerk's client by session id, and falls back to the sign-out route (the framework's `auth/signout`, which
+  revokes the server-read session alone) until Clerk has loaded or if Clerk's sign-out fails, rather than signing
+  nobody out as `RealAccountRefused` does: a menu has no place to say so. Added to the `real-auth-provider` check's forms.
+
 ## The secret scan reads the commits it is asked about, not every branch (2026-11-27, `fix/secret-scan-scope`)
 
 `safeinsights/sssb#106`: `secret-scan` ran `gitleaks git` with no `--log-opts`, which gitleaks 8.30.1 turns into
