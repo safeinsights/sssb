@@ -24,6 +24,7 @@ import { useTours } from '../../demo-static/tour/use-tours'
 import type { ScrubResult } from './errors-app'
 import type { InboundComposeInput } from './inbound-app'
 import type { DevTickerLike } from './jobs-app'
+import { mailLinkTarget } from './mail-link'
 import { SimulatorPanel, type SimulatorExtraTab, type SimulatorNotice } from './simulator-panel'
 
 const EMPTY_SUMMARY: SimulatorSummary = { viewpoint: null, signedIn: false, people: [] }
@@ -156,8 +157,7 @@ function readStoredScope(): 'person' | 'all' | null {
  * event before and after scrubbing), Snapshots (reset the world, save, restore and delete snapshots, flip a feature
  * flag, bump an agreement, load a demo preset) and, when the app registers any, Tours. A reset, a restore and a preset load each reload the page, since every page shows the world
  * they replaced; a tour that starts from one of them resumes itself after the reload. The panel leaves out every tab it
- * is not given; the rest, the app's own tabs included, are later stages of the same host. An app that needs one of
- * them today keeps a glue of its own instead of this component.
+ * is not given.
  *
  * Two parts of the Simulator stay the app's until safeinsights/sssb#152 decides them, and the host only renders what the
  * app hands it. An app's own tabs (the Actors tab) come in as `extraTabs`, the panel's own type; their content reads the
@@ -176,7 +176,7 @@ export function SimulatorHost({
 }: {
     locale: string
     /** An app's own Simulator tabs, built by the app (ADR-0006). Provisional until safeinsights/sssb#152. */
-    extraTabs?: SimulatorExtraTab[]
+    extraTabs?: SimulatorExtraTab[] | undefined
     children: ReactNode
 }) {
     const t = useTranslations('simulator')
@@ -440,31 +440,11 @@ export function SimulatorHost({
     }
 
     function handleOpenLink(href: string) {
-        // Same origin only, and never silently. A path is followed; so is an absolute URL on this origin, since a real
-        // email carries one. Both go through `sameOriginPath`, which refuses what a browser would read as another
-        // origin (`/\host`, a tab inside). A protocol-relative `//host` link is resolved against this page, so it is
-        // judged by its host like any absolute URL; one with no origin at all (`mailto:`) is unusable here.
-        const path = sameOriginPath(href)
-        if (path) {
-            window.location.assign(path)
-            return
-        }
-        try {
-            const url = href.startsWith('//') ? new URL(href, window.location.href) : new URL(href)
-            const local =
-                url.origin === window.location.origin ? sameOriginPath(url.pathname + url.search + url.hash) : null
-            if (local) {
-                window.location.assign(local)
-                return
-            }
-            if (url.origin === window.location.origin || url.origin === 'null') {
-                pushNotice(t('noticeLinkUnusable', { href }))
-            } else {
-                pushNotice(t('noticeLinkOrigin', { origin: url.origin }))
-            }
-        } catch {
-            pushNotice(t('noticeLinkUnusable', { href }))
-        }
+        // Same origin only, and never silently: `mailLinkTarget` says where to go, or why not.
+        const target = mailLinkTarget(href, window.location.href)
+        if ('path' in target) window.location.assign(target.path)
+        else if (target.refused === 'origin') pushNotice(t('noticeLinkOrigin', { origin: target.origin }))
+        else pushNotice(t('noticeLinkUnusable', { href }))
     }
 
     function handleCopyLink(href: string) {
