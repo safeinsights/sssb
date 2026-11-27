@@ -9,9 +9,9 @@ import type { DbPort } from '../ports/db'
  *
  * The hint is never later than the truth: database triggers lower it on every write that can make work due (the
  * migration lists them; one that must create the row writes "unknown", the epoch), and the drain raises it only by
- * compare-and-set, after listing a tenant that had nothing
- * due, to that tenant's next due time; a write that lowered it meanwhile bumped its version, so the raise does not
- * land. A hint more than `MAX_SKIP_MS` away is read as come, so no tenant goes unlisted for longer than that, and a
+ * compare-and-set, after listing a tenant that had nothing due, to that tenant's next due time; a write that lowered
+ * it meanwhile bumped its version, so the raise does not land, and a hint row a tenant's open transaction holds is
+ * skipped (SKIP LOCKED), so the raise never waits. A hint more than `MAX_SKIP_MS` away is read as come, so no tenant goes unlisted for longer than that, and a
  * simulated world whose clock was moved back cannot strand one.
  *
  * Read and written through the raw handle, as the tick already reads `tenants`: the table belongs to the migration

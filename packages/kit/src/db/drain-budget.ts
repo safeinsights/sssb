@@ -131,9 +131,9 @@ export function shuffled<T>(items: readonly T[], budget: DrainBudget, idOf: (ite
 
 /**
  * Lists each tenant's due rows, the tenants in a random order, stopping when the deadline passes (`listOne` runs one
- * tenant's query; `rowKey` is a row's id), shuffles each tenant's rows, then runs `run` over them round-robin. A
- * tenant listed with nothing due, whose listing also said when it next has work (`nextDue`), is handed to
- * `listedNothing`, which raises its due hint (./due-hints.ts). until the rows or the budget run out. `run` isolates its own failures
+ * tenant's query; `rowKey` is a row's id), shuffles each tenant's rows, then runs `run` over them round-robin until
+ * the rows or the budget run out. A tenant listed with nothing due, whose listing also said when it next has work
+ * (`nextDue`), is handed to `listedNothing`, which raises its due hint (./due-hints.ts). `run` isolates its own failures
  * (each drain counts them); one that throws anyway stops the drain, as an unhandled error did before.
  */
 export async function drainFairly<T, Tenant extends { id: string }>(

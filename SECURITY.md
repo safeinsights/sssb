@@ -76,10 +76,11 @@ the interesting reports are about that shape being wrong:
     on it (it would tell one tenant when another has work, or let it hide another's work from the
     tick); only the migration owner, the role the server connects as, reads and writes it. Database
     triggers keep it current through one `SECURITY DEFINER` function, `sssb_note_due`, with its
-    `search_path` pinned and `EXECUTE` revoked from `PUBLIC`. It writes only from the row being
+    `search_path` pinned and `EXECUTE` revoked from `PUBLIC` and from `app_user`. It writes only from the row being
     written, which RLS has already confined to the writer's tenant, and it only ever lowers a hint.
     The framework's RLS proofs (`packages/kit/src/db/rls-proofs.ts`) assert that `app_user` can
-    neither read nor write the table nor call the function, and that its own write still lowers its
+    neither read nor write the table nor call the function, read from the catalog as well as tried
+    (privileges, `prosecdef`, the pinned `search_path`), and that its own write still lowers its
     tenant's hint. A way to read or write `due_hints` as `app_user`, or to make the function write a
     row for another tenant, is in scope.
 

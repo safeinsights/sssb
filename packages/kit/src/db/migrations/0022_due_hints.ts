@@ -6,10 +6,11 @@ import { Kysely, sql } from 'kysely'
  * costs four Data API calls a tenant a drain whether or not anything is due. `due_hints` lets a drain skip the tenants
  * that cannot have any: one row per (tenant, drain), `list_after` the earliest instant that tenant may have work due.
  *
- * - TRIGGERS LOWER IT. Every write that can make work due fires `sssb_note_due`, which lowers the tenant's
- *   `list_after` to the row's due time (never raises it) and bumps `version`: a schedule enabled or moved
- *   (`job_schedules.next_run_at`, `enabled`), a delivery pending or failed (`webhook_deliveries.next_attempt_at`,
- *   `status`), a retry waiting (`jobs.run_after`, `status`, queued). A trigger sees every write, the app's own
+ * - TRIGGERS LOWER IT. Every write that can make work due SOONER fires `sssb_note_due`, which lowers the tenant's
+ *   `list_after` to the row's due time (never raises it) and bumps `version`: a row inserted eligible, or updated to
+ *   become eligible or to fall due earlier (a schedule's `next_run_at`, `enabled`; a delivery's `next_attempt_at`,
+ *   `status`; a retry's `run_after`, `status`). A write that moves an eligible row later (the tick's own advance and
+ *   claims) does not fire (the triggers' WHEN clauses below say why). A trigger sees every write, the app's own
  *   included, so no write path has to remember to. A trigger that finds no row for the tenant cannot know what else
  *   the tenant has due, so it writes the epoch ("unknown": the tenant is listed), never the one row's time.
  * - THE DRAIN RAISES IT, and only by compare-and-set: after listing a tenant that had nothing due it moves

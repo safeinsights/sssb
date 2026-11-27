@@ -8377,26 +8377,37 @@ listing costs every tenant every tick, whether or not it has anything due. Measu
       BeginTransaction, the tenant scope, the query, Commit, for every tenant. Real Data API calls are HTTPS round trips
       to AWS. Their latency was not measured here (no live AWS). At 10 ms a call that is 40 s a drain; at 25 ms, 100 s.
       Either is past the tick's whole 30-second limit, and far past the schedules' 6-second window. Since #97 a drain
-      stops listing at its deadline, so the tick would list a few dozen tenants and leave the rest to later ticks: work
+      stops listing at its deadline, so the tick would list one or two hundred tenants at most and leave the rest to later ticks: work
       in a 1,000-tenant deployment would wait many ticks.
-    - With 100 tenants: about 400 calls a drain, past the schedules' window at 15 ms a call.
+    - With 100 tenants: about 400 calls a drain, which fills the schedules' 6-second window at 15 ms a call.
     - Verdict: not worth it on pg, and worth it for the Data API transport, which an adopter chooses for scale-to-zero
       and which is where many tenants would hurt.
 - **The design: an owner-only due hint per tenant and drain, lowered by triggers, raised by the drain.** Migration
-  `0022_due_hints` adds `due_hints(tenant_id, drain, list_after, version)`. Three `AFTER` row triggers (on
-  `job_schedules`, `webhook_deliveries`, `jobs`) call one `SECURITY DEFINER` function, `sssb_note_due`, which lowers
-  the tenant's `list_after` to the row's due time (never raises it) and bumps `version`. They fire on each write that
-  can make work due: a schedule enabled or moved, a delivery pending or failed, a retry waiting.
-    - The drain reads the hints in one query (tenants left-joined to hints) and lists only tenants with no hint, a hint
-      that has come, or one more than `MAX_SKIP_MS` (a day) away.
-    - After listing a tenant with nothing due, the drain raises its hint to the tenant's next due time, at most a day
-      on. The next due time comes from one more statement in the same listing transaction. The raise is a
-      compare-and-set on the version read before listing, so a write that lowered the hint meanwhile is kept.
-    - The hint is never later than the truth, so no work is delayed by it. The day's cap bounds what a hint can skip,
-      and covers a simulated world whose clock was moved back.
-    - Measured after (same 1,000 tenants): the first tick after the migration lists every tenant once (6,007 Data API
-      calls a drain, about 1.5 times before). Every tick after that with nothing due: 1 call and 0 transactions a
-      drain, on both transports.
+  `0022_due_hints` adds `due_hints(tenant_id, drain, list_after, version)`. `AFTER` row triggers on `job_schedules`,
+  `webhook_deliveries` and `jobs` (an INSERT and an UPDATE trigger on each) call one `SECURITY DEFINER` function,
+  `sssb_note_due`, which lowers the tenant's `list_after` to the row's due time (never raises it) and bumps
+  `version`.
+    - They fire on each write that can make work due SOONER: a row inserted eligible, a row becoming eligible (a
+      schedule enabled, a delivery back to pending or failed, a retry queued), or an eligible row's due time moving
+      earlier.
+    - A write that moves an eligible row LATER does not fire. That covers the tick's own advance of a schedule and its
+      claim of a delivery. It cannot hide work from a raise, since whatever a raise saw of that row was no later. So the
+      tick's writes take no hint row, and never wait on, or deadlock with, a tenant's open transaction that holds one.
+    - A trigger that has to create the row cannot know what else the tenant has due, so it writes the epoch: unknown,
+      and the tenant is listed. The drain's raise then sets it. Writing the one row's time there instead would hide the
+      tenant's earlier work, most of all at rollout, when no row exists yet (round 1 of review found it).
+        - The drain reads the hints in one query (tenants left-joined to hints) and lists only tenants with no hint, a hint
+          that has come, or one more than `MAX_SKIP_MS` (a day) away.
+        - After listing a tenant with nothing due, the drain raises its hint to the tenant's next due time, at most a day
+          on. The next due time comes from one more statement in the same listing transaction. The raise is a
+          compare-and-set on the version read before listing, so a write that lowered the hint meanwhile is kept. It is
+          one statement that skips a hint row another transaction holds (`FOR UPDATE SKIP LOCKED`), so it never waits; a
+          skipped raise only means the tenant is listed again.
+        - The hint is never later than the truth, so no work is delayed by it. The day's cap bounds what a hint can skip,
+          and covers a simulated world whose clock was moved back.
+        - Measured after (same 1,000 tenants): the first tick after the migration lists every tenant once (6,007 Data API
+          calls a drain, about 1.5 times before). Every tick after that with nothing due: 1 call and 0 transactions a
+          drain, on both transports.
 - **Why triggers rather than the write paths noting it.** A trigger sees every write, the app's own included: an app
   that inserts a schedule from its own route lowers the hint without knowing hints exist. Rejected: noting due work
   from the framework's own write paths (`enqueueWebhookEvent`, `recordJobStatus`, …), which an app writing those tables
@@ -8404,7 +8415,8 @@ listing costs every tenant every tick, whether or not it has anything due. Measu
 - **Why owner-only, and the definer function.** `due_hints` is cross-tenant with no RLS. `app_user` holds no privilege
   on it: reading it would tell one tenant when another has work; writing it could hide another's work from the tick.
   So the trigger, which fires as `app_user`, writes it through `SECURITY DEFINER`. `search_path` is pinned to
-  `pg_catalog, public`, and `EXECUTE` is revoked from `PUBLIC`; a trigger function cannot be called directly anyway.
+  `pg_catalog, public, pg_temp`, and `EXECUTE` is revoked from `PUBLIC` and from `app_user`; a trigger function cannot
+  be called directly anyway. The table is revoked from both too.
   It writes only the tenant of the row being written, which RLS's `WITH CHECK` has already confined. `SECURITY.md` and
   `rls-proofs.ts` say and prove it. The proofs run on pglite and in the contract suite on pg, the Data API, and the
   non-superuser owner pass. Rejected:
@@ -8432,6 +8444,25 @@ listing costs every tenant every tick, whether or not it has anything due. Measu
         - a raise does not land over a write after the read;
         - a hint more than a day off is read as come;
         - unreadable hints list every tenant.
-    - `rls-proofs.ts`: `app_user` refused on all four operations and on the function; its own write lowers its hint.
-    - `rds-data.contract.test.ts`: a hinted drain over tenants with nothing due costs one Data API call, after the tick
-      that first lists them.
+    - `rls-proofs.ts`: `app_user` refused on all four operations and on the function. From the catalog, so each can
+      fail on its own: no privilege of `app_user`'s on the table, no EXECUTE on the function, `prosecdef`, and
+      `proconfig` exactly the pinned `search_path`. Its own write lowers its hint.
+    - `db.contract.test.ts`: a raise against a hint row another transaction holds returns at once and does not land.
+    - More hint tests: a raise to the earliest next due time and at most a day; re-enabling; a status-only move back to
+      failed; a budget's leftover deliveries staying listed; the tick's own advance leaving the version alone; moving a
+      schedule earlier lowering it.
+- **Lock coupling within one tenant (accepted).** Writes of one tenant that make work due sooner on the same drain now
+  serialize on that tenant's hint row for the rest of their transactions. Two such transactions touching two drains in
+  opposite orders can deadlock. That is confined to the tenant's own writers and never crosses tenants, and the tick
+  takes no part in it.
+- **What review changed** (Opus rounds 1 and 2, the security review on Fable, then a check of the last fixes as a
+  diff):
+    - the epoch on a first trigger write;
+    - triggers only for sooner work;
+    - the never-waiting raise;
+    - the catalog proofs;
+    - `pg_temp` and the revokes from `app_user`;
+    - the jobs trigger watching `status`;
+    - tests for each gap the reviewers named. Each of those mutations was run and turned red.
+        - `rds-data.contract.test.ts`: a hinted drain over tenants with nothing due costs one Data API call, after the tick
+          that first lists them.
