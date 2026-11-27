@@ -143,6 +143,24 @@ describe("an app's own exemptions", () => {
         ])
     })
 
+    it('fail an org-scoped GET that never authorizes, and pass the same GET once it does (safeinsights/sssb#103)', async () => {
+        // What an app runs: the conformance check's scan, not only the analyser, judges reads.
+        const read = (call: string) =>
+            `${AUTHORIZE}import { listDockets } from '../../../../dockets'\n` +
+            `export async function GET() { ${call}return Response.json(await listDockets()) }\n`
+        const open = await scanApp(app({ 'api/dockets/route.ts': read('') }))
+        expect(open.failures).toHaveLength(1)
+        expect(open.failures[0]).toMatch(
+            /^acme: dockets\/route\.ts GET exports a read handler that does not reach authorize/,
+        )
+        const closed = await scanApp(
+            app({
+                'api/dockets/route.ts': read("authorize(user, 'depot', 'read', { type: 'Docket', orgId: 'depot' }); "),
+            }),
+        )
+        expect(closed.failures).toEqual([])
+    })
+
     it('keep an entry alive with a read route: a GET is judged, so its exemption is in use', async () => {
         // safeinsights/sssb#103: reads are judged too, so an entry naming a GET-only route is not stale.
         const exemptions = `export default { files: { 'partner/ping/route.ts': ${PING_EXEMPTION} } }\n`

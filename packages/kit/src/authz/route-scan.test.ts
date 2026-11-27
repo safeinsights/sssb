@@ -2080,6 +2080,26 @@ describe('a read that reads nothing (safeinsights/sssb#103)', () => {
         )
     })
 
+    it('fails a name bound to anything but a primitive, data hung on the handler, and a shadowed undefined', () => {
+        expect(
+            only(
+                "import { load } from './db'\nconst f = load\nexport async function GET() { return Response.json(await f()) }",
+            ),
+        ).toBe(false)
+        expect(only('const X = `${process.env.X}`\nexport function GET() { return Response.json({ X }) }')).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nexport async function GET() { return Response.json(await GET.load()) }\nGET.load = load",
+            ),
+        ).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nconst undefined = load, X = undefined\n" +
+                    'export async function GET() { return Response.json(await (X as never as () => Promise<unknown>)()) }',
+            ),
+        ).toBe(false)
+    })
+
     it('never holds for a wrapper, whose code runs on every request out of sight', () => {
         expect(only("import { wrap } from './wrap'\nexport const GET = wrap(() => Response.json({}))")).toBe(false)
     })
@@ -2139,6 +2159,15 @@ describe('judging a handler against a policy', () => {
                 judge(route('items/route.ts'), { verb, facts: facts({ readsNothing: true }) }, policy),
             ).toBeUndefined()
         }
+    })
+
+    it('tells a read outside api/ that no exemption can name it', () => {
+        expect(judge(route('../feed/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /move it under src\/app\/api, where an exemption .* can name it/,
+        )
+        expect(judge(route('items/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /name a justified exemption, with the gate it passes, in the app's authz-exemptions\.mjs/,
+        )
     })
 
     it('reading nothing excuses a read only: a mutation that calls only globals still authorizes', () => {

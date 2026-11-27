@@ -579,13 +579,18 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
             `${where} exports a read handler that does not reach authorize(...) on its own path, and the route is not ` +
             `in the exemption map. A read authorizes as a mutation does, \`authorize(user, orgId, 'read', subject)\`: ` +
             `the session's org says where a person is placed, not that they may read there (the role \`none\` is placed ` +
-            `with no standing). A read handler passes without it only when it reads nothing: it names nothing from ` +
-            `outside itself but inert globals (Response, Date, URL, JSON), NextResponse, appMode and isSimulated, and ` +
-            `literal constants, so no import, helper, fetch or process.env, and works only on its request. ` +
-            `The same reachability rules apply as for a mutation: a call in a string, a dead branch, an uncalled ` +
-            `function or another module does not count, nor does one whose denial cannot reach the handler. Call ` +
-            `authorize(...) in this handler, or, only if it reads nothing org-scoped (a self-only read authorizes its ` +
-            `self-only subject instead), add a justified exemption.` +
+            `with no standing). Only authorize(...) counts: a non-throwing check such as canInActiveOrg does not. A ` +
+            `read handler passes without it only when it reads nothing: it names nothing from outside itself but inert ` +
+            `globals (Response, Date, URL, JSON), a const holding a primitive (write an object's values inline), ` +
+            `NextResponse, redirect and notFound from next/navigation, and appMode and isSimulated, so no import, ` +
+            `helper, fetch or process.env, and works only on its request. The same reachability rules apply as for a ` +
+            `mutation: a call in a string, a dead branch, an uncalled function or another module does not count, nor ` +
+            `does one whose denial cannot reach the handler. Call authorize(...) in this handler (a self-only read ` +
+            `authorizes its self-only subject), or, only if it reads nothing org-scoped, ` +
+            (route.rel.startsWith('../')
+                ? `move it under src/app/api, where an exemption in the app's authz-exemptions.mjs can name it: a ` +
+                  `route outside src/app/api can match none.`
+                : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs.`) +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -1931,12 +1936,14 @@ function opensWithSimulated404(src: Source, fn: ts.FunctionLikeDeclaration): boo
  * Every `…Error` constructor is in too (`GLOBAL_ERROR`).
  */
 const INERT_GLOBALS: ReadonlySet<string> = new Set([
+    'AbortController',
     'Array',
     'BigInt',
     'Blob',
     'Boolean',
     'Date',
     'Headers',
+    'Intl',
     'Infinity',
     'JSON',
     'Map',
@@ -1950,6 +1957,8 @@ const INERT_GLOBALS: ReadonlySet<string> = new Set([
     'Set',
     'String',
     'Symbol',
+    'ReadableStream',
+    'Request',
     'TextDecoder',
     'TextEncoder',
     'URL',
@@ -1958,6 +1967,8 @@ const INERT_GLOBALS: ReadonlySet<string> = new Set([
     'WeakSet',
     'console',
     'crypto',
+    'atob',
+    'btoa',
     'decodeURI',
     'decodeURIComponent',
     'encodeURI',
@@ -2006,7 +2017,8 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  */
 function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
     const { checker, sf } = src
-    const inside = (decl: ts.Declaration) => decl.getStart(sf) >= fn.getStart(sf) && decl.end <= fn.end
+    // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
+    const inside = (decl: ts.Declaration) => decl !== fn && decl.getStart(sf) >= fn.getStart(sf) && decl.end <= fn.end
     const assigned = new Map<string, boolean>()
     const assignedGlobal = (name: string): boolean => {
         let known = assigned.get(name)
@@ -2027,7 +2039,7 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
             ts.isVariableDeclaration(decl) &&
             isConst(decl) &&
             decl.initializer !== undefined &&
-            isPrimitiveLiteral(decl.initializer)
+            isPrimitiveLiteral(src, decl.initializer)
         )
     }
     const allowedReference = (id: ts.Identifier): boolean => {
@@ -2079,7 +2091,7 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
  * substitutions. An object or array literal is not one: `const` fixes the binding, not the contents, which any code in
  * the file (`cache[org] = await load(org)`) can fill.
  */
-function isPrimitiveLiteral(expression: ts.Expression): boolean {
+function isPrimitiveLiteral(src: Source, expression: ts.Expression): boolean {
     const e = unwrap(expression)
     switch (e.kind) {
         case ts.SyntaxKind.StringLiteral:
@@ -2097,7 +2109,7 @@ function isPrimitiveLiteral(expression: ts.Expression): boolean {
             ts.isNumericLiteral(unwrap(e.operand))
         )
     }
-    return ts.isIdentifier(e) && e.text === 'undefined'
+    return ts.isIdentifier(e) && e.text === 'undefined' && declarationOf(src, e) === undefined
 }
 
 /**

@@ -33,3 +33,9 @@ A read of the caller's own things authorizes its self-only subject, `authorize(u
 `authorize(ctx.actor, 'read', { type: 'Job', orgId: ctx.identity.orgId })`. A read that is genuinely not org-scoped (a
 public one) names an entry in the app's `authz-exemptions.mjs`, with its reason and a `mustMatch` gate it passes; an
 existing entry now also covers a GET at the path it names, which passes its gate, authorizes, or reads nothing.
+
+A GET under `src/app/api/webhooks/` must also be wrapped by the webhook guard (`withWebhookSecret`), the gate of SSSB's
+`webhooks/` exemption, which an app's own entry cannot replace. A provider's verification handshake (a GET that checks
+a token and echoes a challenge) that is not wrapped moves out of `webhooks/` to a path of its own, with an exemption
+whose `calls` gate names the imported function that checks the token. A public read outside `src/app/api` (a feed, a
+sitemap route) can match no exemption: it moves under `src/app/api`, or authorizes.
