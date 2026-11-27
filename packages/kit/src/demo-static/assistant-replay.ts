@@ -50,7 +50,9 @@ export async function replayAssistant(
 ): Promise<string> {
     const defaultEntry = fixture.entries.find((e) => e.request === null)
     const fallback = defaultEntry?.response ?? 'fixture missing'
-    const entry = fixture.entries.find((e) => e.conversation && e.request?.messages?.[0]?.content === question)
+    const entry = fixture.entries.find(
+        (e) => e.conversation && e.conversation.length > 0 && e.request?.messages?.[0]?.content === question,
+    )
     const conversation = entry?.conversation
     if (!conversation) {
         // The default entry may fail too, as the fake adapter's does for a question nothing recorded.

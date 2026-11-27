@@ -7963,6 +7963,17 @@ catchRequests })`), which the conformance check uses so it never touches an app'
   out of the real adapter (checked), which is what an adopter's own copy of the adapter would need to keep. The SDK refuses
   to build a client in a browser-like environment, which an app's Vitest environment may be, so the check takes `window`
   away for its one test and undoes it.
+- **A failing entry that fails before any text sets `response` to `""`** (an empty answer is an answer here; `null` still
+  means "to record", and `llm:record` now skips every entry with a `failure`, which is hand-authored: recording would
+  replace its partial answer with a whole one and leave the failure on it). The tool loop's default entry accepts the
+  same empty answer, found in review.
+- **The showcase's own consumers say it too.** The static demo's pass 2 (the compose fixture's default entry, streamed in
+  chunks) throws `LlmUnavailableError` after the same text when the entry has a `failure`, as the server's stream does;
+  the demo replay finds a matched entry only when its `conversation` is not empty, as the fake does. The dashboard hid the
+  failure once any text had arrived (`prev || assistantError`): it now keeps the streamed text and says the failure under
+  it (`assistant-failed`, `role="alert"`), and still shows the failure as the answer when nothing arrived. Known and left:
+  a default entry with a `conversation` is replayed by the fake with its tool calls but by the demo as its `response`
+  alone, as before this change.
 - **Not done.** The check proves the adapters, not an app's own consumer: whether a route or a screen shows the failure is
   its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
   can throw and how to test the path.

@@ -179,7 +179,7 @@ function lookupToolLoop(
     if (fallback?.conversation && fallback.conversation.length > 0) {
         return { conversation: fallback.conversation, failure }
     }
-    if (fallback?.response) {
+    if (fallback && typeof fallback.response === 'string') {
         return { conversation: [{ role: 'assistant', content: [{ type: 'text', text: fallback.response }] }], failure }
     }
     throw new Error(

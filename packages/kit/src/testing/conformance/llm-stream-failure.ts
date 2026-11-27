@@ -140,9 +140,12 @@ export const llmStreamFailure: CheckImpl = {
                     return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
                 })
                 // The SDK refuses to build a client where `window` exists (a browser-like test environment), so it is
-                // taken away for the check, and every stub is undone either way.
-                vi.stubGlobal('fetch', fetchStub)
-                vi.stubGlobal('window', undefined)
+                // taken away for the check. Both are put back by hand, not with `vi.unstubAllGlobals()`, which would
+                // also undo a stub the app's own file made.
+                const globals = globalThis as Record<string, unknown>
+                const before = { fetch: globals['fetch'], window: globals['window'], hadWindow: 'window' in globals }
+                globals['fetch'] = fetchStub
+                globals['window'] = undefined
                 try {
                     const { createRealLlm } = await import('../../adapters/real/llm')
                     const { text, ended } = await consume(createRealLlm('conformance-key'), 120)
@@ -152,7 +155,9 @@ export const llmStreamFailure: CheckImpl = {
                     // Text had been delivered, so the adapter did not start the answer again.
                     expect(fetchStub).toHaveBeenCalledTimes(1)
                 } finally {
-                    vi.unstubAllGlobals()
+                    globals['fetch'] = before.fetch
+                    if (before.hadWindow) globals['window'] = before.window
+                    else delete globals['window']
                 }
             },
     },
