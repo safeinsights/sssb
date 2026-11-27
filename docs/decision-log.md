@@ -7889,7 +7889,7 @@ call ended as a killed invocation, and a provider 429 or 529 ended as the SDK's 
   work did not happen: a `timed-out` call may have been billed and a tool loop may have run some tools.
 - **Both apps' `withPortErrors` answers it with a 503, `Retry-After: retryAfterSeconds`, `{ error: 'llm-unavailable',
 reason }` and a logged warning,** the shape of the database's answer. That function is the app's, so an adopter applies
-  it by hand (a scaffold changeset for `@sssb/create`). A job handler lets it propagate; its runner decides on a rerun.
+  it by hand (a scaffold changeset for `@sssb/create`). A job handler lets it propagate, which fails the job (`runJobInProcess` records the error message).
   A stream that has begun its response cannot change the status: the error ends the iteration, and the guide says so.
 - **The fake adapter replays instantly, so it checks `timeoutMs` and nothing else.** It cannot rate-limit or time out
   without a fixture format for failures, which would be a feature of its own; the 503 mapping is proved with the error
@@ -7898,5 +7898,10 @@ reason }` and a logged warning,** the shape of the database's answer. That funct
 - **A large `maxTokens` is no longer refused locally.** The SDK refused a non-streaming call whose `max_tokens` implies
   more than ten minutes, but only when it chose the timeout; passing one skips that check, so `complete` and
   `runToolLoop` with a large `maxTokens` are now sent, bounded by the deadline instead.
+- **The kit changeset is Kind seam, Action required (a `minor`).** A call that took longer than 25 s used to succeed and now
+  fails, so an app whose job runs on a runner without the server's 30 s limit (CodeBuild) breaks if it does nothing: its
+  handler passes a longer `timeoutMs`. A request-path call, and a job the in-process runner runs inside the server's
+  function, need nothing. (First written as optional; `.changeset/README.md`'s rule is that a change an adopter who does
+  nothing breaks on is required.)
 - **Not done here.** The `llm-key` cutover row still holds the live check; its verification list gains nothing, since a
   live 429 or a slow call is not something to provoke on purpose.
