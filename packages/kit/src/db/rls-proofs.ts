@@ -296,11 +296,45 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
     expect(Number(foreignDelete.numDeletedRows)).toBe(0)
     expect(await demoOrgName()).toBe('Demo Proof Org')
 
-    // an UPDATE cannot move a team of its own tenant into another one
-    const moveOut = await orgWriteFails(alphaTenantId, (trx) =>
-        trx.updateTable('organizations').set({ tenant_id: demoTenantId }).where('id', '=', ownOrg!.id).execute(),
+    // only a team's name is a request's to change: its tenant, its slug and its id are not, and a new team's id is the
+    // default (the grants are column grants)
+    for (const change of [
+        { tenant_id: demoTenantId },
+        { slug: `alpha-moved-${orgStamp}` },
+        { id: '00000000-0000-4000-8000-000000000018' },
+    ]) {
+        const refused = await orgWriteFails(alphaTenantId, (trx) =>
+            trx.updateTable('organizations').set(change).where('id', '=', ownOrg!.id).execute(),
+        )
+        expect(/permission denied/.test(refused)).toBe(true)
+    }
+    const mintedId = await orgWriteFails(alphaTenantId, (trx) =>
+        trx
+            .insertInto('organizations')
+            .values({
+                id: '00000000-0000-4000-8000-000000000018',
+                tenant_id: alphaTenantId,
+                slug: `minted-${orgStamp}`,
+                name: 'Minted',
+            })
+            .execute(),
     )
-    expect(/row-level security/.test(moveOut)).toBe(true)
+    expect(/permission denied/.test(mintedId)).toBe(true)
+
+    // a new team cannot take a slug another tenant's team holds: the inbound mail address names a team by its slug
+    // alone, and two matches leave that team's mail unresolved
+    const { slug: demoOrgSlug } = await db
+        .selectFrom('organizations')
+        .select('slug')
+        .where('id', '=', demoOrgId)
+        .executeTakeFirstOrThrow()
+    const squat = await orgWriteFails(alphaTenantId, (trx) =>
+        trx
+            .insertInto('organizations')
+            .values({ tenant_id: alphaTenantId, slug: demoOrgSlug, name: 'Squat' })
+            .execute(),
+    )
+    expect(/row-level security/.test(squat)).toBe(true)
 
     // fail-closed: role set, no tenant context -> no write lands anywhere
     const contextlessInsert = await orgWriteFails(null, (trx) =>
