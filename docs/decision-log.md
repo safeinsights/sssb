@@ -7624,6 +7624,7 @@ Notification`, self-only), the preferences (`read NotificationPref`, self-only) 
 - **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
   who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
   of this fix.
+
 ## A bounded, fair scheduled tick (2026-11-27, `fix/bounded-drains`)
 
 safeinsights/sssb#97: `runDueSchedules` and `runDueDeliveries` drained every due row of every tenant in one tick, one
