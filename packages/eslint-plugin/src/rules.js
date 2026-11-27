@@ -21,6 +21,8 @@ import {
 } from './import-ban.js'
 import {
     a11yLiteralSelector,
+    requestOriginSelector,
+    visitorHeaderSelector,
     appCodePatterns,
     appRealAdapterDynamicSelector,
     appRealAdapterPattern,
@@ -127,6 +129,10 @@ const processEnv = syntaxBan({
 const runModeEnv = syntaxBan({
     description: "An app's real adapter never reads the run mode itself.",
     selectors: { member: runModeEnvSelector, destructure: runModeEnvDestructureSelector },
+})
+const rawRequestOrigin = syntaxBan({
+    description: "The visitor's origin and address come from @sssb/kit/adapters/edge-headers, never the raw request.",
+    selectors: { header: visitorHeaderSelector, origin: requestOriginSelector },
 })
 const a11yLiteral = syntaxBan({
     description: 'Accessible names, placeholders, titles and alt text come from the catalog, never a literal.',
@@ -841,6 +847,7 @@ export const rules = {
     'no-process-env': processEnv,
     'no-run-mode-env': runModeEnv,
     'no-literal-a11y-copy': a11yLiteral,
+    'no-raw-request-origin': rawRequestOrigin,
     'no-jsx-literals': jsxLiterals,
     'no-raw-db-handle': rawDbHandle,
     'no-direct-mkdtemp': directMkdtemp,

@@ -545,6 +545,10 @@ export class SssbApp extends Construct {
                 // it is in no VPC. A run.sh that exports HOSTNAME overrides this; the deploy pipeline's must not.
                 HOSTNAME: '0.0.0.0',
                 APP_MODE: 'real',
+                // Every request reaches the server through the distribution, whose viewer-request function writes
+                // x-forwarded-host and x-sssb-viewer-address over what a viewer sent (src/forwarded-host.js): so
+                // @sssb/kit's publicOrigin and clientAddress may believe them. Nowhere else does anything say so.
+                SSSB_EDGE: 'cloudfront',
                 NEXT_TELEMETRY_DISABLED: '1',
                 ...databaseEnv,
                 ...(storageBucket && { STORAGE_BUCKET: storageBucket.bucketName }),

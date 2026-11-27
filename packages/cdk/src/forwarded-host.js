@@ -11,6 +11,9 @@
  * behavior redirects HTTP to HTTPS. A viewer's RFC 7239 `Forwarded` is dropped, never being CloudFront's. `X-Forwarded-Proto` is CloudFront's: functions
  * may not touch it, and it removes a viewer's (CloudFront's guide, "Request and response behavior for custom
  * origins").
+ * The function also writes `x-sssb-viewer-address`, over any a viewer sent: the address CloudFront took from the
+ * connection (`event.viewer.ip`), the one entry of `X-Forwarded-For` a viewer cannot have written, which `@sssb/kit`'s
+ * `clientAddress` reads (the server is told to believe it by `SSSB_EDGE=cloudfront`, ./sssb-app.js).
  */
 export const FORWARDED_HOST_SOURCE = `function handler(event) {
     var request = event.request;
@@ -23,6 +26,11 @@ export const FORWARDED_HOST_SOURCE = `function handler(event) {
         delete headers['x-forwarded-host'];
     }
     headers['x-forwarded-port'] = { value: '443' };
+    if (event.viewer && event.viewer.ip) {
+        headers['x-sssb-viewer-address'] = { value: event.viewer.ip };
+    } else {
+        delete headers['x-sssb-viewer-address'];
+    }
     return request;
 }
 `

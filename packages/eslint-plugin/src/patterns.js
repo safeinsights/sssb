@@ -303,6 +303,40 @@ export const a11yLiteralSelector = {
         'aria-label/placeholder/title/alt carry user-visible copy — route them through next-intl (t()), never a string literal (ADR-0008).',
 }
 
+// The visitor's origin and address (safeinsights/sssb#131, #132), read only through @sssb/kit/adapters/edge-headers
+// (`publicOrigin`, `clientAddress`). Behind SssbApp, `request.url` and `nextUrl` name the server's own bind address
+// (`https://localhost:3000`), and the first X-Forwarded-For entry, X-Real-IP, CF-Connecting-IP and Forwarded hold
+// whatever the visitor wrote. So: a header that names the visitor's host or address, by its name as a string, the
+// first argument of `.get`, `.has` or `.getAll` (Headers, `headers()` from next/headers) or a computed key (Node's
+// `req.headers[...]`), in any case; and the origin, host or hostname of `new URL(<x>.url)` or of `<x>.nextUrl`. A name
+// held in a variable, or an alias of the request, gets past, as any alias does: the fence catches the obvious form.
+// Path and search parameters of the same URLs are right and stay allowed.
+const VISITOR_HEADER =
+    '/^(host|forwarded|x-forwarded-(for|host|proto|port)|x-real-ip|x-client-ip|cf-connecting-ip|true-client-ip|' +
+    'cloudfront-viewer-address|x-sssb-viewer-address)$/i'
+const HEADER_READ = 'CallExpression[callee.type="MemberExpression"][callee.property.name=/^(get|has|getAll)$/]'
+export const visitorHeaderSelector = {
+    selector:
+        `:matches(${HEADER_READ}[arguments.0.value=${VISITOR_HEADER}], ` +
+        `${HEADER_READ}[arguments.0.type="TemplateLiteral"][arguments.0.expressions.length=0]` +
+        `[arguments.0.quasis.0.value.cooked=${VISITOR_HEADER}], ` +
+        `MemberExpression[computed=true][property.value=${VISITOR_HEADER}])`,
+    message:
+        "Read the visitor's address with clientAddress(request), and their origin with publicOrigin(request), from " +
+        '@sssb/kit/adapters/edge-headers, never from a forwarded header: behind CloudFront the first X-Forwarded-For ' +
+        "entry, X-Real-IP, CF-Connecting-IP and Forwarded hold what the visitor wrote, and Host is the server's own.",
+}
+export const requestOriginSelector = {
+    selector:
+        'MemberExpression[property.name=/^(origin|host|hostname)$/]:matches(' +
+        '[object.type="NewExpression"][object.callee.name="URL"][object.arguments.length=1]' +
+        '[object.arguments.0.property.name="url"], [object.property.name="nextUrl"])',
+    message:
+        'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
+        "request's own URL names the server's bind address (https://localhost:3000), not the app's. Its path and " +
+        'search parameters are right as they are.',
+}
+
 // Every pattern frozen, its lists included: the rules read them when they run, and an app's config is code that could
 // reach this module by its file path.
 for (const pattern of [
@@ -324,6 +358,8 @@ for (const pattern of [
     runModeEnvDestructureSelector,
     appRealAdapterDynamicSelector,
     a11yLiteralSelector,
+    visitorHeaderSelector,
+    requestOriginSelector,
 ]) {
     if (pattern.group) Object.freeze(pattern.group)
     Object.freeze(pattern)

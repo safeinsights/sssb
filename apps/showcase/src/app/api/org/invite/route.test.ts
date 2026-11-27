@@ -50,6 +50,25 @@ describe('POST /api/org/invite', () => {
         expect(h.sendOrgInvite).toHaveBeenCalledWith(expect.objectContaining({ email: 'invitee@example.test' }))
     })
 
+    test("builds the accept link on the app's public origin, never on request.url's host", async () => {
+        vi.stubEnv('SSSB_EDGE', 'cloudfront')
+        try {
+            // Behind SssbApp, Next's request.url names the server's own bind address.
+            const body = JSON.stringify({ email: 'invitee@example.test', role: 'member' })
+            const request = new Request('https://localhost:3000/api/org/invite', {
+                method: 'POST',
+                body,
+                headers: { 'x-forwarded-host': 'app.example.org' },
+            })
+            expect((await POST(request)).status).toBe(200)
+            expect(h.sendOrgInvite).toHaveBeenCalledWith(
+                expect.objectContaining({ baseUrl: 'https://app.example.org' }),
+            )
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
+
     test.each([
         'invitee@example.test, attacker@evil.example',
         'invitee@example.test;attacker@evil.example',

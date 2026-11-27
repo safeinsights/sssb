@@ -430,6 +430,9 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
             expect(server.env['HOSTNAME']).toBe('0.0.0.0')
             expect(functionUrlOriginProblems(all, assembly)).toEqual([])
             expect(viewerProblems(all)).toEqual([])
+            // The server believes the headers that function writes (@sssb/kit's publicOrigin and clientAddress) only
+            // because every behavior that reaches it runs the function, which viewerProblems has just held.
+            expect(server.env['SSSB_EDGE']).toBe('cloudfront')
             expect(securityHeadersProblems(all)).toEqual([])
 
             // The production fail-closed guard (packages/kit/src/adapters/index.ts) is irrelevant only while
@@ -1378,8 +1381,12 @@ describe("the forwarded-host function's name", () => {
 describe('the forwarded-host function', () => {
     /** The function as CloudFront's JS runtime loads it: a script defining `handler`, run alone. */
     const handler = /** @type {(event: any) => any} */ (vm.runInNewContext(`${FORWARDED_HOST_SOURCE}\nhandler`, {}))
-    /** @param {Record<string, { value: string, multiValue?: { value: string }[] }>} headers */
-    const request = (headers) => handler({ request: { method: 'GET', uri: '/en', querystring: {}, headers } }).headers
+    /**
+     * @param {Record<string, { value: string, multiValue?: { value: string }[] }>} headers
+     * @param {{ ip?: string } | null} [viewer]
+     */
+    const request = (headers, viewer = { ip: '198.51.100.7' }) =>
+        handler({ viewer, request: { method: 'GET', uri: '/en', querystring: {}, headers } }).headers
 
     it('overwrites a forged x-forwarded-host and port with the host CloudFront received and 443', () => {
         const headers = request({
@@ -1408,6 +1415,25 @@ describe('the forwarded-host function', () => {
             value: 'd111.cloudfront.net',
         })
         expect(request({ 'x-forwarded-host': { value: 'evil.example' } })).not.toHaveProperty(['x-forwarded-host'])
+    })
+
+    it("overwrites a forged x-sssb-viewer-address with the viewer's address, and leaves X-Forwarded-For alone", () => {
+        const headers = request(
+            {
+                host: { value: 'app.example.org' },
+                'x-sssb-viewer-address': { value: '1.2.3.4', multiValue: [{ value: '1.2.3.4' }, { value: '5.6.7.8' }] },
+                'x-forwarded-for': { value: '1.2.3.4' },
+            },
+            { ip: '2001:db8::1' },
+        )
+        expect(headers['x-sssb-viewer-address']).toEqual({ value: '2001:db8::1' })
+        expect(headers['x-forwarded-for']).toEqual({ value: '1.2.3.4' })
+    })
+
+    it('drops a forged x-sssb-viewer-address when the event names no viewer address', () => {
+        const forged = { host: { value: 'app.example.org' }, 'x-sssb-viewer-address': { value: '1.2.3.4' } }
+        expect(request(forged, null)).not.toHaveProperty(['x-sssb-viewer-address'])
+        expect(request(forged, {})).not.toHaveProperty(['x-sssb-viewer-address'])
     })
 })
 
