@@ -93,6 +93,7 @@ describe('every mutating API route is authorized', () => {
             'org/invite/route.ts',
             'service/jobs/route.ts',
             'webhooks/jobs/route.ts',
+            'webhooks/wharf-signals/route.ts',
             'simulator/reset/route.ts',
         ]) {
             expect([...fixtureRels], rel).toContain(rel)
