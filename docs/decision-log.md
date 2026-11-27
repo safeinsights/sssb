@@ -8142,6 +8142,7 @@ safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
   stateful client's default, which this is not), so the request is aborted, and the adapter races
   the read against the same bound, so the page is held to it whatever the client does. Late answers and failures are
   dropped. Not measured against a live PostHog (cutover row `analytics`).
+
 ## The starter's e2e on a production build, and the destructive suite's budgets from CI's numbers (2026-11-27, `fix/e2e-prod-build`)
 
 `safeinsights/sssb#109` and `safeinsights/sssb#100`. SSSB's reusable workflow sets `E2E_BUILD=1` on every e2e shard, and
