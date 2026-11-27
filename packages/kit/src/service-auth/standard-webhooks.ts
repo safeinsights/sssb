@@ -45,14 +45,14 @@ import { serverSecretEnvName } from './secret-env'
  */
 
 /** The Standard Webhooks header names. */
-export const STANDARD_WEBHOOK_HEADERS = {
+const STANDARD_WEBHOOK_HEADERS = {
     id: 'webhook-id',
     timestamp: 'webhook-timestamp',
     signature: 'webhook-signature',
 } as const
 
 /** The same headers as a Svix sender names them, read when no `webhook-*` header is present. */
-export const SVIX_WEBHOOK_HEADERS = { id: 'svix-id', timestamp: 'svix-timestamp', signature: 'svix-signature' } as const
+const SVIX_WEBHOOK_HEADERS = { id: 'svix-id', timestamp: 'svix-timestamp', signature: 'svix-signature' } as const
 
 /**
  * Where verified messages are remembered until their window closes, so the same signed message is not accepted

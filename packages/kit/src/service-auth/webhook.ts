@@ -13,7 +13,7 @@ import { serverSecretEnvName } from './secret-env'
 export const WEBHOOK_SECRET_HEADER = 'x-sssb-webhook-secret'
 
 /** The environment variable real mode reads the shared secret from when a caller names none. */
-export const DEFAULT_WEBHOOK_SECRET_ENV = 'WEBHOOK_SECRET'
+const DEFAULT_WEBHOOK_SECRET_ENV = 'WEBHOOK_SECRET'
 
 export interface WebhookSecretOptions {
     /**
