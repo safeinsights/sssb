@@ -43,6 +43,18 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
         // An origin that is not the request's.
         { code: 'const o = new URL(link).origin' },
         { code: 'const o = window.location.origin' },
+        // A `.url` or `.nextUrl` on something not named like the request is someone else's URL: reading its origin,
+        // building on it, or passing it as a base is correct code (an allowlist check, a pagination link, a webhook).
+        { code: "if (new URL(body.url).hostname !== 'ok.example') throw new Error('refused')" },
+        { code: 'const loc = new URL(response.url).origin' },
+        { code: 'const o = new URL(webhook.url).host' },
+        { code: 'const { origin } = new URL(row.url)' },
+        { code: 'const o = data.nextUrl.origin' },
+        { code: "const next = new URL('?page=2', upstream.url)" },
+        { code: "const next = new URL('?page=2', page.nextUrl)" },
+        { code: 'sendOrgInvite({ baseUrl: config.url })' },
+        { code: 'const o = new URL(pullRequest.url).origin' },
+        { code: 'const o = new URL(accessRequest.url).host' },
     ],
     invalid: [
         ...[
@@ -82,6 +94,12 @@ ruleTester.run('sssb/no-raw-request-origin', sssb.rules['no-raw-request-origin']
         },
         { code: "const link = new URL('/en', request.nextUrl)", errors: [{ messageId: 'origin' }] },
         { code: 'sendOrgInvite({ baseUrl: request.url })', errors: [{ messageId: 'origin' }] },
+        // The request under the other names it goes by.
+        { code: 'const o = new URL(ctx.request.url).origin', errors: [{ messageId: 'origin' }] },
+        { code: 'const o = nextRequest.nextUrl.host', errors: [{ messageId: 'origin' }] },
+        { code: 'const o = new URL(_req.url).origin', errors: [{ messageId: 'origin' }] },
+        { code: "const link = new URL('/en', ctx.req.url)", errors: [{ messageId: 'origin' }] },
+        { code: 'sendOrgInvite({ baseUrl: req.url })', errors: [{ messageId: 'origin' }] },
         // Outside the proxy, Next does not relativize a redirect: a route handler's would send the visitor to the
         // server's bind address.
         ...[
