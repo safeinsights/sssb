@@ -7641,10 +7641,10 @@ call ended as a killed invocation, and a provider 429 or 529 ended as the SDK's 
   which also aborts the request. Two places where an abort does not arrive as the SDK's `APIUserAbortError`, both
   mapped to `timed-out`: the platform's own `AbortError` when the deadline passes while a non-streaming body is being
   read, and a stream whose iteration the SDK ends quietly, with no error, when the deadline passes while the consumer is
-  busy between chunks (the adapter checks the stream's `aborted` after the loop, so a cut-off answer never reads as a
-  complete one). Rejected: `AbortSignal.timeout`, which a fake clock does not drive.
+  busy between chunks (the adapter awaits the stream's `done()` after the loop, which throws what ended it, so a cut-off answer
+  never reads as a complete one: a deadline, a mid-stream overload and a dropped connection alike). Rejected: `AbortSignal.timeout`, which a fake clock does not drive.
 - **25 s by default.** The function has 30 s and a route needs a few seconds to answer; a call still waiting at 25 s ends
-  as an error the route turns into a 503, where one that waits to 30 s ends as a killed invocation and a gateway's 502.
+  as an error the route turns into a 503, where one that waits to 30 s ends as a killed invocation.
   Exported as `LLM_DEFAULT_TIMEOUT_MS` from `core/llm-timeout.ts`, which also holds `llmTimeoutMs`, shared with the fake
   adapter so a bad value (`0`, `NaN`, `Infinity`, a string, more than 2^31 - 1 ms, which Node's timers fire after 1 ms)
   is a `RangeError` in both: a timer would read `0` as "now" and `Infinity` as "never".
@@ -7652,16 +7652,17 @@ call ended as a killed invocation, and a provider 429 or 529 ended as the SDK's 
   provider's whole `Retry-After`, so a 429 that asks for 60 s idled the call to its deadline and ended as `timed-out`
   with the provider's figure lost. The adapter repeats a call the SDK's policy would have (408, 409, 429, 5xx, a dropped
   connection) plus a rate limit or overload however it arrived, never one marked `x-should-retry: false`, waiting the
-  provider's `Retry-After-Ms` or `Retry-After`, else 0.5 s doubling to 8 s, **only when that wait is less than what is
-  left of the deadline**; otherwise it answers at once with `rate-limited` or `overloaded` and the provider's figure.
-  A stream starts again only if it has delivered no text. One retry because a second would spend most of a 25 s
+  provider's `Retry-After-Ms` or `Retry-After`, else 0.5 s doubling to 8 s, **only when twice that wait is less than
+  what is left of the deadline**, so the retry gets at least as long as the wait (a provider wait that only just fit was
+  slept almost whole and then left the retry no time: found in review); otherwise it answers at once with `rate-limited` or `overloaded` and the provider's figure.
+  A stream starts again only if it has delivered no text. One retry per request to the provider (a tool loop's turns each get one; the deadline bounds the total), because a second would spend most of a 25 s
   deadline on a provider that is not answering; `RealLlmOptions.maxRetries` changes it for an app that builds the adapter
   itself. Rejected: the SDK's retries with a signal (the loss above); a retry loop that keeps the last provider error
   and prefers it after a timeout, which would still idle the server for nothing.
 - **A job's call may have longer, per request, not by default.** `timeoutMs` is an optional field of `LlmRequest` and
   `LlmToolLoopRequest`: the handler knows its work, the adapter cannot tell a job's call from a route's (both get the
-  same `llm` from the registry), and the runner's own limit differs (the CodeBuild runner outlives the function; the
-  in-process runner runs inside it, so there 25 s stays right). Rejected: a second port instance for jobs, which every
+  same `llm` from the registry), and the runner's own limit differs (the in-process runner runs inside the server's invocation and shares its limit, so there 25 s stays right:
+  `packages/kit/src/adapters/real/jobs-in-process.ts:28-32` says work that may outrun it belongs on the CodeBuild runner). Rejected: a second port instance for jobs, which every
   adopter's job context would then have to wire; an environment variable, which would change `required-env.json` for a
   figure most deployments leave alone and could not differ between two calls of one process. An app that builds the
   adapter itself sets the default with `createRealLlm(key, { timeoutMs })`, as `apps/showcase/scripts/llm-record.ts`

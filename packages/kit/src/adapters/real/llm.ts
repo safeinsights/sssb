@@ -16,8 +16,9 @@ export interface RealLlmOptions {
     /** The deadline of a call that names none, in milliseconds. Default `LLM_DEFAULT_TIMEOUT_MS`, 25 s. */
     timeoutMs?: number
     /**
-     * How often the adapter repeats a call the provider refused (429, 529, 5xx), that dropped its connection or whose
-     * stream failed before its first text, when the wait fits in what is left of the deadline. Default 1.
+     * How often the adapter repeats each request to the provider that it refused (429, 529, 5xx), that dropped its
+     * connection or whose stream failed before its first text, when the wait fits in what is left of the deadline (a
+     * tool loop's turns are each such a request). Default 1.
      */
     maxRetries?: number
 }
@@ -32,9 +33,9 @@ interface CallLimits {
  * Every call runs under one deadline (`timeoutMs` on the request, else `options.timeoutMs`, else 25 s), enforced with
  * an abort signal on each SDK call (the SDK's own `timeout` is per attempt, and its default is ten minutes), and on
  * the app's `execute` in a tool loop, which the loop stops waiting for when the deadline passes. The SDK's own retries
- * are off, because it sleeps a provider's whole `Retry-After` and so hides it: the adapter retries itself, once by
- * default, only when the wait fits in what is left of the deadline, and otherwise answers at once with the provider's
- * own figure. What the provider says (429, 529, a mid-stream overload) or a call that outruns the deadline becomes
+ * are off, because it sleeps a provider's whole `Retry-After` and so hides it: the adapter retries itself, once per
+ * request to the provider by default, only when the wait is less than half of what is left of the deadline, and
+ * otherwise answers at once with the provider's own figure. What the provider says (429, 529, a mid-stream overload) or a call that outruns the deadline becomes
  * `LlmUnavailableError` (`@sssb/kit/ports/errors`); any other error, the app's `execute` throwing included, passes
  * through as it is. `safeinsights/sssb#98`, `docs/decision-log.md`, "The LLM adapter has a deadline".
  */

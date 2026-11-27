@@ -20,8 +20,9 @@ export interface LlmRequest {
      * The deadline for the whole call, in milliseconds: the adapter's retries, a stream's last chunk, and for a tool
      * loop every turn and every `execute` between them. Past it the call throws `LlmUnavailableError('timed-out')`.
      * Defaults to 25 s (`LLM_DEFAULT_TIMEOUT_MS`), under the 30 s the app server's function has, so a route answers
-     * instead of being killed. A job handler, where no person waits, passes a longer one; a request that passes more
-     * than its function's own limit gets the kill. Not a positive finite number: a `RangeError`.
+     * instead of being killed. A job handler on the CodeBuild runner, where no person waits, passes a longer one; a
+     * request, or a job the in-process runner runs, that passes more than its function's own limit gets the kill. Not
+     * a positive number of milliseconds a timer can wait (at most 2^31 - 1): a `RangeError`.
      */
     timeoutMs?: number
 }
@@ -80,8 +81,9 @@ export interface LlmToolLoopRequest {
      * The deadline for the whole call, in milliseconds: the adapter's retries, a stream's last chunk, and for a tool
      * loop every turn and every `execute` between them. Past it the call throws `LlmUnavailableError('timed-out')`.
      * Defaults to 25 s (`LLM_DEFAULT_TIMEOUT_MS`), under the 30 s the app server's function has, so a route answers
-     * instead of being killed. A job handler, where no person waits, passes a longer one; a request that passes more
-     * than its function's own limit gets the kill. Not a positive finite number: a `RangeError`.
+     * instead of being killed. A job handler on the CodeBuild runner, where no person waits, passes a longer one; a
+     * request, or a job the in-process runner runs, that passes more than its function's own limit gets the kill. Not
+     * a positive number of milliseconds a timer can wait (at most 2^31 - 1): a `RangeError`.
      */
     timeoutMs?: number
     /** APP-supplied tool executor. The port relays the model's call and takes back the result
