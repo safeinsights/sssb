@@ -51,6 +51,17 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `@sssb/kit/core/jobs`. `'failure'` notifies only a failed job (one the in-process runner's sweep fails as lost included) and `'never'` nothing; a kind not
   named, and an app with no export, is `'always'`, and the framework's own kinds never notify. A refused run makes no
   `listMembers` call. If the static demo starts the kind, pass the same map as `useDemoWorld`'s `jobNotify`.
+- A job kind is tried once unless the seam's optional `jobRetry` export in `src/app-config/jobs.ts` lets it retry:
+  `export const jobRetry: Partial<Record<AppJobKind, JobRetry>> = { 'sweep-items': { attempts: 3, delaysMs: [60_000, 600_000] } }`,
+  with `JobRetry` from `@sssb/kit/core/jobs` (at most 10 attempts and delays of at most 30 days, or the entry is ignored
+  and the kind runs once; with no `delaysMs`, the webhook deliveries' backoff).
+  Each attempt is a job row of its own, queued until its delay has passed (a service caller's job list leaves it out
+  until then), and the scheduled tick starts it, so the tick's period (five minutes by default) is the floor under every delay. A retried handler runs again over whatever
+  the failed attempt left behind: a kind that retries must be idempotent, and keys its side effects on
+  `ctx.firstJobId`, the same on every attempt (`ctx.attempt` says which one it is). Only the last attempt's outcome
+  notifies, so `jobNotify`'s `'failure'` means a failure with no attempts left. A build the CodeBuild runner loses without
+  posting its webhook is never retried: nothing watches CodeBuild for a lost build. If the static demo starts the kind,
+  pass the same map as `useDemoWorld`'s `jobRetry`.
 - A route that submits a job for a person passes `requestedBy: user.id` to `submitJob` (`@sssb/kit/db/jobs`): when the
   team has no admin to tell (a fixed org source, `params.auth`, has none), the job's end reaches the person who started
   it, and a job submitted without one reaches no one. Under a fixed org source SSSB's `Job` rule admits no one (its

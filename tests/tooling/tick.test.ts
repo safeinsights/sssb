@@ -198,6 +198,22 @@ describe('summarizeTick', () => {
         ).toContain('stopped on its bound, left for the next tick: at least 0 schedule(s), 0 delivery(ies)')
     })
 
+    it('says what the job-retry drain did when the route reports one', () => {
+        const body = {
+            ...GOOD_BODY,
+            deferred: 0,
+            stoppedBy: null,
+            retries: { started: 2, failed: 1, deferred: 0, stoppedBy: null },
+        }
+        expect(summarizeTick(body)).toBe(
+            'ticked: 2 job(s) spawned from due schedules, 0 schedule(s) failed; job retries: 2 started, 1 failed to start; webhook deliveries: 1 delivered, 0 failed, 0 dead',
+        )
+        const quiet = { ok: true, spawned: 0, failed: 0, deliveries: { delivered: 0, failed: 0, dead: 0 } }
+        expect(tickDidWork({ ...quiet, retries: { started: 1, failed: 0 } })).toBe(true)
+        expect(tickDidWork({ ...quiet, retries: { started: 0, failed: 0, stoppedBy: 'time' } })).toBe(true)
+        expect(tickDidWork({ ...quiet, retries: { started: 0, failed: 0, stoppedBy: null } })).toBe(false)
+    })
+
     it('knows whether anything moved', () => {
         expect(tickDidWork(GOOD_BODY)).toBe(true)
         expect(tickDidWork({ ok: true, spawned: 0, failed: 0, deliveries: { delivered: 0, failed: 0, dead: 0 } })).toBe(

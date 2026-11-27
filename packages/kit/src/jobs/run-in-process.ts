@@ -18,6 +18,11 @@ export interface JobRunPorts {
     llm: LlmPort
     auth: AuthPort
     resolveLocale?: ((userId: string) => Locale | undefined) | undefined
+    /**
+     * The clock a failure's retry delay is measured from: the simulated world's (so a demo whose clock was moved reaches
+     * the retry by moving it again), else the real one.
+     */
+    now?: (() => Date) | undefined
 }
 
 /**
@@ -51,6 +56,7 @@ export async function runJobInProcess(
         throw error
     }
     if (!isJobKind(job.kind)) {
+        // An unknown kind retries nothing: `jobRetry` names only registered kinds.
         await recordJobStatus(ports.db, job.tenantId, job.id, 'failed', { error: `unknown job kind: ${job.kind}` })
         return true
     }
@@ -65,17 +71,22 @@ export async function runJobInProcess(
             tenantId: job.tenantId,
             orgId: job.orgId,
             jobId: job.id,
+            attempt: job.attempt ?? 1,
+            firstJobId: job.firstJobId ?? job.id,
         })
         outcome = { status: 'completed', resultKey }
     } catch (error) {
         outcome = { status: 'failed', error: error instanceof Error ? error.message : String(error) }
     }
+    const now = ports.now?.()
     await recordJobStatus(
         ports.db,
         job.tenantId,
         job.id,
         outcome.status,
-        outcome.status === 'completed' ? { resultKey: outcome.resultKey } : { error: outcome.error },
+        outcome.status === 'completed'
+            ? { resultKey: outcome.resultKey }
+            : { error: outcome.error, ...(now && { now }) },
     )
     await notify(outcome.status)
     return true

@@ -473,7 +473,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 146 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 90 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 92 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -727,13 +727,14 @@ the showcase carries the same route over the same function.
   yours, as for your other secrets. Without the option nothing in a deployment ticks the route: the `scheduled-tick`
   row of the [cutover checklist](cutover-checklist.md).
 - **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick
-  spawns at most 100 due schedules, in its first 8 seconds, and attempts at most 100 due webhook deliveries, starting
-  none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes one due row from each tenant in
-  turn, the tenants in a fresh random order every tick, so one tenant's backlog or slow endpoint cannot keep another's
-  work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the route's JSON says how much it left
-  (`deferred`, at least that many, for schedules and inside `deliveries`) and why (`stoppedBy`: `'items'`, `'time'` or
-  `null`). A server with a different limit passes its own bounds:
-  `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional.
+  spawns at most 100 due schedules, in its first 6 seconds, starts at most 100 due job retries (a failed attempt of a
+  kind whose `jobRetry` lets it retry, once its delay has passed), none after 10 seconds, and attempts at most 100 due
+  webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes one due
+  row from each tenant in turn, the tenants in a fresh random order every tick, so one tenant's backlog or slow endpoint
+  cannot keep another's work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the
+  route's JSON says how much it left (`deferred`, at least that many, for schedules and inside `retries` and
+  `deliveries`) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
+  bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional.
 - **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler. Its Simulator panel's Jobs tab
   advances the world clock and runs what is then due, or runs what is due without moving it, once per click. To run
   the route itself, three ways to ask:

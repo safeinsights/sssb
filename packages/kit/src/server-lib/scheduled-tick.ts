@@ -1,6 +1,12 @@
 import { worldNow } from '../adapters/fake/clock'
 import { db, isSimulated, jobs } from '../adapters/index'
-import { DEFAULT_DRAIN_MAX_ITEMS, DELIVERIES_WINDOW_MS, SCHEDULES_WINDOW_MS } from '../db/drain-budget'
+import {
+    DEFAULT_DRAIN_MAX_ITEMS,
+    DELIVERIES_WINDOW_MS,
+    RETRIES_WINDOW_MS,
+    SCHEDULES_WINDOW_MS,
+} from '../db/drain-budget'
+import { runDueRetries } from '../db/jobs'
 import { runDueSchedules } from '../db/schedules'
 import { runDueDeliveries } from '../db/webhooks'
 import { dispatchWebhook } from './webhook-dispatch'
@@ -19,13 +25,14 @@ import { dispatchWebhook } from './webhook-dispatch'
  * (real time plus the offset a demo advanced), so a tick honours a clock the demo moved. `worldNow()` is called
  * only behind `isSimulated`, so that offset is structurally unreachable in a real build.
  *
- * The same tick drains due webhook deliveries: a scheduled digest that spawns a job whose status change
- * enqueues a delivery, and any retry whose backoff has elapsed, both fire from one tick.
+ * The same tick starts due job retries (safeinsights/sssb#135: a failed attempt of a kind that retries, once its delay
+ * has run out) and drains due webhook deliveries: a scheduled digest that spawns a job whose status change enqueues a
+ * delivery, and any delivery retry whose backoff has elapsed, both fire from one tick.
  *
  * A tick is BOUNDED (safeinsights/sssb#97): each drain starts at most a set number of rows and none after its window,
  * taking each tenant's due rows in turn so one tenant's backlog or slow endpoint cannot starve the rest
  * (../db/drain-budget.ts). What a tick leaves stays due and the next tick takes it; the result says how much was left
- * (`deferred`) and why (`stoppedBy`), for schedules and for deliveries.
+ * (`deferred`) and why (`stoppedBy`), for schedules, for job retries and for deliveries.
  */
 export interface ScheduledTickResult {
     /** Jobs spawned from due schedules. */
@@ -40,6 +47,8 @@ export interface ScheduledTickResult {
     deferred: number
     /** What stopped the schedules drain early: `'items'` (its row bound), `'time'` (its window), or null. */
     stoppedBy: 'items' | 'time' | null
+    /** What the job-retry drain did, and left (`runDueRetries`'s own result): retries started, and ones that failed to. */
+    retries: Awaited<ReturnType<typeof runDueRetries>>
     /** What the delivery drain did, and left (`runDueDeliveries`'s own result). */
     deliveries: Awaited<ReturnType<typeof runDueDeliveries>>
 }
@@ -51,23 +60,29 @@ export interface ScheduledTickResult {
 export interface TickBudget {
     /** The most due schedules one tick spawns. */
     maxSchedules: number
+    /** The most due job retries one tick starts. */
+    maxRetries: number
     /** The most due webhook deliveries one tick attempts. */
     maxDeliveries: number
     /** Milliseconds from the tick's start after which no schedule is spawned. */
     schedulesWindowMs: number
+    /** Milliseconds from the tick's start after which no job retry is started. */
+    retriesWindowMs: number
     /** Milliseconds from the tick's start after which no delivery is attempted. */
     deliveriesWindowMs: number
 }
 
 const DEFAULT_TICK_BUDGET: TickBudget = {
     maxSchedules: DEFAULT_DRAIN_MAX_ITEMS,
+    maxRetries: DEFAULT_DRAIN_MAX_ITEMS,
     maxDeliveries: DEFAULT_DRAIN_MAX_ITEMS,
     schedulesWindowMs: SCHEDULES_WINDOW_MS,
+    retriesWindowMs: RETRIES_WINDOW_MS,
     deliveriesWindowMs: DELIVERIES_WINDOW_MS,
 }
 
 /**
- * Runs one tick: the jobs port's sweep, then the due schedules, then the due deliveries, each drain bounded by
+ * Runs one tick: the jobs port's sweep, then the due schedules, then the due job retries, then the due deliveries, each drain bounded by
  * `options.budget` (the defaults, for any value left out) and fair across tenants. `options.clock` is the wall clock
  * the windows are read against, `Date.now` unless a test passes its own; it never sets "now" for what is due. `options.random`
  * is the draws that shuffle the tenants and their rows, `Math.random` unless a test passes its own.
@@ -85,8 +100,10 @@ export async function runScheduledTick(
     const given = options.budget ?? {}
     const budget: TickBudget = {
         maxSchedules: given.maxSchedules ?? DEFAULT_TICK_BUDGET.maxSchedules,
+        maxRetries: given.maxRetries ?? DEFAULT_TICK_BUDGET.maxRetries,
         maxDeliveries: given.maxDeliveries ?? DEFAULT_TICK_BUDGET.maxDeliveries,
         schedulesWindowMs: given.schedulesWindowMs ?? DEFAULT_TICK_BUDGET.schedulesWindowMs,
+        retriesWindowMs: given.retriesWindowMs ?? DEFAULT_TICK_BUDGET.retriesWindowMs,
         deliveriesWindowMs: given.deliveriesWindowMs ?? DEFAULT_TICK_BUDGET.deliveriesWindowMs,
     }
     const now = isSimulated ? worldNow() : new Date()
@@ -100,19 +117,46 @@ export async function runScheduledTick(
             `SSSB tick: the jobs port's sweep failed: ${error instanceof Error ? error.message : String(error)}`,
         )
     }
-    // Both windows run from the tick's start, so the sweep and the schedules count against the deliveries' window too,
-    // and deliveries keep the part of it that schedules leave.
+    // Every window runs from the tick's start, so the sweep and the drains before count against a later drain's window
+    // too, and each keeps the part of its window the ones before it leave.
     const { spawned, failed, deferred, stoppedBy } = await runDueSchedules(db, jobs, now, {
         maxItems: budget.maxSchedules,
         deadline: startedAt + budget.schedulesWindowMs,
         clock,
         ...(options.random && { random: options.random }),
     })
+    const retries = await runDueRetries(
+        db,
+        jobs,
+        now,
+        {
+            maxItems: budget.maxRetries,
+            deadline: startedAt + budget.retriesWindowMs,
+            clock,
+            ...(options.random && { random: options.random }),
+        },
+        notifyRetryEnd,
+    )
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook, {
         maxItems: budget.maxDeliveries,
         deadline: startedAt + budget.deliveriesWindowMs,
         clock,
         ...(options.random && { random: options.random }),
     })
-    return { spawned, failed, deferred, stoppedBy, deliveries }
+    return { spawned, failed, deferred, stoppedBy, retries, deliveries }
+}
+
+/**
+ * A retry whose start threw has been recorded failed; when it was the last attempt, that is the job's end, so it notifies
+ * as every runner's failure does (`notifyJobTerminal` skips one that armed a further attempt). The Simulator's clock and
+ * run-due controls pass it to `runDueRetries` too. Loaded when it is needed:
+ * the notifier reaches the adapter registry's auth port, which a tick that starts every retry never touches.
+ */
+export async function notifyRetryEnd(input: { tenantId: string; jobId: string }): Promise<void> {
+    const [{ notifyJobTerminal }, { makeNotifyDeps }, { auth }] = await Promise.all([
+        import('./notify'),
+        import('./notify-deps'),
+        import('../adapters/index'),
+    ])
+    await notifyJobTerminal(await makeNotifyDeps(), auth, { ...input, status: 'failed' })
 }
