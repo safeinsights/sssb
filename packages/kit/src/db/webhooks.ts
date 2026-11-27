@@ -15,6 +15,15 @@ import type { DbPort } from '../ports/db'
 // TYPE-ONLY import (erased): keeps packages/kit/src/db free of a runtime @/adapters dependency — see WebhookDispatch.
 import type { WebhookDispatch } from '../server-lib/webhook-dispatch'
 import { recordAuditEvent } from './audit'
+import {
+    DELIVERIES_WINDOW_MS,
+    type DrainBudget,
+    type DrainLeft,
+    drainBudgetOrDefault,
+    drainFairly,
+    drainMayStart,
+    type TenantQueue,
+} from './drain-budget'
 import { family } from './family'
 
 /** timestamptz comes back from both engines as a Date; local (avoids a jobs.ts import cycle since
@@ -72,7 +81,8 @@ export async function enqueueWebhookEvent(
 // are both FORCE-RLS and a raw cross-tenant scan only *appears* to work on pglite (build-notes).
 // ---------------------------------------------------------------------------
 
-export interface DrainResult {
+/** What one delivery drain did, and what it left for a later tick (`deferred`, `stoppedBy`: ./drain-budget.ts). */
+export interface DrainResult extends DrainLeft {
     delivered: number
     failed: number
     dead: number
@@ -92,38 +102,58 @@ export interface DrainResult {
  * Delivery is therefore AT-LEAST-ONCE (a crash between claim and record re-sends at the backoff time);
  * the envelope carries the delivery id so consumers dedupe. An audit event is written on first success
  * (webhook.delivered) and on death (webhook.dead) — the durable, append-only webhook record.
+ *
+ * BOUND. One call attempts at most `budget.maxItems` deliveries and starts none after `budget.deadline`, taking each
+ * tenant's due deliveries in turn, oldest due first (./drain-budget.ts), so one tenant's slow endpoint or long backlog
+ * cannot hold another's deliveries past the tick. Without a budget it uses `DEFAULT_DRAIN_MAX_ITEMS` and a deadline
+ * `DELIVERIES_WINDOW_MS` from the call. The result says how many due deliveries it left for a later tick and why.
  */
-export async function runDueDeliveries(db: DbPort, now: Date, dispatch: WebhookDispatch): Promise<DrainResult> {
+export async function runDueDeliveries(
+    db: DbPort,
+    now: Date,
+    dispatch: WebhookDispatch,
+    budget?: DrainBudget,
+): Promise<DrainResult> {
+    const limit = drainBudgetOrDefault(budget, DELIVERIES_WINDOW_MS)
+    const counts = { delivered: 0, failed: 0, dead: 0 }
+    // BOUNDED AND FAIR (./drain-budget.ts, safeinsights/sssb#97): at most `limit.maxItems` attempts, none started
+    // after its deadline, one tenant's delivery at a time in turn. A due delivery left over is not claimed, so the
+    // next tick lists it again.
+    if (!drainMayStart(limit)) return { ...counts, deferred: 0, stoppedBy: 'time' }
     await db.ready()
     const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
-    const due: { id: string; tenant_id: string }[] = []
+    const queues: TenantQueue<{ id: string }>[] = []
     for (const tenant of tenants) {
         const rows = await db.withTenant(tenant.id, (trx) =>
             trx
                 .selectFrom('webhook_deliveries')
-                .select('id')
+                .select(['id', 'next_attempt_at'])
                 .where('status', 'in', ['pending', 'failed'])
                 .where('next_attempt_at', '<=', now)
                 .orderBy('next_attempt_at', 'asc')
+                .orderBy('id', 'asc')
+                .limit(limit.maxItems + 1)
                 .execute(),
         )
-        due.push(...rows.map((r) => ({ id: r.id, tenant_id: tenant.id })))
+        queues.push({
+            tenantId: tenant.id,
+            rows: rows.map((r) => ({ id: r.id, due: new Date(r.next_attempt_at).getTime() })),
+        })
     }
 
-    const result: DrainResult = { delivered: 0, failed: 0, dead: 0 }
-    for (const delivery of due) {
+    const left = await drainFairly(queues, limit, async (row, tenantId) => {
         try {
-            const outcome = await deliverOne(db, now, delivery, dispatch)
-            if (outcome === 'delivered') result.delivered += 1
-            else if (outcome === 'failed') result.failed += 1
-            else if (outcome === 'dead') result.dead += 1
+            const outcome = await deliverOne(db, now, { id: row.id, tenant_id: tenantId }, dispatch)
+            if (outcome === 'delivered') counts.delivered += 1
+            else if (outcome === 'failed') counts.failed += 1
+            else if (outcome === 'dead') counts.dead += 1
         } catch {
             // A bad row must not stall the rest — its next_attempt_at may not have advanced, so it's
             // retried on the next tick (the runDueSchedules fault-isolation precedent).
-            result.failed += 1
+            counts.failed += 1
         }
-    }
-    return result
+    })
+    return { ...counts, ...left }
 }
 
 interface Claim {
