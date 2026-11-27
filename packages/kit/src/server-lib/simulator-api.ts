@@ -1,4 +1,5 @@
 import { findOrg } from '@sssb/app-config/seed'
+import { publicOrigin } from '../adapters/edge-headers'
 import { auth, db, isSimulated, jobs } from '../adapters/index'
 import { bumpWorldAgreement, listWorldAgreements } from '../adapters/fake/agreements'
 import { KNOWN_FLAGS, listCapturedEvents, readFlags, setFlag } from '../adapters/fake/analytics'
@@ -504,7 +505,7 @@ async function presetLoad(request: Request): Promise<Response> {
     if (typeof locale !== 'string' || !(LOCALES as readonly string[]).includes(locale)) {
         return badRequest('unknown locale')
     }
-    const { signedIn } = await applyDemoPreset(name, { baseUrl: request.url })
+    const { signedIn } = await applyDemoPreset(name, { baseUrl: publicOrigin(request) })
     return Response.json({ redirectTo: signedIn ? `/${locale}/dashboard` : `/${locale}` })
 }
 

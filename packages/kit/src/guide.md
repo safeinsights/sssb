@@ -32,6 +32,12 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   tests and in the app-root tool configs (Playwright, Vite). Every other module imports the resolved value: deployment
   parameters from `config/params.ts`, the run mode from `isSimulated`.
 - Deployment and service parameters exist only in `config/params.ts`. Secret values never enter the repository.
+- Build an absolute URL a visitor follows (a link in an email, a URL you store) on `publicOrigin(request)` from
+  `@sssb/kit/adapters/edge-headers`, never on `request.url` or `nextUrl`: behind `SssbApp` their origin is the server's
+  own bind address and port, never the visitor's host. Outside a request, in a job, it needs the server's `PUBLIC_ORIGIN`. Key what depends on
+  the visitor's address (a rate limit, a lockout, an audit record's "from") on `clientAddress(request)`, and treat its
+  `undefined` as unknown; never on `X-Forwarded-For`'s first entry, `X-Real-IP` or `CF-Connecting-IP`, which the visitor
+  writes. `sssb/no-raw-request-origin` flags a direct read.
 - Declare which of SSSB's optional ports the app uses in `config/params.ts`'s `ports` (`llm`, `email`, `inboundEmail`,
   `jobs`, `storage`). A port the app does not use is `none`, never configured with placeholder values.
 - A job handler never reads the seed (`@sssb/app-config/seed`), which a deployment does not have: it finds people with

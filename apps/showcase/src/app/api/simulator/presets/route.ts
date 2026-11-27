@@ -1,3 +1,4 @@
+import { publicOrigin } from '@sssb/kit/adapters/edge-headers'
 import { isSimulated } from '@sssb/kit/adapters/index'
 import { LOCALES } from '@sssb/kit/core/locale'
 import { WORLD_START_NAME_PATTERN } from '@sssb/kit/core/presets'
@@ -24,7 +25,7 @@ export async function POST(request: Request): Promise<Response> {
             return Response.json({ error: 'unknown locale' }, { status: 400 })
         }
 
-        const { signedIn } = await applyDemoPreset(name, { baseUrl: request.url })
+        const { signedIn } = await applyDemoPreset(name, { baseUrl: publicOrigin(request) })
         return Response.json({ redirectTo: signedIn ? `/${locale}/dashboard` : `/${locale}` })
     })
 }
