@@ -641,7 +641,9 @@ the tenant for the transaction; each tenant table's policy compares the row's `t
     or a copy per tenant.
 
     A route may create, rename and delete teams inside `withTenant`: `organizations` is readable across tenants, but its
-    writes are confined to the request's tenant, and `authorize(...)` decides who may make them. A table of yours that
+    writes are confined to the request's tenant, and `authorize(...)` decides who may make them. A request sets a new
+    team's tenant, slug and name and may change its name; its slug (how the auth provider and its inbound mail address
+    name it) and its id are not a request's to change, and a slug another tenant's team holds is refused. A table of yours that
     must keep its org in its own tenant can say so in Postgres with a composite foreign key,
     `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)`; a plain `org_id` reference accepts
     another tenant's team.

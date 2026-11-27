@@ -62,19 +62,21 @@ the interesting reports are about that shape being wrong:
     (`packages/kit/src/db/migrations/0005_service_keys.ts`), which holds only PUBLIC key material —
     its boundary is cryptographic, a caller proving possession of the matching private key.
 
-    `tenants` and `service_keys` are `SELECT`-only. `organizations` also grants `INSERT`, `UPDATE`
-    and `DELETE`, so a request can create, rename and delete teams
-    (`packages/kit/src/db/migrations/0018_organizations_write.ts`), and those writes are NOT exempt:
-    row-level security confines each to the request's own tenant (a write with no tenant context lands
-    nowhere, and an `UPDATE` cannot move a team to another tenant), and `TRUNCATE`, which ignores
-    row-level security, is not granted. Which person may write which team of their tenant is
+    `tenants` and `service_keys` are `SELECT`-only. `organizations` also grants `INSERT` (of a team's
+    tenant, slug and name), `UPDATE` (of its name) and `DELETE`, so a request can create, rename and
+    delete teams (`packages/kit/src/db/migrations/0018_organizations_write.ts`), and those writes are
+    NOT exempt: row-level security confines each to the request's own tenant (a write with no tenant
+    context lands nowhere), a new team may not take a slug another tenant's team holds (a team's slug
+    is its inbound mail address, resolved across tenants; the gaps that remain are
+    safeinsights/sssb#211), and `TRUNCATE`, which ignores row-level security, is not granted. Which person may write which team of their tenant is
     `authorize()`'s decision (below). The table's owner is not held to those policies (RLS is enabled,
     not forced): it is the privileged path that seeds teams, and a request never writes as it.
 
     The coverage check proves all of this from the catalog. An exempt table may hold no privilege but
     `SELECT` unless its entry declares the write, and each declared write must be held, on a table with
-    row-level security enabled, admitted by some permissive policy, and every permissive policy that
-    admits it must read the tenant setting in each expression that write evaluates. It reads the ACLs —
+    row-level security enabled and an owner whose privileges `app_user` does not hold, admitted by some
+    permissive policy, and every permissive policy that admits it must read the tenant setting in each
+    expression that write evaluates. It reads the ACLs —
     table grants **and column grants**, every privilege other than `SELECT` — rather than
     `has_table_privilege`, because that function reports table-level privileges only, and a
     column-level `GRANT UPDATE (name)` was demonstrated to let `app_user` rewrite every row of the

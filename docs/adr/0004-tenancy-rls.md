@@ -280,8 +280,9 @@ runs through the RDS Data API (`packages/keel/src/adapters/real/rds-data.contrac
 ## Addendum — 2026-11-27: `organizations` is writable, inside the request's tenant
 
 The body calls `organizations` "RLS-free infrastructure, like `tenants`". From migration 0018 that is true of its
-READS only. `app_user` holds `INSERT`, `UPDATE` and `DELETE` on it as well, behind row-level security that confines
-each write to the request's tenant (one policy per command; the `SELECT` policy is `USING (true)`), enabled but not
+READS only. `app_user` holds `INSERT` (of tenant, slug and name), `UPDATE` (of the name) and `DELETE` on it as well,
+behind row-level security that confines each write to the request's tenant and keeps a new team off another tenant's
+slug (one policy per command; the `SELECT` policy is `USING (true)`), enabled but not
 forced, so the owner's seeding path is unchanged. The coverage check's exemption entry declares those three writes,
 and the check proves them tenant-scoped from the catalog. Who may write which team of their own tenant stays an
 authorization decision, as the body says of teams. `docs/decision-log.md` (2026-11-27) records the alternatives.
