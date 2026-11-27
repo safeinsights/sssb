@@ -8153,6 +8153,7 @@ settle:
   intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
 - **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
   own, in its own PR.
+
 ## Lost CodeBuild builds, and schedules that keep failing (2026-11-27, `fix/lost-builds-and-failing-schedules`)
 
 Two fixes in one change. safeinsights/sssb#231: a CodeBuild job whose build died without posting its webhook stayed
