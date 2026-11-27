@@ -2426,3 +2426,17 @@ each call backs off on its own (`call` in `packages/kit/src/adapters/real/rds-da
 It is filed as [safeinsights/sssb#183](https://github.com/safeinsights/sssb/issues/183), which also holds what the
 runbook and the `data-api` row should say about it. Until it lands, an app that scales to zero keeps database calls out of
 its first paint, as this adopter did (no call before first paint, one after).
+
+## The pg transport's TLS, proven against a local server (2026-11-27, `fix/pg-ssl-mode`)
+
+- **`knip.json` ignores the `openssl` binary in `packages/kit`**, its one `ignoreBinaries` entry. The TLS contract test
+  (`packages/kit/src/adapters/real/db-tls.contract.test.ts`) makes a throwaway certificate with the `openssl` CLI, which
+  no package provides: Node can parse a certificate and cannot make one, and committing a key for the test would put a
+  private key in the tree for gitleaks to flag. CI's Ubuntu runners and macOS both have it.
+- **`pg` lets the URL override the `ssl` option.** Its `ConnectionParameters` merges what `pg-connection-string` parses
+  out of `connectionString` over the config it was handed, so `?sslmode=disable` on a URL beats `ssl: {...}` in code
+  (pinned by `packages/kit/src/adapters/real/db.test.ts`). That is why `createRealDb` refuses a URL with any `ssl*`
+  parameter rather than trusting its own option to win.
+- **`rejectUnauthorized: false` turns off the host check too**, not only the chain: Node runs `checkServerIdentity` only
+  when it rejects unauthorized certificates. Weakening the option in `db.ts` turns both of the contract test's refusal
+  cases red, which is how the test was seen to fail.

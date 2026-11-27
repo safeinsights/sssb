@@ -69,8 +69,7 @@ export function databaseResumeBudgetMs(): number | undefined {
  * active one, and a server whose root you cannot name is better served by naming it. docs/decision-log.md, "An SSL
  * mode for the pg transport", says why, and why the mode is not a `config/params.ts` key.
  */
-export const DATABASE_SSL_MODES = ['verify-full', 'disable'] as const
-export type DatabaseSslMode = (typeof DATABASE_SSL_MODES)[number]
+const DATABASE_SSL_MODES = ['verify-full', 'disable'] as const
 export type DatabaseSsl =
     { readonly mode: 'verify-full'; readonly rootCert?: string | undefined } | { readonly mode: 'disable' }
 
