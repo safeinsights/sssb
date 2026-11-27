@@ -1,7 +1,7 @@
 import { setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { analytics, auth, db } from '@sssb/kit/adapters/index'
+import { analytics, auth, db, isSimulated } from '@sssb/kit/adapters/index'
 import {
     agreementFacts,
     computePendingAgreements,
@@ -36,6 +36,14 @@ export default async function ProtectedLayout({
     const orgs = await auth.listMyOrgs()
     const tenantName = findTenant(user.tenantSlug)?.name ?? user.tenantSlug
     const demoBanner = await analytics.isFlagEnabled('demo-banner', false)
+    const menuUser = { name: user.name, email: user.email }
+    // Real mode signs out through the provider's client, which also clears the session token the next page would
+    // otherwise still see; simulated mode through the app's sign-out route (the glue's own menu).
+    let userMenu: ReactNode = null
+    if (!isSimulated) {
+        const { RealUserMenu } = await import('@sssb/kit/adapters/real/user-menu')
+        userMenu = <RealUserMenu user={menuUser} profileHref={`/${locale}/profile`} signedOutHref={`/${locale}`} />
+    }
 
     // ── Access gates ────────────────────────────────────────────────────────────────────
     // The ONE hook point for the gate seam: assemble the actor's facts from this RSC's data reads,
@@ -66,7 +74,8 @@ export default async function ProtectedLayout({
     return (
         <>
             <HeaderGlue
-                user={{ name: user.name, email: user.email }}
+                user={menuUser}
+                userMenu={userMenu}
                 orgs={orgs}
                 activeSlug={user.orgSlug}
                 tenantName={tenantName}
