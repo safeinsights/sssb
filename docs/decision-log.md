@@ -8378,6 +8378,7 @@ spec or helper that reads or writes its world on disk).
 - **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
   ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
   changes but a comment in `serve-standalone.js` (an empty changeset).
+
 ## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
 
 safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "One wait for a paused cluster, and a typed
