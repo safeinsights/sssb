@@ -7836,6 +7836,30 @@ One branch's secret-like string failed the scan on every other open pull request
 - **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
   stopword behaviour (named out of scope in the issue).
 
+## Two edges of real sign-in: before Clerk loads, and a session a failed finalize left (2026-11-27, `fix/sign-in-edges`)
+
+safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
+
+- **The password waits for `useClerk().loaded`**, and the button shows `loading` until then. `loaded` reads clerk-js
+  itself (`IsomorphicClerk`), and Clerk's provider re-memoizes its context on every status change, so the form
+  re-renders when clerk-js loads (@clerk/react 6.18.8, @clerk/shared 4.45.1). Rejected: **`useAuth().isLoaded`**,
+  which reads Clerk's auth state rather than clerk-js itself; and **re-reading the attempt after load**, which depends
+  on what `GET /client` returns after a reload, the issue's open question. A clerk-js that never loads leaves the
+  button busy: there is nothing to sign in with then.
+- **The form holds the session from the moment an attempt is complete** (`held`, `attempt.createdSessionId`, read
+  before `finalize`, rather than later from an attempt a failed `finalize` may have changed). That covers both routes to a
+  complete attempt: the password alone and an accepted code. While a session is held, Back from the step, or a
+  "Sign out" button on the password form (the existing `auth.signOut` copy), signs it out with Clerk's `signOut`
+  (`useClerk()`) by id, and only while `clerk.client.signedInSessions` still has it; one the client no longer holds is only forgotten. The
+  password cannot be submitted while a session is held. Under the app router Clerk navigates with the router's `push`
+  (@clerk/nextjs 7.10, `useAwaitablePush`; that `signOut`'s `redirectUrl` goes through it is clerk-js's, unread here),
+  which keeps the form, so the form resets itself, its error included, once the sign-out answers and the client no longer
+  holds the session; a sign-out that fails, or answers but leaves the session, shows the existing
+  `refusedSignOutError` copy with the button still there. A finished sign-in clears `held` and keeps the form busy
+  while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
+  nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
+  **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
+
 ## The LLM adapter has a deadline, and the provider's limits are a port error (2026-11-27, `fix/llm-timeout`)
 
 `safeinsights/sssb#98`: `createRealLlm` built the SDK client with a key and nothing else. The SDK's timeout is ten minutes
