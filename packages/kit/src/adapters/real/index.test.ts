@@ -106,6 +106,8 @@ beforeEach(() => {
         AUTH_DEFAULT_ROLE: undefined,
         AUTH_TENANT_METADATA_KEY: undefined,
         CLERK_AUTHORIZED_PARTIES: undefined,
+        PUBLIC_ORIGIN: undefined,
+        SSSB_EDGE: undefined,
     })
 })
 
@@ -266,6 +268,20 @@ describe('the auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE)', () => {
         stubEnv({ CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })
         expect(() => assertRealEnv()).not.toThrow()
         stubEnv({ CLERK_AUTHORIZED_PARTIES: undefined })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
+
+    it('a malformed PUBLIC_ORIGIN or SSSB_EDGE fails the preflight, naming domains-and-certs; both are optional', async () => {
+        const { assertRealEnv } = await import('./index')
+        stubEnv({ ...PG, PUBLIC_ORIGIN: 'https://app.example.org/' })
+        expect(() => assertRealEnv()).toThrow(/domains-and-certs.*PUBLIC_ORIGIN .* is not a bare origin/s)
+        stubEnv({ PUBLIC_ORIGIN: 'https://app.example.org', SSSB_EDGE: 'yes' })
+        expect(() => assertRealEnv()).toThrow(/domains-and-certs.*SSSB_EDGE "yes"/s)
+        stubEnv({ SSSB_EDGE: 'cloudfront', AWS_LAMBDA_FUNCTION_NAME: undefined })
+        expect(() => assertRealEnv()).toThrow(/domains-and-certs.*SSSB_EDGE is set off Lambda/s)
+        stubEnv({ AWS_LAMBDA_FUNCTION_NAME: 'app-server' })
+        expect(() => assertRealEnv()).not.toThrow()
+        stubEnv({ PUBLIC_ORIGIN: undefined, SSSB_EDGE: undefined, AWS_LAMBDA_FUNCTION_NAME: undefined })
         expect(() => assertRealEnv()).not.toThrow()
     })
 })

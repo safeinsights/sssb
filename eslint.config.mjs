@@ -209,6 +209,14 @@ const eslintConfig = [
         plugins: { sssb },
         rules: { 'sssb/no-process-env': 'error' },
     },
+    // The visitor's origin and address, on SSSB's side of the line too: through its own edge-headers module, the one
+    // file that reads the forwarded headers it names (safeinsights/sssb#131, #132).
+    {
+        files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
+        ignores: ['packages/kit/src/adapters/edge-headers.ts', TEST_FILES],
+        plugins: { sssb },
+        rules: { 'sssb/no-raw-request-origin': 'error' },
+    },
     // i18n (ADR-0008) on SSSB's side of the line: its screens, its static demo, and its adapters, which render copy
     // too (the real sign-in and accept-invite forms). The fixture ships no copy (it has no components tree, and its
     // route files are scanned by authorized-mutations.test.ts, never served), so neither literal ban applies there.
