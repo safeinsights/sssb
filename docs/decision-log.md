@@ -7614,6 +7614,7 @@ them. Decisions the issue left open:
   call is one of its readers.
 - **No `tours` or `presets` registration is needed for the tab to be right**: an app with none gets no Tours tab and
   no presets section (both are the seam's off-switches already), and a reset is the one world start every host has.
+
 ## Teams are writable inside their tenant, and an exempt table declares its writes (2026-11-27, `feat/org-write-rls`)
 
 `safeinsights/sssb#124`: `app_user` held `SELECT` only on `organizations`, so a route that created, renamed or deleted
