@@ -70,7 +70,7 @@ const DEFAULT_TICK_BUDGET: TickBudget = {
  * Runs one tick: the jobs port's sweep, then the due schedules, then the due deliveries, each drain bounded by
  * `options.budget` (the defaults, for any value left out) and fair across tenants. `options.clock` is the wall clock
  * the windows are read against, `Date.now` unless a test passes its own; it never sets "now" for what is due. `options.random`
- * picks where the tenants' rotation starts, `Math.random` unless a test passes its own.
+ * is the draws that shuffle the tenants and their rows, `Math.random` unless a test passes its own.
  */
 export async function runScheduledTick(
     options: {

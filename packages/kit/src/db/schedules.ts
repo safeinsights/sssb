@@ -57,9 +57,9 @@ const MAX_COALESCE = 100_000
  * long; under any other runner it stays queued.
  *
  * BOUND. With a budget, one call spawns at most `budget.maxItems` schedules and starts none after `budget.deadline`,
- * taking each tenant's due schedules in turn, oldest due first, the tenants in an order rotated every tick
- * (./drain-budget.ts); `runScheduledTick` always passes one. Without a budget it drains every due schedule, still in
- * that order. The result says how many due schedules it left for a later tick and why.
+ * taking one due schedule from each tenant in turn, the tenants and each tenant's listed schedules in a fresh random
+ * order (./drain-budget.ts); `runScheduledTick` always passes one. Without a budget it drains every due schedule,
+ * each tenant's oldest first. The result says how many due schedules it left for a later tick and why.
  */
 export async function runDueSchedules(
     db: DbPort,

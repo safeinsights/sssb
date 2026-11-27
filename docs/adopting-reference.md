@@ -718,9 +718,9 @@ the showcase carries the same route over the same function.
   row of the [cutover checklist](cutover-checklist.md).
 - **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick
   spawns at most 100 due schedules, in its first 8 seconds, and attempts at most 100 due webhook deliveries, starting
-  none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes every tenant's due rows in turn,
-  the tenant with the oldest due row first, so one tenant's backlog or slow endpoint cannot keep another's work waiting
-  past a tick. What a tick leaves is not touched and the next tick takes it; the route's JSON says how much it left
+  none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes one due row from each tenant in
+  turn, the tenants in a fresh random order every tick, so one tenant's backlog or slow endpoint cannot keep another's
+  work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the route's JSON says how much it left
   (`deferred`, at least that many, for schedules and inside `deliveries`) and why (`stoppedBy`: `'items'`, `'time'` or
   `null`). A server with a different limit passes its own bounds:
   `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional.

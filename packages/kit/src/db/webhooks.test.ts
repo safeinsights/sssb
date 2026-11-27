@@ -226,7 +226,7 @@ describe('the delivery drain is bounded per tick and fair across tenants (safein
             deadline: 25_000,
             clock: () => clock,
         })
-        // Whichever tenant the tick's rotation puts first, the quiet tenant's one delivery is in the first round, and the
+        // Whichever tenant the tick's shuffle puts first, the quiet tenant's one delivery is in the first round, and the
         // busy tenant's start at 0, 10 and 20 seconds; at 30 the window had closed.
         expect(first).toEqual({ delivered: 4, failed: 0, dead: 0, deferred: 17, stoppedBy: 'time' })
         expect((await mine(quietId)).map((d) => d.status)).toEqual(['delivered'])

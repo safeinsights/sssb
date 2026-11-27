@@ -103,10 +103,10 @@ export interface DrainResult extends DrainLeft {
  * (webhook.delivered) and on death (webhook.dead) — the durable, append-only webhook record.
  *
  * BOUND. With a budget, one call attempts at most `budget.maxItems` deliveries and starts none after
- * `budget.deadline`, taking each tenant's due deliveries in turn, oldest due first, the tenants in an order rotated
- * every tick (./drain-budget.ts), so one tenant's slow endpoint or long backlog cannot hold another's deliveries past
- * the tick; `runScheduledTick` always passes one. Without a budget it drains every due delivery, still in that order.
- * The result says how many due deliveries it left for a later tick and why.
+ * `budget.deadline`, taking one due delivery from each tenant in turn, the tenants and each tenant's listed deliveries
+ * in a fresh random order (./drain-budget.ts), so one tenant's slow endpoint or long backlog cannot hold another's
+ * deliveries past the tick; `runScheduledTick` always passes one. Without a budget it drains every due delivery, each
+ * tenant's oldest first. The result says how many due deliveries it left for a later tick and why.
  */
 export async function runDueDeliveries(
     db: DbPort,

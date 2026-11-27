@@ -16,9 +16,10 @@
  * thousand due rows, or one slow endpoint, costs every other tenant at most one of its turns per round. The order of the
  * tenants is a fresh uniform shuffle every tick (`random`, `Math.random` by default), the same order for the listing and
  * for the turns, so a tick that can serve only some of the tenants with due work serves each with the same chance,
- * whatever the others hold and wherever their ids fall. A tenant's own listed rows (its oldest due, up to the listing
- * limit) are shuffled too, so a row that fails every time and stays due cannot take that tenant's first turn every
- * tick. Nothing about the order is stored.
+ * whatever the others hold and wherever their ids fall. Under a bound a tenant's own listed rows (its oldest due, up to
+ * the listing limit) are shuffled too, so a row that fails every time and stays due cannot take that tenant's first
+ * turn every tick; with no bound every row runs, and each tenant's keep their oldest-first order. Nothing about the
+ * order is stored.
  *
  * THE REMAINDER. A row the drain does not start is not touched: no claim, no lock, no write. It is still due, and the
  * next tick lists it again. Nothing is lost, and nothing runs twice, since running twice is what each drain's own
@@ -52,7 +53,7 @@ export interface DrainLeft {
     stoppedBy: DrainStop | null
 }
 
-/** One tenant's due rows, oldest due first, as a drain lists them. */
+/** One tenant's listed due rows, in the order the drain takes them. */
 export interface TenantQueue<T> {
     tenantId: string
     rows: readonly T[]
@@ -63,7 +64,7 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
 
 /*
  * The default windows, from the tick's start, in which each drain may START work. They are sized to the server's
- * 30-second limit (@sssb/cdk's `SssbApp`; the tick runs inside the cron route's request), counted from the start of the
+ * 30-second limit (@sssb/cdk's `SssbApp`, `packages/cdk/src/sssb-app.js:526` in SSSB's repository; the tick runs inside the cron route's request), counted from the start of the
  * request: schedules first, then deliveries, so schedules may start work for 8 seconds and deliveries until 16. A
  * delivery started at 16 seconds may take the POST's 10 (`WEBHOOK_TIMEOUT_MS`, ../server-lib/webhook-dispatch.ts)
  * plus its claim, record and audit transactions, which leaves about four seconds for those, a listing query begun just

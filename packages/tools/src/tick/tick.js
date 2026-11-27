@@ -274,7 +274,8 @@ function count(value) {
  * `@sssb/kit/db/schedules`).
  *
  * A tick is bounded (`@sssb/kit/server-lib/scheduled-tick`), so it may leave due work for the next one: then the line
- * ends with how much, as the route's `deferred` counts say it (a lower bound), whenever either drain's `stoppedBy` is set.
+ * ends with how much, as the route's `deferred` counts say it (a lower bound), whenever either drain's `stoppedBy` is set
+ * or either counts work left.
  *
  * @param {Record<string, unknown>} body the route's JSON:
  *   `{ ok, spawned, failed, deferred, stoppedBy, deliveries: { delivered, failed, dead, deferred, stoppedBy } }`
