@@ -196,7 +196,7 @@ describe('ticketForOrg', () => {
         const mine = await open(frontline.orgId, frontline.tenantId, 'Refund missing')
 
         expect(await ticketForOrg(fakeDb, frontline.tenantId, frontline.orgId, mine.id)).not.toBeNull()
-        // Both a foreign id and a nonexistent one come back null, so ids cannot be probed.
+        // Both a foreign id and a nonexistent one come back null, so another org's ids cannot be probed.
         expect(await ticketForOrg(fakeDb, frontline.tenantId, otherOrgId, mine.id)).toBeNull()
         expect(await ticketForOrg(fakeDb, frontline.tenantId, frontline.orgId, MISSING_ID)).toBeNull()
     })
