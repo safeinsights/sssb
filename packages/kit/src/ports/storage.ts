@@ -101,7 +101,11 @@ export interface StoragePort {
      * has no such policy, so its URL signs the EXACT size (`constraints.sizeBytes`, at most `maxBytes`): the
      * store refuses a body of another length IF it honours a signed `Content-Length` (AWS S3 does; a store that
      * does not stores the bytes). So a caller that must hold the ceiling whatever the store runs `head` on the
-     * object before it trusts it, and `delete`s one over `maxBytes`; `head` reports what was stored.
+     * object before it trusts it, and `delete`s one over `maxBytes`; `head` reports what was stored. That check
+     * is a moment: the URL stays valid for its 15 minutes (900 s), so on a store that ignores the signed length a
+     * second PUT after the check can still replace the object. A caller that must close that too uploads to a
+     * staging key, and `copy`s the object to its final key (with `ifMatch` the etag `head` reported) only once it
+     * has checked, so the URL never addresses the object in use.
      */
     createUploadTarget(key: string, constraints: UploadConstraints): Promise<UploadTarget>
     /**

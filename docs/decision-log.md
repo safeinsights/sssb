@@ -7629,3 +7629,9 @@ takes a PUT end to end (mint, browser, the fake's endpoint, confirm). What was d
   answers as S3 would, approximately: 403 for a changed key, size, type or signature, 411 with no length, 400 for a
   body that is not as long as it declared. Not done: **a Simulator switch to run the showcase on the PUT form**; the
   browser's PUT branch is unit-tested (`send-to-upload-target.test.ts`) but no e2e runs it.
+- **The `head` check is a moment, not a seal (round-1 review).** On a store that ignores a signed length, a second PUT to
+  the same URL inside its 15 minutes can replace the object after confirm. The showcase does not close that (it would
+  stage under another key and `copy` with `ifMatch` at confirm, so the URL never addresses the live object); the port's
+  comment says so and names the staging answer, and it is filed as an issue to do once R2's behaviour is measured.
+  Confirm of a row that is already `ready` now returns idempotently before reading storage, because it would otherwise
+  reach the delete and remove a good object (a later, lower ceiling does the same).

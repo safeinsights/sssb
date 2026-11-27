@@ -819,7 +819,7 @@ first value, which is what real mode required before the switches existed.
   another length if it honours a signed length (AWS S3 does; for R2 that is for the cutover row
   `storage-compatible-live` to measure, and is not assumed). So a route that must hold the ceiling whatever the
   store does runs `head` on the object when it confirms the upload and `delete`s one over `maxBytes`, as the showcase's
-  confirm route does. The bucket's CORS rules must allow a browser `PUT` from the app's origin with the `Content-Type`
+  confirm route does (the check is a moment: the URL lives 15 minutes, so on a store that ignores the signed length a later PUT can still replace the object; staging under another key and `copy`ing to the final one, with `ifMatch`, closes that). The bucket's CORS rules must allow a browser `PUT` from the app's origin with the `Content-Type`
   header, which a presigned URL does not grant by itself (R2: the bucket's CORS policy, `AllowedMethods: ["PUT"]`,
   `AllowedHeaders: ["content-type"]`). Switching a deployed stack from `s3` to `s3-compatible` takes the bucket out of the
   stack, as `none` does (above); copy the objects to the new store first.

@@ -89,6 +89,31 @@ describe('POST /api/attachments/[id]/confirm', () => {
         expect(h.recordAuditEvent).not.toHaveBeenCalled()
     })
 
+    test('a READY attachment is idempotent without touching storage: no head, and never a delete', async () => {
+        h.attachmentForOrg.mockResolvedValue({
+            id: 'a0000000-0000-4000-8000-000000000001',
+            storageKey: 'attachments/tenant-northwind/uuid/a.txt',
+            status: 'ready',
+        })
+        // Even an object now over the ceiling (a lowered limit, or an overwrite) is not deleted by a re-confirm.
+        h.head.mockResolvedValue({
+            size: 5 * 1024 * 1024 + 1,
+            contentType: 'text/plain',
+            etag: '"e"',
+            lastModified: new Date(0),
+        })
+        const response = await confirm()
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({
+            attachmentId: 'a0000000-0000-4000-8000-000000000001',
+            idempotent: true,
+        })
+        expect(h.head).not.toHaveBeenCalled()
+        expect(h.remove).not.toHaveBeenCalled()
+        expect(h.confirmAttachment).not.toHaveBeenCalled()
+        expect(h.recordAuditEvent).not.toHaveBeenCalled()
+    })
+
     test("404 when the id is not one of the active org's attachments (indistinguishable from missing)", async () => {
         h.attachmentForOrg.mockResolvedValue(null)
         expect((await confirm('ghost')).status).toBe(404)

@@ -33,6 +33,14 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         // finalize an upload — the same ability that gated minting it.
         authorize(user, orgId, 'create', { type: 'Attachment', orgId })
 
+        // A row that is no longer pending is already finalized: a re-confirm (double-click, retried request) is
+        // idempotent and touches nothing in storage. It must never reach the ceiling check below, which deletes: a
+        // ready attachment's object is not this request's to remove (a later, lower ceiling would otherwise delete
+        // an old good file and leave a ready row with a dead download link).
+        if (attachment.status !== 'pending') {
+            return Response.json({ attachmentId: id, idempotent: true }, { status: 200 })
+        }
+
         const stored = await storage.head(attachment.storageKey)
         if (!stored) return Response.json({ error: 'upload-missing' }, { status: 400 })
         if (stored.size > ATTACHMENT_MAX_BYTES) {
