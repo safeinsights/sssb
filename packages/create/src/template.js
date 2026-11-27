@@ -95,6 +95,7 @@ export const ROOT_FILES = [
     '.prettierrc.json',
     '.husky/pre-commit',
     '.husky/commit-msg',
+    '.github/scripts/secret-scan-range.sh',
     'commitlint.config.mjs',
 ]
 
