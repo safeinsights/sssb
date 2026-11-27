@@ -33,7 +33,8 @@
                 "src/testing/tmp-dir-marker.d.mts",
                 "test-fixture/api/**",
                 "test-fixture/app-config/db/migrations/*.ts"
-            ]
+            ],
+            "ignoreBinaries": ["openssl"]
         },
         "packages/tools": {
             "ignoreDependencies": ["next", "vite", "vitest"]

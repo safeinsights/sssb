@@ -6,7 +6,7 @@ import { runRlsProofs } from '../../db/rls-proof-runner'
 import type { DB } from '../../db/schema'
 import type { DbPort } from '../../ports/db'
 import { EMULATED_ARNS, runDataApiOwnerPass } from './contract-data-api'
-import { startContractServer, type ContractServer } from './contract-postgres'
+import { CONTRACT_SSL, startContractServer, type ContractServer } from './contract-postgres'
 import { createRealDb } from './db'
 import { createRealDataApiDb } from './db-data-api'
 import { RdsDataDatabaseError, RdsDataUnsupportedError } from './rds-data-codec'
@@ -65,7 +65,7 @@ beforeAll(async () => {
     })
     await dataApi.migrateToLatest()
     migrationCalls = [...emulator.calls]
-    viaPg = createRealDb(url.toString())
+    viaPg = createRealDb(url.toString(), CONTRACT_SSL)
 }, 120_000)
 
 afterAll(async () => {

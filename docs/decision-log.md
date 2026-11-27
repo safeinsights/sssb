@@ -7624,6 +7624,68 @@ Notification`, self-only), the preferences (`read NotificationPref`, self-only) 
 - **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
   who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
   of this fix.
+## An SSL mode for the pg transport (2026-11-27, `fix/pg-ssl-mode`)
+
+`safeinsights/sssb#96`: neither the server's `pg` adapter nor the Migrator set TLS, so a connection was encrypted only
+if `DATABASE_URL` asked for it (SssbApp's never did), and the URL the Migrator builds from the secret carried none. Now
+both connect with one explicit mode, read by one function (`databaseSsl` in
+`packages/kit/src/adapters/real/database-transport.ts`) and applied by `createRealDb`, whose `ssl` argument is required.
+
+- **The default is `verify-full`**, and an unset or empty `DATABASE_SSL_MODE` means it: TLS, the chain checked
+  (`rejectUnauthorized`) and the host checked against the certificate's names (Node's `checkServerIdentity`, given the
+  host by `pg`). Empty is the default here, unlike `CLERK_AUTHORIZED_PARTIES`'s, because the default is the strict
+  value: a template whose input went missing fails closed. Rejected: **`require`** as the default or a mode (TLS that
+  accepts any certificate stops a passive listener, not an active one, and the RDS roots are at hand), **`prefer`**
+  (falls back to plaintext), and **`verify-ca`** (trusts the CA and not the host, which on a public CA trusts anyone
+  it issued). The modes are `verify-full` and `disable`, nothing between.
+- **The roots are a file, `DATABASE_SSL_ROOT_CERT`** (an absolute path, libpq's `sslrootcert`): when set, its
+  certificates are the only roots that one connection trusts (`ca`); unset, Node's own (its bundled roots and
+  `NODE_EXTRA_CA_CERTS`), which suits a host whose certificate chains to a public root. Aurora's chain to Amazon RDS's
+  roots, which Node does not trust. **How the CA reaches a Lambda:** the Lambda Node.js runtime from Node 20 carries
+  the Amazon CA certificates, RDS's among them, at `/var/runtime/ca-cert.pem`, and no longer loads them (AWS Lambda's
+  guide, "Using AWS Lambda with Amazon RDS"). `SssbApp` points `DATABASE_SSL_ROOT_CERT` at that file on both Lambdas,
+  which run on `NODEJS_22_X`. Rejected: **`NODE_EXTRA_CA_CERTS`** pointing at the same file (widens every TLS
+  connection the process makes, and AWS notes that loading the whole bundle at start slows a cold start), and
+  **shipping the RDS bundle in `@sssb/kit`** (a CA file SSSB would have to track through AWS's rotations; the
+  runtime's is AWS's to keep current). A Lambda built from a container image may not have that file: an adopter on one
+  puts the RDS bundle in the image and sets the path to it.
+- **Not a `config/params.ts` key.** `SssbApp` always builds Aurora, which always offers TLS, so there is no deployment
+  of the construct that should choose anything but `verify-full` against the runtime's bundle; a key would be a choice
+  with one right answer, in every app's params and `tests/tooling/app-scaffold.test.ts`'s same-keys rule. The
+  variables are the override, for a deployment of the adopter's own (another Postgres host) and a local real-mode run;
+  `SssbApp` sets them, as it sets `DATABASE_TRANSPORT`. Rejected: **an optional `params.database.ssl`**, which no
+  `SssbApp` deployment could set to anything else safely.
+- **The URL may not carry TLS of its own.** `pg` merges what it parses from the URL over the config it is given, so
+  `?sslmode=disable` (or `no-verify`, or an `sslrootcert`) would silently replace the mode. `createRealDb` refuses a
+  URL with any parameter named `ssl*` or `uselibpqcompat`, read as `pg-connection-string` reads it, and names the
+  parameters, never the URL. Rejected: **stripping them**, which answers a URL that asked for something with something
+  else, and **honouring the URL when the variable is unset**, which is the implicit default the issue is about. A
+  `DATABASE_URL` of an adopter's own that sets `sslmode` fails at boot after the upgrade, with the fix in the message;
+  the changeset says so.
+- **Local and contract runs use `disable`.** `pnpm dev` is simulated (pglite, no `pg` at all), so it is untouched. The
+  contract runner's embedded Postgres and CI's service container have no TLS, so `startContractServer` connects with
+  `{ mode: 'disable' }` (`CONTRACT_SSL`); a `CONTRACT_DATABASE_URL` carrying `sslmode` is now refused like any other
+  URL (a contract server that requires TLS would need a mode of its own, which nobody has asked for). TLS itself is
+  proven by `packages/kit/src/adapters/real/db-tls.contract.test.ts`, which starts an embedded Postgres of its own
+  with a certificate it makes with `openssl`, answering TCP only over TLS: `verify-full` migrates and serves
+  (`pg_stat_ssl.ssl` is true), `disable` is refused, and an untrusted root or a host the certificate does not name is
+  refused. Breaking the mode's verification turns two of its cases red.
+- **The Data API is unaffected**: it speaks HTTPS through the AWS SDK, which checks AWS's certificate. `assertRealEnv`
+  checks on `pg` only (row `db-tls`, a `CutoverPendingError`) the variables' shape and a `DATABASE_URL` that would
+  override them, and reads no file, since the path SssbApp sets exists only on Lambda and `sssb check-real-env` runs
+  anywhere; SssbApp sets neither variable on `data-api`.
+- **Required environment unchanged** (both variables are optional), so no release snapshot moves. The changeset still
+  files `minor`, Action required: a deployment of the adopter's own whose host has no TLS, or whose certificate chains
+  to a root Node does not trust, breaks until it sets the variables.
+- **Not done here: forcing TLS on the cluster** (`rds.force_ssl` in a cluster parameter group SssbApp would add). It
+  is the server-side half, and it changes a stateful resource of every deployed stack; filed as
+  `safeinsights/sssb#207`.
+- **Refused as well, from review**: a root file holding no PEM certificate (Node takes an empty `ca` as none and
+  trusts its own roots, so an empty or truncated bundle would quietly widen trust), and `NODE_PG_FORCE_NATIVE` (`pg`'s
+  native client passes libpq only `sslmode` and file keys from the `ssl` option, so every mode would reach it as
+  libpq's default, `prefer`). Rejected: **a warning when `disable` names a host that is not loopback** (a reviewer's
+  suggestion): a compose network's `db` is not loopback either, and the docs and the cutover row already confine
+  `disable` to a server with no TLS.
 
 ## The Clerk adapter: one read per render, the keyless fallback closed, a client sign-out (2026-11-27, `fix/clerk-adapter`)
 
