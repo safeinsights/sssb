@@ -6,9 +6,14 @@ import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
     SimulatorAgreements,
+    SimulatorAudit,
+    SimulatorEvents,
     SimulatorFlags,
+    SimulatorHooks,
+    SimulatorInbound,
     SimulatorJobs,
     SimulatorMail,
+    SimulatorMessages,
     SimulatorSchedules,
     SimulatorSnapshots,
     SimulatorSummary,
@@ -16,6 +21,8 @@ import type {
 import { resolveWorldStart } from '../../core/presets'
 import { sameOriginPath } from '../../core/same-origin-path'
 import { useTours } from '../../demo-static/tour/use-tours'
+import type { ScrubResult } from './errors-app'
+import type { InboundComposeInput } from './inbound-app'
 import { SimulatorPanel, type SimulatorNotice } from './simulator-panel'
 
 const EMPTY_SUMMARY: SimulatorSummary = { viewpoint: null, signedIn: false, people: [] }
@@ -25,6 +32,11 @@ const EMPTY_SCHEDULES: SimulatorSchedules = { schedules: [], clockOffsetMs: 0, w
 const EMPTY_SNAPSHOTS: SimulatorSnapshots = { snapshots: [] }
 const EMPTY_FLAGS: SimulatorFlags = { flags: [] }
 const EMPTY_AGREEMENTS: SimulatorAgreements = { agreements: [] }
+const EMPTY_INBOUND: SimulatorInbound = { inbound: [], orgs: [], people: [], handlers: [], domain: '' }
+const EMPTY_MESSAGES: SimulatorMessages = { messages: [] }
+const EMPTY_EVENTS: SimulatorEvents = { events: [] }
+const EMPTY_AUDIT: SimulatorAudit = { audit: [] }
+const EMPTY_HOOKS: SimulatorHooks = { endpoints: [], deliveries: [], failingEndpointIds: [] }
 const EXPANDED_POLL_MS = 4_000
 const COLLAPSED_POLL_MS = 15_000
 const NOTICE_MS = 6_000
@@ -118,9 +130,11 @@ function readStoredScope(): 'person' | 'all' | null {
  * build loads it.
  *
  * It wires the tabs that host serves: People (switch to anyone, signed in or not), Mail (each person's inbox, or all
- * of it), Jobs with the world clock (run what is queued, move the clock, run what is due), Snapshots (reset the world,
- * save, restore and delete snapshots, flip a feature flag, bump an agreement, load a demo preset) and, when the app
- * registers any, Tours. A reset, a restore and a preset load each reload the page, since every page shows the world
+ * of it, with the inbound mail the world sent the app and a form to send more), Messages (every SMS), Events (analytics
+ * events, with the audit trail beneath), Jobs with the world clock (run what is queued, move the clock, run what is
+ * due), Hooks (every webhook endpoint and delivery, an endpoint made to fail, due deliveries run), Errors (an error's
+ * event before and after scrubbing), Snapshots (reset the world, save, restore and delete snapshots, flip a feature
+ * flag, bump an agreement, load a demo preset) and, when the app registers any, Tours. A reset, a restore and a preset load each reload the page, since every page shows the world
  * they replaced; a tour that starts from one of them resumes itself after the reload. The panel leaves out every tab it
  * is not given; the rest, the app's own tabs included, are later stages of the same host. An app that needs one of
  * them today keeps a glue of its own instead of this component.
@@ -147,12 +161,22 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     const [busySnapshot, setBusySnapshot] = useState<string | null>(null)
     const [busyPreset, setBusyPreset] = useState<string | null>(null)
     const [busyAgreement, setBusyAgreement] = useState<string | null>(null)
+    const [inboundData, setInboundData] = useState<SimulatorInbound>(EMPTY_INBOUND)
+    const [messagesData, setMessagesData] = useState<SimulatorMessages>(EMPTY_MESSAGES)
+    const [eventsData, setEventsData] = useState<SimulatorEvents>(EMPTY_EVENTS)
+    const [auditData, setAuditData] = useState<SimulatorAudit>(EMPTY_AUDIT)
+    const [hooksData, setHooksData] = useState<SimulatorHooks>(EMPTY_HOOKS)
     const [notices, setNotices] = useState<SimulatorNotice[]>([])
     const noticeSeq = useRef(0)
     const prevUnread = useRef<Map<string, number> | null>(null)
     const summaryTickets = useTickets()
     const mailTickets = useTickets()
     const jobsTickets = useTickets()
+    const inboundTickets = useTickets()
+    const messagesTickets = useTickets()
+    const eventsTickets = useTickets()
+    const auditTickets = useTickets()
+    const hooksTickets = useTickets()
     // The app's tours (`@sssb/app-config/tours`, read by the engine itself). A tour's starting world resolves the same
     // way on every host (`resolveWorldStart`): a reset, a registered demo preset, or here a saved snapshot. Each reloads
     // the page, and the engine's resume marker carries the tour across it.
@@ -232,12 +256,52 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         if (next) setAgreementsData(next)
     }, [])
 
+    const refreshInbound = useCallback(async () => {
+        const ticket = inboundTickets.take()
+        const next = await getJson<SimulatorInbound>('inbound')
+        if (next && inboundTickets.fresh(ticket)) setInboundData(next)
+    }, [inboundTickets])
+
+    const refreshMessages = useCallback(async () => {
+        const ticket = messagesTickets.take()
+        const next = await getJson<SimulatorMessages>('messages')
+        if (next && messagesTickets.fresh(ticket)) setMessagesData(next)
+    }, [messagesTickets])
+
+    // The audit trail renders on the Events tab, beneath the events, so the two are fetched together; each lands on its
+    // own, so one that fails never holds the other back.
+    const refreshEvents = useCallback(async () => {
+        const eventsTicket = eventsTickets.take()
+        const auditTicket = auditTickets.take()
+        await Promise.all([
+            getJson<SimulatorEvents>('events').then((next) => {
+                if (next && eventsTickets.fresh(eventsTicket)) setEventsData(next)
+            }),
+            getJson<SimulatorAudit>('audit').then((next) => {
+                if (next && auditTickets.fresh(auditTicket)) setAuditData(next)
+            }),
+        ])
+    }, [eventsTickets, auditTickets])
+
+    const refreshHooks = useCallback(async () => {
+        const ticket = hooksTickets.take()
+        const next = await getJson<SimulatorHooks>('webhooks')
+        if (next && hooksTickets.fresh(ticket)) setHooksData(next)
+    }, [hooksTickets])
+
     /** The open tab's own data, when the panel is expanded. */
     const refreshOpenTab = useCallback(() => {
         if (!expanded) return
-        if (activeTab === 'mail') void refreshMail()
+        if (activeTab === 'mail') {
+            void refreshMail()
+            // Inbound mail is on the Mail tab, beside the outbound catch-store.
+            void refreshInbound()
+        }
+        if (activeTab === 'messages') void refreshMessages()
+        if (activeTab === 'events') void refreshEvents()
         if (activeTab === 'jobs') void refreshJobs()
-    }, [expanded, activeTab, refreshMail, refreshJobs])
+        if (activeTab === 'hooks') void refreshHooks()
+    }, [expanded, activeTab, refreshMail, refreshInbound, refreshMessages, refreshEvents, refreshJobs, refreshHooks])
 
     useEffect(() => {
         // Fetch on mount, and restore the remembered mail scope: syncing with external systems (the server, the
@@ -352,6 +416,43 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
             void refresh()
             pushNotice(t('noticeMailCleared'))
         })
+    }
+
+    function handleComposeInbound(input: InboundComposeInput) {
+        void post('inbound/compose', input)
+            .then(async (response) => {
+                if (!response.ok) return
+                const { outcome } = (await response.json()) as { outcome: { status: string } }
+                // The new row, and any mail a handler sent in reply (a person's unread badge too).
+                await Promise.all([refreshInbound(), refreshMail(), refresh()])
+                pushNotice(
+                    t('noticeInboundSent', {
+                        status: t(`inboundStatus_${outcome.status}` as 'inboundStatus_handled'),
+                    }),
+                )
+            })
+            .catch(() => undefined)
+    }
+
+    async function handleToggleFail(endpointId: string, failing: boolean) {
+        const response = await post('webhooks/fail', { endpointId, failing })
+        if (!response.ok) return
+        await refreshHooks()
+        pushNotice(failing ? t('noticeHookFailOn') : t('noticeHookFailOff'))
+    }
+
+    async function handleRunDueDeliveries() {
+        const response = await post('webhooks/run-due')
+        if (!response.ok) return
+        const { deliveries } = (await response.json()) as { deliveries: { delivered: number } }
+        await refreshHooks()
+        pushNotice(t('noticeHooksDelivered', { count: deliveries.delivered }))
+    }
+
+    async function handleServerErrorScenario(): Promise<ScrubResult> {
+        const response = await fetch(`${API}/error-scenario`)
+        if (!response.ok) throw new Error(`error-scenario answered ${response.status}`)
+        return (await response.json()) as ScrubResult
     }
 
     async function handleRunPending() {
@@ -532,6 +633,31 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
                     onClear: handleClearMail,
                     onCopyLink: handleCopyLink,
                 }}
+                // Inbound mail is for an app that registers a handler (`@sssb/app-config/inbound-email`): with none,
+                // nothing the form sends could reach the app, so the Mail tab shows no compose form.
+                inbound={
+                    inboundData.handlers.length > 0
+                        ? {
+                              inbound: inboundData.inbound,
+                              orgs: inboundData.orgs,
+                              people: inboundData.people,
+                              handlers: inboundData.handlers,
+                              domain: inboundData.domain,
+                              onCompose: handleComposeInbound,
+                          }
+                        : undefined
+                }
+                messages={messagesData.messages}
+                events={eventsData.events}
+                audit={auditData.audit}
+                hooks={{
+                    endpoints: hooksData.endpoints,
+                    deliveries: hooksData.deliveries,
+                    failingEndpointIds: hooksData.failingEndpointIds,
+                    onToggleFail: handleToggleFail,
+                    onRunDue: handleRunDueDeliveries,
+                }}
+                runServerErrorScenario={handleServerErrorScenario}
                 jobs={{
                     jobs: jobsData.jobs,
                     held: jobsData.held,

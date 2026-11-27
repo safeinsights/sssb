@@ -2,7 +2,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vit
 import { makeTestTmpDir } from '../testing/tmp-dir'
 import type {
     SimulatorAgreements,
+    SimulatorAudit,
+    SimulatorEvents,
     SimulatorFlags,
+    SimulatorHooks,
+    SimulatorInbound,
+    SimulatorMessages,
     SimulatorMail,
     SimulatorSchedules,
     SimulatorSnapshots,
@@ -77,6 +82,12 @@ describe('dispatch', () => {
         expect((await call('snapshots')).status).toBe(404)
         expect((await call('reset', { json: {} })).status).toBe(404)
         expect((await call('presets', { json: { name: 'busy-harbor', locale: 'en' } })).status).toBe(404)
+        expect((await call('events')).status).toBe(404)
+        expect((await call('error-scenario')).status).toBe(404)
+        expect(
+            (await call('inbound/compose', { json: { from: 'a@b.test', orgSlug: 'depot', handler: 'support' } }))
+                .status,
+        ).toBe(404)
         expect(cookieStore.size).toBe(0)
     })
 
@@ -103,17 +114,25 @@ describe('dispatch', () => {
         expect(cookieStore.size).toBe(0)
     })
 
-    test.each(['reset', 'snapshots', 'snapshots/restore', 'snapshots/delete', 'flags', 'agreements/bump', 'presets'])(
-        'a %s POST that is not JSON is refused before it runs',
-        async (path) => {
-            const response = await call(path, {
-                method: 'POST',
-                headers: { 'content-type': 'text/plain' },
-                body: JSON.stringify({ name: 'busy-harbor', locale: 'en', flag: 'jobs-held', enabled: true }),
-            })
-            expect(response.status).toBe(415)
-        },
-    )
+    test.each([
+        'reset',
+        'snapshots',
+        'snapshots/restore',
+        'snapshots/delete',
+        'flags',
+        'agreements/bump',
+        'presets',
+        'inbound/compose',
+        'webhooks/fail',
+        'webhooks/run-due',
+    ])('a %s POST that is not JSON is refused before it runs', async (path) => {
+        const response = await call(path, {
+            method: 'POST',
+            headers: { 'content-type': 'text/plain' },
+            body: JSON.stringify({ name: 'busy-harbor', locale: 'en', flag: 'jobs-held', enabled: true }),
+        })
+        expect(response.status).toBe(415)
+    })
 })
 
 describe('people', () => {
@@ -267,6 +286,149 @@ describe('jobs and the clock', () => {
         expect((await call('clock', { json: { action: 'advance', deltaMs: 1 } })).status).toBe(400)
         expect(await (await call('clock', { json: { action: 'reset' } })).json()).toMatchObject({ clockOffsetMs: 0 })
         expect(await (await call('schedules/run-due', { json: {} })).json()).toMatchObject({ ok: true, spawned: 0 })
+    })
+})
+
+describe('the subsystem tabs', () => {
+    beforeAll(async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        await fakeDb.ready()
+    }, 120_000)
+
+    test('events lists what the world captured, and carries no flags', async () => {
+        const { fakeAnalytics } = await import('../adapters/fake/analytics')
+        await fakeAnalytics.capture('docket_opened', { org: 'depot' }, 'fixture-lead')
+        const body = (await (await call('events')).json()) as SimulatorEvents
+        expect(body.events.map((event) => event.event)).toContain('docket_opened')
+        expect(Object.keys(body)).toEqual(['events'])
+        expect(Array.isArray(((await (await call('audit')).json()) as SimulatorAudit).audit)).toBe(true)
+    })
+
+    test('messages lists every caught SMS', async () => {
+        const { fakeSendSms } = await import('../adapters/fake/sms')
+        await fakeSendSms({
+            to: 'Ada Keeper',
+            body: 'The crane is fixed.',
+            kind: 'fixture.notice',
+            recipientId: 'x',
+        } as never)
+        const body = (await (await call('messages')).json()) as SimulatorMessages
+        expect(body.messages.map((message) => message.body)).toContain('The crane is fixed.')
+    })
+
+    test('inbound offers the fixture handler, and compose takes mail in through it', async () => {
+        const offered = (await (await call('inbound')).json()) as SimulatorInbound
+        expect(offered.handlers).toEqual(['support'])
+        expect(offered.orgs.map((org) => org.slug)).toContain('depot')
+        expect(offered.domain).toEqual(expect.any(String))
+
+        const response = await call('inbound/compose', {
+            json: {
+                from: 'bo.deckhand@example.test',
+                orgSlug: 'depot',
+                handler: 'support',
+                subject: 'Bollard seven is loose',
+                body: 'It wobbles at high tide.',
+            },
+        })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({ ok: true, outcome: { status: 'handled', handler: 'support' } })
+        const after = (await (await call('inbound')).json()) as SimulatorInbound
+        expect(after.inbound.map((row) => row.subject)).toContain('Bollard seven is loose')
+
+        // A handler the app does not register is intake's to judge: kept, unmatched, never a server error.
+        const unknown = await call('inbound/compose', {
+            json: { from: 'bo.deckhand@example.test', orgSlug: 'depot', handler: 'nobody', subject: 'Hi', body: '' },
+        })
+        expect(await unknown.json()).toMatchObject({ outcome: { status: 'unmatched' } })
+    })
+
+    test.each([
+        [{}],
+        [{ from: 'a@b.test', orgSlug: 'depot' }],
+        [{ from: '  ', orgSlug: 'depot', handler: 'support' }],
+        [[]],
+        [{ from: 'a@b.test', orgSlug: 'depot', handler: 'support', body: 'x'.repeat(100_001) }],
+        [{ from: 'a@b.test', orgSlug: 'depot', handler: 'support', subject: 'x'.repeat(1_001) }],
+        [{ from: `${'x'.repeat(320)}@b.test`, orgSlug: 'depot', handler: 'support' }],
+    ])('compose refuses %j', async (json) => {
+        expect((await call('inbound/compose', { json })).status).toBe(400)
+    })
+
+    test('webhooks delivers what is due with its signature, and a failing endpoint fails its delivery', async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { createEndpoint, enqueueWebhookEvent } = await import('../db/webhooks')
+        const { worldNow } = await import('../adapters/fake/clock')
+        const raw = fakeDb.getDb()
+        const tenant = await raw
+            .selectFrom('tenants')
+            .select('id')
+            .where('slug', '=', 'harbor')
+            .executeTakeFirstOrThrow()
+        const org = await raw
+            .selectFrom('organizations')
+            .select('id')
+            .where('slug', '=', 'depot')
+            .executeTakeFirstOrThrow()
+        const { id: endpointId } = await createEndpoint(fakeDb, {
+            tenantId: tenant.id,
+            orgId: org.id,
+            url: 'https://harbor.example.test/hook',
+            eventKinds: ['docket.filed'],
+            secret: 'whsec_fixture',
+            createdBy: 'test',
+        })
+        const emit = () =>
+            enqueueWebhookEvent(
+                fakeDb,
+                {
+                    tenantId: tenant.id,
+                    orgId: org.id,
+                    kind: 'docket.filed',
+                    payload: { docketId: 'd1', label: 'crane', orgId: org.id },
+                },
+                worldNow(),
+            )
+
+        await emit()
+        const ran = (await (await call('webhooks/run-due', { json: {} })).json()) as { deliveries: unknown }
+        expect(ran.deliveries).toMatchObject({ delivered: 1, failed: 0 })
+        const listed = (await (await call('webhooks')).json()) as SimulatorHooks
+        expect(listed.endpoints.map((endpoint) => endpoint.id)).toContain(endpointId)
+        const delivered = listed.deliveries.find((delivery) => delivery.status === 'delivered')
+        expect(delivered?.signature).toEqual(expect.stringContaining('v1='))
+        expect(JSON.parse(delivered?.body ?? '{}')).toMatchObject({ kind: 'docket.filed' })
+
+        expect(await (await call('webhooks/fail', { json: { endpointId, failing: true } })).json()).toEqual({
+            ok: true,
+            failing: true,
+        })
+        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual([endpointId])
+        await emit()
+        expect(await (await call('webhooks/run-due', { json: {} })).json()).toMatchObject({
+            deliveries: { delivered: 0, failed: 1 },
+        })
+        await call('webhooks/fail', { json: { endpointId, failing: false } })
+        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual([])
+    })
+
+    test.each([
+        [{ endpointId: '6f1c2a3e-0b4d-4e5f-8a9b-1c2d3e4f5a6b' }],
+        [{ endpointId: 7, failing: true }],
+        [{ endpointId: 'x'.repeat(10_000), failing: true }],
+    ])('webhooks/fail refuses %j and stores nothing', async (json) => {
+        expect((await call('webhooks/fail', { json })).status).toBe(400)
+        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual([])
+    })
+
+    test('error-scenario shows an event before and after scrubbing', async () => {
+        const body = (await (await call('error-scenario')).json()) as {
+            raw: { request: { headers: Record<string, string> } }
+            scrubbed: unknown
+        }
+        expect(body.raw.request.headers['authorization']).toEqual(expect.stringContaining('Bearer'))
+        expect(JSON.stringify(body.scrubbed)).not.toContain('SECRET_')
+        expect(JSON.stringify(body.scrubbed)).not.toContain('user@example.com')
     })
 })
 

@@ -7842,3 +7842,25 @@ adopter-reference section. Rejected: **two PRs**, which would have raced each ot
 - **The wrapper is the kit's, as `withWebhookSecret` is**, not app-side as the showcase's Mailgun wrapper is, and the
   `webhooks/` exemption names it beside the other two (`packages/kit/test-fixture/api/webhooks/wharf-signals/route.ts`
   demonstrates the gate).
+
+## The Simulator host serves Events, Messages, inbound mail, Hooks and Errors (2026-11-27, `feat/simulator-host-subsystem-tabs`)
+
+`safeinsights/sssb#128`: `simulatorApi` serves `events`, `audit`, `messages`, `inbound`, `inbound/compose`, `webhooks`,
+`webhooks/fail`, `webhooks/run-due` and `error-scenario`, and `SimulatorHost` wires the tabs, so a generated app's
+`pnpm dev` has every framework tab but the ones `safeinsights/sssb#152` owns (an app's own tabs, the dev ticker).
+Decisions the issue left open:
+
+- **`events` carries no feature flags**; the Snapshots tab reads them from `flags`, as the stage before this decided.
+  Rejected: **the reference app's payload**, `{ events, flags }`, which made the Snapshots tab fetch the Events tab's
+  route; its glue moves onto the host with `safeinsights/sssb#129`.
+- **`inbound/compose` takes mail in through `intakeInboundEmail`**, the function the real inbound webhook calls (the
+  reference app's `api/webhooks/email` route), addressed with `formatInboundRecipient` on the demo domain. So it
+  reaches the app's handlers through `@sssb/kit/inbound-email/handlers` and no other way, and a handler the app does
+  not register is intake's to judge (kept as `unmatched`), never an error of the route's. Rejected: **calling the
+  handler from the registry directly**, a second way in that would skip intake's filing, status and fault isolation.
+- **The Mail tab shows inbound mail only when the app registers an inbound handler.** An empty registration is the
+  off switch for a capability; with no handler, nothing the form sends can reach the app. Rejected: **always showing
+  the compose form**, whose every message a starter would file as `unmatched` under a handler name it never had (the
+  form's default, `note`, is no app's: the reference app registers `support` and `feedback`).
+- **A failed Errors scenario leaves the tab as it was**: `ErrorsApp` now catches the promise it is handed. The
+  reference app's glue rejects it too when its server has stopped, and nothing caught that either.
