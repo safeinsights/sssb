@@ -7651,6 +7651,7 @@ left a choice open; the maintainer's standing instruction is to decide and recor
   tells such a host to set `PUBLIC_ORIGIN`. And in `next dev`, `X-Forwarded-Proto` still flips `request.url`'s scheme
   (Next reads it), so a peer on the developer's network can make `publicOrigin` say `https://localhost:<port>`: one bit,
   on a developer's machine.
+
 ## Teams are writable inside their tenant, and an exempt table declares its writes (2026-11-27, `feat/org-write-rls`)
 
 `safeinsights/sssb#124`: `app_user` held `SELECT` only on `organizations`, so a route that created, renamed or deleted
