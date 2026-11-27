@@ -394,6 +394,22 @@ describe('snapshots, flags, agreements and presets', () => {
         expect(await flagOn('jobs-held')).toBe(true)
     })
 
+    test("a preset's invite links name the app's public origin, never the request's own host", async () => {
+        const { clearCaughtEmails, listCaughtEmails } = await import('../adapters/fake/email')
+        clearCaughtEmails()
+        vi.stubEnv('PUBLIC_ORIGIN', 'https://app.example.org')
+        try {
+            expect((await call('presets', { json: { name: 'busy-harbor', locale: 'en' } })).status).toBe(200)
+        } finally {
+            vi.unstubAllEnvs()
+        }
+        const links = listCaughtEmails().flatMap(
+            (mail) => mail.html.match(/https?:\/\/[^"'\s<]*accept-invite[^"'\s<]*/g) ?? [],
+        )
+        expect(links.length).toBeGreaterThan(0)
+        for (const link of links) expect(link.startsWith('https://app.example.org/')).toBe(true)
+    })
+
     test.each([
         [{ name: 'no-such-preset', locale: 'en' }, 404],
         [{ name: 'Busy Harbor', locale: 'en' }, 400],
