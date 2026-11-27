@@ -7589,3 +7589,44 @@ standing rule for these sessions: decide, and record the rejected alternative.
   every app follows. The cutover checklist's `auth-dev` row gains one sentence (a sibling change edits the same row).
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
+
+## Teams are writable inside their tenant, and an exempt table declares its writes (2026-11-27, `feat/org-write-rls`)
+
+`safeinsights/sssb#124`: `app_user` held `SELECT` only on `organizations`, so a route that created, renamed or deleted
+a team failed with `permission denied`, and the coverage check could only hold an exempt table to `SELECT`-only.
+
+- **The writes are tenant-scoped by row-level security; the read stays open.** Migration 0018 grants `INSERT`,
+  `UPDATE` and `DELETE`, enables RLS on `organizations`, and adds one policy per command: `SELECT` is `USING (true)`
+  (callers are resolved before a tenant context exists, and a request joins another team of its own tenant), and each
+  write compares `tenant_id` with `app.current_tenant`, in `WITH CHECK` for `INSERT` and `UPDATE` and in `USING` for
+  `UPDATE` and `DELETE`. Rejected: **the issue's proposal, the grant with no row-level security**, leaving who may write
+  to `authorize(...)`. A team is not a hostile boundary, but the tenant is, and with no policy a request in one tenant
+  could rename or delete every other tenant's teams through the sanctioned `withTenant`, which is the cross-tenant
+  write the coverage check exists to refuse on every other table. With the policies, `authorize(...)` decides only
+  which person may write which team of their own tenant.
+- **ENABLE, not FORCE.** FORCE would hold the table's owner to the write policies too, and the owner seeds and syncs
+  teams with no tenant context (`packages/kit/src/db/seed.ts`, every proof suite's fixtures). A request never writes
+  as the owner: `getDb()` is banned in an app's `src`, and `withTenant` switches to `app_user`. Rejected: **FORCE with
+  an owner-only policy**, which would need the owner's role name in a framework migration, which differs per
+  deployment. A dedicated non-owner app role (the cutover checklist's `db-role-not-superuser`) is held to the
+  policies, which is the safer side: its raw reads are unchanged (`USING (true)`), and it had no write before.
+- **`TRUNCATE` is not granted, and cannot be declared**: it ignores row-level security, so it would empty every
+  tenant's teams.
+- **The coverage check: an exempt entry declares `writes`, and a declared write is proved, not trusted.**
+  `RLS_EXEMPT` entries became `{ reason, writes? }`, `writes` drawn from `INSERT`, `UPDATE`, `DELETE`. A table with no
+  declaration is still held to `SELECT`-only; a declared write must be held (else a stale declaration), on a table with
+  RLS enabled, admitted by some permissive policy, and every permissive policy admitting it (its command's or `ALL`)
+  must read the tenant setting in each expression that command evaluates (an absent one admits every row). The
+  pinned list carries the declared writes (`public.organizations (DELETE, INSERT, UPDATE)`), so a new declaration is
+  a two-file edit with `SECURITY.md`, as a new exemption already was. Rejected: **a declaration that only silences the
+  `SELECT`-only failure**, which would let a later `FOR ALL USING (true)` policy, or a disabled RLS, open every
+  tenant's teams with the gate green. The policy text is read as the tenant tables' is (it mentions the setting), with
+  the same limit: a policy that mentions it and filters nothing passes; the behavioural proofs are what show 0018
+  isolates.
+- **The composite uniqueness constraint is taken**: `organizations_tenant_id_id_unique` over `(tenant_id, id)`, so an
+  app table can declare `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)` and Postgres refuses
+  a row whose team is another tenant's. It costs one index on a small table and rejects nothing the primary key
+  accepts. SSSB's own tables keep their plain `org_id` references; moving them is a separate change.
+- **A `DELETE` succeeds only for a team nothing references**: every framework table that names an org holds a plain
+  foreign key with no cascade, and the audit trail is append-only, so a team with history cannot be hard-deleted.
+  That is the intended posture, not a gap; an app that retires teams marks them.

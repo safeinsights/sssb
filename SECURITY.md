@@ -53,22 +53,35 @@ the interesting reports are about that shape being wrong:
     bypassable by a superuser connection is a known non-finding; a report that SSSB encourages
     deploying as one is very much in scope.
 
-    **Three framework tables are deliberately exempt**, and a report that they lack RLS is a known
-    non-finding. All are INFRA tables read while resolving who is calling — before a tenant context
-    exists — so `app_user` holds a cross-tenant `SELECT` on each and none carries a policy:
-    `tenants` (`packages/kit/src/db/migrations/0001_tenants.ts`), the tenant registry itself;
-    `organizations` (`packages/kit/src/db/migrations/0003_organizations.ts`), which holds a team's
-    slug and display name; and `service_keys`
+    **Three framework tables are deliberately exempt from tenant isolation on READS**, and a report
+    that any tenant can read them is a known non-finding. All are INFRA tables read while resolving who
+    is calling — before a tenant context exists — so `app_user` holds a cross-tenant `SELECT` on each
+    that no policy narrows: `tenants` (`packages/kit/src/db/migrations/0001_tenants.ts`), the tenant
+    registry itself; `organizations` (`packages/kit/src/db/migrations/0003_organizations.ts`), which
+    holds a team's slug and display name; and `service_keys`
     (`packages/kit/src/db/migrations/0005_service_keys.ts`), which holds only PUBLIC key material —
-    its boundary is cryptographic, a caller proving possession of the matching private key. All three
-    grants are `SELECT`-only, and the coverage check asserts that from the catalog's ACLs — table
-    grants **and column grants**, every privilege other than `SELECT`. It reads the ACLs rather than
-    `has_table_privilege` because that function reports table-level privileges only, and a
+    its boundary is cryptographic, a caller proving possession of the matching private key.
+
+    `tenants` and `service_keys` are `SELECT`-only. `organizations` also grants `INSERT`, `UPDATE`
+    and `DELETE`, so a request can create, rename and delete teams
+    (`packages/kit/src/db/migrations/0018_organizations_write.ts`), and those writes are NOT exempt:
+    row-level security confines each to the request's own tenant (a write with no tenant context lands
+    nowhere, and an `UPDATE` cannot move a team to another tenant), and `TRUNCATE`, which ignores
+    row-level security, is not granted. Which person may write which team of their tenant is
+    `authorize()`'s decision (below). The table's owner is not held to those policies (RLS is enabled,
+    not forced): it is the privileged path that seeds teams, and a request never writes as it.
+
+    The coverage check proves all of this from the catalog. An exempt table may hold no privilege but
+    `SELECT` unless its entry declares the write, and each declared write must be held, on a table with
+    row-level security enabled, admitted by some permissive policy, and every permissive policy that
+    admits it must read the tenant setting in each expression that write evaluates. It reads the ACLs —
+    table grants **and column grants**, every privilege other than `SELECT` — rather than
+    `has_table_privilege`, because that function reports table-level privileges only, and a
     column-level `GRANT UPDATE (name)` was demonstrated to let `app_user` rewrite every row of the
-    tenant registry while the check reported nothing. The exemption list lives in that same file and
-    is pinned by an assertion, so adding one fails until this section is updated too. A way to make
-    any of them leak something beyond the above — or to reach tenant CONTENT through them — is very
-    much in scope.
+    tenant registry while the check reported nothing. The exemption list, with each table's declared
+    writes, lives in that same file and is pinned by an assertion, so changing either fails until this
+    section is updated too. A way to make any of them leak something beyond the above — to write
+    another tenant's team, or to reach tenant CONTENT through them — is very much in scope.
 
 - **Authorization.** `authorize()` is the single choke point for resource-level decisions. A build-time
   scan fails any mutating API route that neither calls it nor carries a justified exemption.
