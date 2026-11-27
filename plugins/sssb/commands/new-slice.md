@@ -27,8 +27,10 @@ House shape for a slice:
    and placeholder-identical, and the framework/app namespace partition is checked by the conformance suite).
 2. **Route handler(s)** under `src/app/api/`, using ports only; tenant-scoped data through `db.withTenant()` (never
    `getDb()`: `sssb/no-raw-db-handle` bans it under `src`); auth through `auth.requireUser()`/`requireRole()`. Every
-   mutating route (POST/PUT/PATCH/DELETE) MUST call `authorize(...)` (`@sssb/kit/authz/authorize`): the conformance
-   suite's `authz-mutations` check fails any route that neither calls it nor is justified in the app's exemption map.
+   route handler, a read (GET) as well as a mutation (POST/PUT/PATCH/DELETE), MUST call `authorize(...)`
+   (`@sssb/kit/authz/authorize`): the conformance suite's `authz-mutations` check fails any handler that neither calls
+   it nor is justified in the app's exemption map (a read that calls nothing but globals, such as a liveness probe,
+   reads nothing and passes).
 3. **Authorization**: register your subject types and rules on the seam: `AppSubjectType`, `appAbilityRules` (and
    any two-sided fields in `AppSubjectFields`) in `src/app-config/abilities.ts`, following the `Item` case.
    Deny-by-default is the framework's; you only add rules. A route a MACHINE calls passes its machine actor

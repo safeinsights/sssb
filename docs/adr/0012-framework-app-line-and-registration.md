@@ -1027,3 +1027,35 @@ states.
   conditions (`react-server` against `default`) is read as TypeScript resolves it, which may not be what Next serves.
 - The simulated-mode opening accepts only a `Response`, `NextResponse` or a thrown global error (any global `...Error`) or an error from `@sssb/kit/ports/errors`, in a file that assigns to none of those globals. Tampering through
   `Object.defineProperty(globalThis, ...)` is not seen.
+
+## Addendum (2026-11-27): reads are judged too
+
+safeinsights/sssb#103. The scan judged POST, PUT, PATCH and DELETE only, while the app guide already said a route that
+reads org-scoped data authorizes the read: a new org-scoped GET that forgot `authorize` passed every gate, and showed a
+person with no standing (the role `none`) their org's rows. It now judges every verb Next routes to an exported handler:
+GET, HEAD and OPTIONS by the same rules as a mutation, the same reachability, the same exemptions and gates (an entry
+covers every verb of the routes it names, each judged on its own), and the `service/` gate required alongside.
+
+**Which reads.** The issue proposed judging only a GET that visibly resolves an org (calls `orgIdForSlug`, the app's
+own resolver, or a tenant-scoped db call with an org id). Rejected: a helper in another module that resolves the org
+hides it, so the trigger fails open, and the showcase's service job poll, an org's jobs read through a domain helper,
+was exactly that case. Every read handler is judged instead, deny by default as a mutation is, with one more way to
+pass: a read that reads nothing. Its whole text, read lexically, calls nothing but globals declared nowhere in the file
+(`Response.json`, `new Date`, `fetch`), never an import, a helper, or a method on a parameter or a local; hands no name
+from outside the handler to a call; and calls none of the globals that reach a module, a string's code or reflection
+(`require`, `eval`, `Function`, `process`, `globalThis`, `Reflect`). It is a fact the analyser computes
+(`callsOnlyGlobals`), not a gate an entry names, so a liveness probe or a CORS preflight needs no exemption. Like a
+gate, it proves the KIND of handler: a getter, an iterator or a conversion an imported value carries is not seen.
+
+**Which action.** Any `authorize` call counts on a read, as on a mutation; the scan does not require the action to be
+`'read'`. A read that checks a stronger action (`manage`) is correct, and reading the action argument means evaluating
+an expression the scan does not evaluate.
+
+**Self-only and machine reads** authorize their subject rather than being exempted: the showcase's notification feed
+and preferences authorize the self-only `Notification` and `NotificationPref`, and its service job poll authorizes
+`read Job` with its machine actor. The framework adds one exemption, `storage/[...key]/route.ts`, the simulated-mode
+download twin of the exempt `storage-upload/route.ts`, under the simulated-mode 404 gate. The fixture carries an
+authorized read, a machine read, a Simulator read, that download, and a probe that reads nothing.
+
+**Limits.** A screen (a server component) that reads org-scoped data is not judged: the scan reads route handlers and
+Server Actions only. The conformance check keeps its id, `authz-mutations`, since an app's `optOut` names it.
