@@ -8454,14 +8454,18 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   which a wrapper's new marker could be written and then removed. A rename is atomic and takes whatever file is there at
   that instant: if it is the stale one it is deleted; if it is a newer one (written between the judgment and the move)
   it is put back with `link`, which fails rather than overwrite, so a still newer marker written meanwhile wins and the
-  copy is dropped; a marker written after the move finds the name free and is never touched. The cost, said in the
-  code: in that one race a reader that looks while the newer marker is out of place sees none, which is what it saw for
-  every marker before. `clearStaleMarker` is exported, with a `hooks.afterClaim` seam, for its tests, which interleave a
+  copy is dropped; a marker written after the move finds the name free and is never touched. Where a file system has no
+  hard links the put-back is a copy that fails rather than overwrite. **What it costs, found in review and filed as
+  `safeinsights/sssb#260`:** in that race a reader that looks while the newer marker is out of place sees none (a stress
+  run of one writer and four clearers spinning found the marker absent most of the time, which no real use approaches: a
+  clearer runs only after a marker was judged stale); a ticker that stops in that instant has its marker put back
+  (fails safe: the config refuses until the process exits); and two clearers meeting a newer and a newer-still marker
+  may leave the older. A write that fails now leaves no `.tmp` beside the marker. `clearStaleMarker` is exported, with a `hooks.afterClaim` seam, for its tests, which interleave a
   writer at each step. Not changed: `removeTickerMarker` (the owner removing its own, by pid) has the same read-then-remove
   shape, but only another wrapper's write into the same data directory in those microseconds could be lost, and the
   token logic cannot tell one live ticker from two. `ps`'s start is to the second on macOS, so two processes born in the
   same second share a token; a pid reused in the second it was released is not a case.
-- **`#249`: a default entry with a `failure` fails typed whatever answer it has,** in `complete`, `stream` and
+- **`#249`: a default entry with a `failure` (one with a `reason`; `{}` is none) fails typed whatever answer it has, and every method reads the same default entry,** in `complete`, `stream` and
   `runToolLoop`: `response: null` and no `conversation` (or an empty one) used to end in the plain "no default entry"
   `Error`, which hid the failure the person wrote the entry to see. A default entry with no answer and no failure still
   throws that error. (`response: null` is the recorder's "to record" marker and the recorder skips failing entries, so the

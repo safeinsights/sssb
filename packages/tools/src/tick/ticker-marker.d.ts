@@ -20,7 +20,8 @@ export declare function liveTickerMarker(
 
 /**
  * Removes the marker at `file` if it is still the stale one described (`pid` and `startedAt`), by moving it aside and
- * judging the copy, so a marker another wrapper writes at any moment is never the one removed. Exported for its test;
+ * judging the copy, so a marker another wrapper writes meanwhile is not removed with it (it is put back if the name is
+ * still free). Exported for its test;
  * `hooks.afterClaim` runs between the move and the judgment.
  *
  * @internal

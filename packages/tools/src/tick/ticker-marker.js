@@ -11,7 +11,7 @@
 // but `node:` imports here (the constraint @sssb/tools' ports module documents).
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { constants, copyFileSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -37,16 +37,22 @@ const beside = (/** @type {string} */ file, /** @type {string} */ kind) =>
 export function writeTickerMarker(file, seconds) {
     mkdirSync(path.dirname(file), { recursive: true })
     const temporary = beside(file, 'tmp')
-    writeFileSync(
-        temporary,
-        JSON.stringify({
-            pid: process.pid,
-            seconds,
-            startedAt: new Date().toISOString(),
-            startToken: processStartToken(process.pid),
-        }),
-    )
-    renameSync(temporary, file)
+    try {
+        writeFileSync(
+            temporary,
+            JSON.stringify({
+                pid: process.pid,
+                seconds,
+                startedAt: new Date().toISOString(),
+                startToken: processStartToken(process.pid),
+            }),
+        )
+        renameSync(temporary, file)
+    } catch (error) {
+        // A write that failed (no space) or a rename that did: leave nothing beside the marker, and say so.
+        rmSync(temporary, { force: true })
+        throw error
+    }
 }
 
 /** @param {string} file */
@@ -135,10 +141,12 @@ export function liveTickerMarker(file, tokenOf = processStartToken) {
  * Removes a marker found stale, and only that one (`safeinsights/sssb#257`). Reading the file and then removing it leaves
  * a gap in which another wrapper's new marker could be written and then removed, so the file is first MOVED aside, which
  * is atomic and takes whatever file is there at that instant, and judged from the copy: the one that was read, it is
- * deleted; a newer one, a wrapper wrote it between the judgment and the move, it is put back unless a newer still has
- * been written there meanwhile (`link` fails rather than overwrite, and the newest wins). A marker written after the
- * move finds the name free and is never touched. A reader that looks in the instant a newer marker is out of place sees
- * none, which is what it saw for every marker before this change, and only in that race.
+ * deleted; a newer one (a wrapper wrote it between the judgment and the move), it is put back if the name is still free
+ * (`link` fails rather than overwrite, and so does the copy used where a file system has no hard links), and when a
+ * marker has been written there meanwhile that one stays and the one taken is dropped. A marker written after the move
+ * finds the name free and is never touched. What it costs, once, in a race: for the instant a newer marker is out of
+ * place, a reader sees none (before, every marker the clearing met was removed for good); and when two clearers meet
+ * a newer marker and a newer-still one, either may be the one left, whichever is put back first.
  *
  * @param {string} file
  * @param {{ pid: number, startedAt: string }} stale
@@ -152,8 +160,8 @@ export function clearStaleMarker(file, stale, hooks = {}) {
         // already gone, or not ours to judge
         return
     }
-    hooks.afterClaim?.()
     try {
+        hooks.afterClaim?.()
         let current
         try {
             current = JSON.parse(readFileSync(claimed, 'utf8'))
@@ -161,16 +169,17 @@ export function clearStaleMarker(file, stale, hooks = {}) {
             current = null
         }
         if (current && current.pid === stale.pid && current.startedAt === stale.startedAt) return
-        // Not the one judged: a newer marker, or one that cannot be read. Put it back where it was.
+        // Not the one judged: a newer marker, or one that cannot be read. Put it back where it was, never over another.
         try {
             linkSync(claimed, file)
         } catch (error) {
-            // EEXIST: a still newer marker is there, and wins. Anything else (a file system without hard links): move it back.
-            if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) {
+            const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+            if (code !== 'EEXIST') {
+                // A file system without hard links: copy, which fails rather than overwrite too.
                 try {
-                    renameSync(claimed, file)
+                    copyFileSync(claimed, file, constants.COPYFILE_EXCL)
                 } catch {
-                    // gone
+                    // a marker is there already, or none can be put there: the one taken is dropped
                 }
             }
         }

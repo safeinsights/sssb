@@ -752,6 +752,26 @@ describe('fake llm failure entries', () => {
         }
     })
 
+    test('a failure with no reason is no failure, and two default entries are read the same way by every method', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const malformed = createFakeLlm({
+            fixturesDir: write([{ name: 'd', request: null, response: null, failure: {} }]),
+            catchRequests: false,
+        })
+        await expect(malformed.complete(request)).rejects.toThrow(/no matching llm fixture/)
+        const two = createFakeLlm({
+            fixturesDir: write([
+                { name: 'a', request: null, response: null },
+                { name: 'b', request: null, response: null, failure: { reason: 'timed-out' } },
+            ]),
+            catchRequests: false,
+        })
+        await expect(two.complete(request)).rejects.toMatchObject({ reason: 'timed-out' })
+        await expect(two.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toMatchObject({
+            reason: 'timed-out',
+        })
+    })
+
     test('a default entry with no answer and no failure is still the plain "no default entry" error', async () => {
         const { createFakeLlm } = await import('./llm')
         const llm = createFakeLlm({

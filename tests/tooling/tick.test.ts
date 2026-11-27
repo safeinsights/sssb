@@ -807,6 +807,23 @@ describe('the ticker marker: what keeps a ticking dev server out of the e2e suit
                 expect(dirOf(file)).toEqual(['dev-ticker.json'])
             })
 
+            it('leaves no temporary file behind when the marker cannot be written, and says so', () => {
+                const file = freshFile()
+                // a non-empty directory where the marker should go: the write succeeds, the rename onto it cannot
+                mkdirSync(path.join(file, 'in-the-way'), { recursive: true })
+                expect(() => writeTickerMarker(file, 5)).toThrow()
+                expect(dirOf(file)).toEqual(['dev-ticker.json'])
+            })
+
+            it('puts nothing over a marker that is there when it comes to put one back', () => {
+                const file = freshFile()
+                at(file, process.ppid, { startedAt: '2026-11-27T11:00:00.000Z' })
+                clearStaleMarker(file, stale, {
+                    afterClaim: () => at(file, process.pid, { startedAt: '2026-11-27T12:00:00.000Z' }),
+                })
+                expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ pid: process.pid })
+            })
+
             it('does not clear a marker another wrapper wrote between the read and the move, through liveTickerMarker', () => {
                 const file = freshFile()
                 at(file, other, { startToken: 'linux:boot:100' })
