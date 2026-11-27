@@ -7895,4 +7895,4 @@ manager's call, and leaves `#152`'s question open:
   equivalents in `packages/kit/src/server-lib/simulator-api.test.ts`.
 - **jscpd, re-measured as the issue asked** (2026-11-27, `pnpm jscpd` with the repository's `.jscpd.json`): 41 clones,
   654 duplicated lines (1.40%) on this branch, against 50 clones and 758 lines (1.57%) on `int-platform` before it.
-  Nine of the showcase-and-starter clone pairs `safeinsights/sssb#114` counts are gone with the glue.
+  Nine fewer clones in all, which counts the showcase-and-starter pairs `safeinsights/sssb#114` tracks among them.
