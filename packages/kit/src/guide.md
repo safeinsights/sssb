@@ -59,8 +59,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   until then), and the scheduled tick starts it, so the tick's period (five minutes by default) is the floor under every delay. A retried handler runs again over whatever
   the failed attempt left behind: a kind that retries must be idempotent, and keys its side effects on
   `ctx.firstJobId`, the same on every attempt (`ctx.attempt` says which one it is). Only the last attempt's outcome
-  notifies, so `jobNotify`'s `'failure'` means a failure with no attempts left. A build the CodeBuild runner loses without
-  posting its webhook is never retried: nothing watches CodeBuild for a lost build. If the static demo starts the kind,
+  notifies, so `jobNotify`'s `'failure'` means a failure with no attempts left. A job whose run was lost (the
+  in-process runner's invocation ended, or a CodeBuild build ended without posting its webhook) is failed by the
+  runner's sweep on the scheduled tick, and retried like any failure. If the static demo starts the kind,
   pass the same map as `useDemoWorld`'s `jobRetry`.
 - A route that submits a job for a person passes `requestedBy: user.id` to `submitJob` (`@sssb/kit/db/jobs`): when the
   team has no admin to tell (a fixed org source, `params.auth`, has none), the job's end reaches the person who started

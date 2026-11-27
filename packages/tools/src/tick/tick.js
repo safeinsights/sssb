@@ -268,10 +268,10 @@ function count(value) {
 
 /**
  * What a tick did, in one line. `failed` is a schedule whose spawn failed, and a delivery that failed or died: shown,
- * but it is the tick reporting work that went wrong, not the tick failing. A failed schedule is retried by the next tick
- * only when the failure was inside the spawn transaction (it rolled back); after that transaction commits, the job is
- * left queued and the schedule has moved on (the in-process runner's sweep fails the job after five minutes; see
- * `@sssb/kit/db/schedules`).
+ * but it is the tick reporting work that went wrong, not the tick failing. A schedule whose spawn failed inside its
+ * transaction (it rolled back) is tried again after a backoff, or turned off when its spec does not parse; after that
+ * transaction commits, the job is left queued and the schedule has moved on (the in-process runner's sweep fails the
+ * job after five minutes; see `@sssb/kit/db/schedules`).
  *
  * A tick is bounded (`@sssb/kit/server-lib/scheduled-tick`), so it may leave due work for the next one: then the line
  * ends with how much, as the route's `deferred` counts say it (a lower bound), whenever either drain's `stoppedBy` is set

@@ -1,6 +1,7 @@
 import { computeNextRunAt, parseScheduleSpec, type ScheduleSpec } from '../core/schedules'
 import type { DbPort } from '../ports/db'
 import type { JobsPort } from '../ports/jobs'
+import { backoffDelayMs } from '../core/webhook-events'
 import { recordAuditEvent } from './audit'
 import {
     beforeDeadline,
@@ -49,12 +50,13 @@ const MAX_COALESCE = 100_000
  * FAULT ISOLATION. One bad row must not stall every other schedule: each schedule drains inside its
  * own try/catch, counted in `failed`. What a failure leaves depends on where it happens. A failure
  * INSIDE the transaction (a malformed spec that parseScheduleSpec rejects, a failed insert) rolls it
- * back, so next_run_at never advanced and the next tick tries the row again. A failure AFTER it
+ * back, so next_run_at never advanced; `recordSpawnFailure` then turns off a schedule whose spec does not parse and
+ * backs off any other, so it is tried again later, ever less often (safeinsights/sssb#215). A failure AFTER it
  * commits (the audit insert, or jobs.start()) is NOT retried: the job row is already `queued` and the
  * schedule has already moved on to its next slot, so that period's run is not started by this code.
  * Retrying would make the spawn at-least-once for handlers written to run at most once. The job left
  * `queued` is the runner's to deal with: the in-process runner's sweep fails a job left queued too
- * long; under any other runner it stays queued.
+ * long, and the CodeBuild runner's sweep one whose build never started; under any other runner it stays queued.
  *
  * BOUND. With a budget, one call spawns at most `budget.maxItems` schedules and starts none after `budget.deadline`,
  * taking one due schedule from each tenant in turn, the tenants and each tenant's listed schedules in a fresh random
@@ -112,7 +114,40 @@ async function drainOne(
     now: Date,
     schedule: { id: string; tenant_id: string },
 ): Promise<number> {
-    const result = await db.withTenant(schedule.tenant_id, async (trx) => {
+    const result = await spawnInTransaction(db, now, schedule).catch(async (error: unknown) => {
+        // The spawn transaction rolled back, so the schedule is still due: back it off, or turn it off (#215).
+        await recordSpawnFailure(db, now, schedule, error)
+        throw error
+    })
+    if (!result) return 0
+
+    // Deliberately non-atomic with the spawn (the house audit pattern — its own transaction after
+    // commit): a system-initiated firing, attributed to the scheduler actor.
+    await recordAuditEvent(db, {
+        tenantId: schedule.tenant_id,
+        orgId: result.orgId,
+        actorUserId: SCHEDULER_ACTOR,
+        action: 'schedule.fired',
+        subjectType: 'JobSchedule',
+        subjectId: schedule.id,
+    })
+    await jobs.start({
+        id: result.jobId,
+        kind: result.kind,
+        tenantId: schedule.tenant_id,
+        orgId: result.orgId,
+        payload: { scheduleId: schedule.id },
+    })
+    return 1
+}
+
+/** The locked spawn+advance transaction; null when the under-lock re-check finds nothing to do. */
+async function spawnInTransaction(
+    db: DbPort,
+    now: Date,
+    schedule: { id: string; tenant_id: string },
+): Promise<{ jobId: string; kind: string; orgId: string } | null> {
+    return db.withTenant(schedule.tenant_id, async (trx) => {
         const locked = await trx
             .selectFrom('job_schedules')
             .select(['enabled', 'spec', 'kind', 'org_id', 'next_run_at'])
@@ -145,39 +180,110 @@ async function drainOne(
             next = computeNextRunAt(spec, next)
         }
         if (next.getTime() <= now.getTime()) next = computeNextRunAt(spec, now)
-        await trx.updateTable('job_schedules').set({ next_run_at: next }).where('id', '=', schedule.id).execute()
+        await trx
+            .updateTable('job_schedules')
+            .set({ next_run_at: next, failure_count: 0, last_error: null })
+            .where('id', '=', schedule.id)
+            .execute()
 
         return { jobId: job.id, kind: locked.kind, orgId: locked.org_id }
     })
-    if (!result) return 0
+}
 
-    // Deliberately non-atomic with the spawn (the house audit pattern — its own transaction after
-    // commit): a system-initiated firing, attributed to the scheduler actor.
-    await recordAuditEvent(db, {
-        tenantId: schedule.tenant_id,
-        orgId: result.orgId,
-        actorUserId: SCHEDULER_ACTOR,
-        action: 'schedule.fired',
-        subjectType: 'JobSchedule',
-        subjectId: schedule.id,
-    })
-    await jobs.start({
-        id: result.jobId,
-        kind: result.kind,
-        tenantId: schedule.tenant_id,
-        orgId: result.orgId,
-        payload: { scheduleId: schedule.id },
-    })
-    return 1
+/** How many characters (code points) of a failure's message a schedule keeps in `last_error`. */
+const LAST_ERROR_MAX = 500
+
+/** The first `max` code points of `text`: never half a surrogate pair. */
+function clip(text: string, max: number): string {
+    return Array.from(text).slice(0, max).join('')
+}
+
+/**
+ * A schedule's spawn failed INSIDE its transaction, which rolled back, so the schedule is still due (safeinsights/sssb
+ * #215). Left so, it would fail again on every tick and take one of its tenant's turns each time. In a transaction of
+ * its own, under the row lock, this counts the failure and keeps its message (`failure_count`, `last_error`), then:
+ *
+ * - a spec that does not parse can never spawn, so the schedule is DISABLED and an audit event (`schedule.disabled`,
+ *   saying so) records it; the
+ *   error is the schedule's `last_error`. Someone must fix the spec and enable it again.
+ * - any other failure may pass (an insert the database refused for a moment), so the schedule BACKS OFF: its
+ *   `next_run_at` moves to `now` plus the webhook deliveries' backoff for that many failures in a row (one minute, then
+ *   five, thirty, two hours, six hours, and six hours on). A schedule that fails every time is therefore due ever less
+ *   often, and never holds its tenant's oldest due slot for long.
+ *
+ * The next spawn that commits resets both columns. A schedule another tick fired, advanced or turned off meanwhile is
+ * left alone. A failure here is logged, never thrown: the spawn's own error is what the drain counts.
+ */
+async function recordSpawnFailure(
+    db: DbPort,
+    now: Date,
+    schedule: { id: string; tenant_id: string },
+    error: unknown,
+): Promise<void> {
+    const message = clip(error instanceof Error ? error.message : String(error), LAST_ERROR_MAX)
+    try {
+        const disabled = await db.withTenant(schedule.tenant_id, async (trx) => {
+            const row = await trx
+                .selectFrom('job_schedules')
+                .select(['enabled', 'spec', 'org_id', 'next_run_at', 'failure_count'])
+                .where('id', '=', schedule.id)
+                .$call(family.lockRow)
+                .executeTakeFirst()
+            if (!row || !row.enabled || new Date(row.next_run_at) > now) return null
+            const failures = row.failure_count + 1
+            const unparseable = (() => {
+                try {
+                    parseScheduleSpec(row.spec)
+                    return false
+                } catch {
+                    return true
+                }
+            })()
+            await trx
+                .updateTable('job_schedules')
+                .set({
+                    failure_count: failures,
+                    last_error: message,
+                    ...(unparseable
+                        ? { enabled: false }
+                        : { next_run_at: new Date(now.getTime() + backoffDelayMs(failures)) }),
+                })
+                .where('id', '=', schedule.id)
+                .execute()
+            return unparseable ? { orgId: row.org_id } : null
+        })
+        if (!disabled) return
+        await recordAuditEvent(db, {
+            tenantId: schedule.tenant_id,
+            orgId: disabled.orgId,
+            actorUserId: SCHEDULER_ACTOR,
+            action: 'schedule.disabled',
+            subjectType: 'JobSchedule',
+            subjectId: schedule.id,
+            // The reason alone: the error echoes the stored spec, whatever it holds, which the audit log may refuse (an
+            // address, a token). The error itself is the schedule's `last_error`.
+            detail: { reason: 'spec does not parse' },
+        })
+    } catch (failure) {
+        console.warn(
+            `SSSB scheduler: schedule ${schedule.id} failed to spawn, and recording that failed too: ${
+                failure instanceof Error ? failure.message : String(failure)
+            }`,
+        )
+    }
 }
 
 /** One schedule as the Simulator Jobs tab sees it, joined to tenant/org slugs (NOT a product view). */
 export interface WorldSchedule {
     id: string
     kind: string
-    spec: ScheduleSpec
+    /** Null when the stored spec does not parse: such a schedule is shown, turned off, with its `lastError` (#215). */
+    spec: ScheduleSpec | null
     nextRunAt: string
     enabled: boolean
+    /** Spawns in a row that failed inside the spawn transaction, and the latest one's message (#215). */
+    failureCount: number
+    lastError: string | null
     tenantSlug: string
     orgSlug: string
 }
@@ -200,6 +306,8 @@ export async function listSchedulesForWorld(db: DbPort): Promise<WorldSchedule[]
             'job_schedules.spec as spec',
             'job_schedules.next_run_at as next_run_at',
             'job_schedules.enabled as enabled',
+            'job_schedules.failure_count as failure_count',
+            'job_schedules.last_error as last_error',
             'tenants.slug as tenant_slug',
             'organizations.slug as org_slug',
         ])
@@ -208,10 +316,21 @@ export async function listSchedulesForWorld(db: DbPort): Promise<WorldSchedule[]
     return rows.map((r) => ({
         id: r.id,
         kind: r.kind,
-        spec: parseScheduleSpec(r.spec),
+        spec: specOrNull(r.spec),
         nextRunAt: toIso(r.next_run_at),
         enabled: r.enabled,
+        failureCount: r.failure_count,
+        lastError: r.last_error,
         tenantSlug: r.tenant_slug,
         orgSlug: r.org_slug,
     }))
+}
+
+/** The spec if it parses, else null: one bad row must not take the whole world view down with it. */
+function specOrNull(value: unknown): ScheduleSpec | null {
+    try {
+        return parseScheduleSpec(value)
+    } catch {
+        return null
+    }
 }
