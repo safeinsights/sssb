@@ -66,18 +66,20 @@ export class DatabaseUnavailableError extends Error {
  * Why the model provider can't serve a call now. `rate-limited`: the provider refused it for the account's rate limit
  * (HTTP 429, or a `rate_limit_error` event in a stream). `overloaded`: the provider is over capacity (HTTP 529, or an
  * `overloaded_error` event in a stream). `timed-out`: the call did not finish within its deadline (`timeoutMs` on the
- * request, 25 s by default), retries included.
+ * request, 25 s by default), retries included. `connection-lost`: the connection to the provider failed, when the call
+ * was sent or while its answer was being read (a reset, a refused or unreachable host, a body that ends early); the
+ * adapter has already repeated a call that had delivered no text.
  */
-export type LlmUnavailableReason = 'rate-limited' | 'overloaded' | 'timed-out'
+export type LlmUnavailableReason = 'rate-limited' | 'overloaded' | 'timed-out' | 'connection-lost'
 
 /**
  * Thrown by the LLM port when the model provider can't serve a call now and may soon: a rate limit, an overloaded
- * provider, or a call that outran its deadline. `complete`, `stream` and `runToolLoop` all throw it, so a caller
- * handles one error whichever it called. Route glue answers a 503 with `Retry-After: retryAfterSeconds` (the
- * provider's own, when it sent one). A job handler lets it propagate, which fails the job (`runJobInProcess` records the error
- * message).
+ * provider, a connection that dropped, or a call that outran its deadline. `complete`, `stream` and `runToolLoop` all
+ * throw it, so a caller handles one error whichever it called. Route glue answers a 503 with
+ * `Retry-After: retryAfterSeconds` (the provider's own, when it sent one). A job handler lets it propagate, which fails
+ * the job (`runJobInProcess` records the error message).
  *
- * It does not say the call did nothing: a `timed-out` call may have been billed, and a tool loop may already have run
+ * It does not say the call did nothing: a `timed-out` or `connection-lost` call may have been billed, and a tool loop may already have run
  * the app's `execute` for some turns, so treat a repeat as running those again. `stream` throws it from the iteration, after
  * the text it had already delivered, so a route that has started its response cannot change the status (see
  * `LlmPort.stream`). `cause` is the vendor SDK's error (for `timed-out`, its

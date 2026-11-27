@@ -48,4 +48,39 @@ describe('replayAssistant', () => {
             reason: 'overloaded',
         })
     })
+
+    it("replays a default entry's conversation with its tools, as the fake adapter does (#241)", async () => {
+        const fixture: AssistantFixture = { entries: [{ request: null, response: 'ignored', conversation }] }
+        const calls: unknown[] = []
+        const text = await replayAssistant(fixture, 'a question nothing recorded', async (name, input) => {
+            calls.push([name, input])
+            return '{}'
+        })
+        expect(text).toBe('Two tickets are open.')
+        expect(calls).toEqual([['lookup', { q: 1 }]])
+    })
+
+    it("runs a failing default entry's tools and then throws, as the fake adapter does", async () => {
+        const fixture: AssistantFixture = {
+            entries: [{ request: null, response: null, conversation, failure: { reason: 'timed-out' } }],
+        }
+        const calls: string[] = []
+        const error = await replayAssistant(fixture, 'anything', async (name) => {
+            calls.push(name)
+            return '{}'
+        }).catch((e: unknown) => e)
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
+        expect(calls).toEqual(['lookup'])
+    })
+
+    it("throws a failing entry's failure even when it has no answer to give", async () => {
+        const fixture: AssistantFixture = {
+            entries: [{ request: null, response: null, failure: { reason: 'overloaded' } }],
+        }
+        await expect(replayAssistant(fixture, 'q', async () => '{}')).rejects.toMatchObject({ reason: 'overloaded' })
+    })
+
+    it('answers fixture missing when no entry can answer', async () => {
+        expect(await replayAssistant({ entries: [] }, 'q', async () => '{}')).toBe('fixture missing')
+    })
 })
