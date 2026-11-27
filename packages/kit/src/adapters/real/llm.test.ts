@@ -140,15 +140,62 @@ describe('createRealLlm: the deadline', () => {
         expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
     })
 
-    it('counts the SDK retries against it: a long Retry-After cannot outlast the deadline', async () => {
+    it('answers at once when the provider`s Retry-After does not fit in the deadline, with the provider`s own figure', async () => {
+        const fetchMock = stubFetch(() => json(429, errorBody('rate_limit_error'), { 'retry-after': '60' }))
+        const started = Date.now()
+        const error = await rejection(createRealLlm('key').complete({ ...request, timeoutMs: 300 }))
+        expect(error).toMatchObject({ reason: 'rate-limited', retryAfterSeconds: 60 })
+        expect(Date.now() - started).toBeLessThan(250)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('counts the retry and its wait against the deadline', async () => {
         const fetchMock = stubFetch((_init, call) =>
-            call === 1 ? json(529, errorBody('overloaded_error'), { 'retry-after-ms': '60000' }) : hang(),
+            call === 1 ? json(529, errorBody('overloaded_error'), { 'retry-after-ms': '20' }) : hang(),
         )
         const started = Date.now()
-        const error = await rejection(createRealLlm('key').complete({ ...request, timeoutMs: 60 }))
+        const error = await rejection(createRealLlm('key').complete({ ...request, timeoutMs: 100 }))
         expect(error).toMatchObject({ reason: 'timed-out' })
-        expect(Date.now() - started).toBeLessThan(2000)
-        expect(fetchMock).toHaveBeenCalledTimes(1)
+        expect(Date.now() - started).toBeLessThan(1500)
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('repeats a 500 and a dropped connection once, and nothing else the provider refuses', async () => {
+        const refused = stubFetch((_init, call) =>
+            call === 1 ? json(500, errorBody('api_error'), { 'retry-after-ms': '1' }) : json(200, textMessage('ok')),
+        )
+        expect(await createRealLlm('key').complete(request)).toEqual({ text: 'ok' })
+        expect(refused).toHaveBeenCalledTimes(2)
+        const dropped = stubFetch((_init, call) =>
+            call === 1 ? Promise.reject(new TypeError('fetch failed')) : json(200, textMessage('ok')),
+        )
+        expect(await createRealLlm('key').complete(request)).toEqual({ text: 'ok' })
+        expect(dropped).toHaveBeenCalledTimes(2)
+        const bad = stubFetch(() => json(400, errorBody('invalid_request_error')))
+        await rejection(createRealLlm('key').complete(request))
+        expect(bad).toHaveBeenCalledTimes(1)
+    })
+
+    it('ends a deadline that passes while the response body is still being read as timed-out, not a bare AbortError', async () => {
+        stubFetch((init) => {
+            const body = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    init.signal?.addEventListener('abort', () =>
+                        controller.error(new DOMException('aborted', 'AbortError')),
+                    )
+                },
+            })
+            return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })
+        })
+        expect(await rejection(createRealLlm('key').complete({ ...request, timeoutMs: 50 }))).toMatchObject({
+            name: 'LlmUnavailableError',
+            reason: 'timed-out',
+        })
+    })
+
+    it('takes a fractional timeoutMs, which the SDK`s own timeout option would refuse', async () => {
+        stubFetch(() => json(200, textMessage('ok')))
+        expect(await createRealLlm('key').complete({ ...request, timeoutMs: 1500.5 })).toEqual({ text: 'ok' })
     })
 
     it('takes the default from the options, and the request overrides it', async () => {
@@ -233,6 +280,50 @@ describe('createRealLlm: the deadline', () => {
         expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
     })
 
+    it('does not let a deadline that passes while the consumer is busy read as a complete stream', async () => {
+        stubFetch(quietAfterOneChunk)
+        const received: string[] = []
+        const error = await rejection(
+            (async () => {
+                for await (const chunk of createRealLlm('key').stream({ ...request, timeoutMs: 50 })) {
+                    received.push(chunk)
+                    await new Promise((resolve) => setTimeout(resolve, 150))
+                }
+            })(),
+        )
+        expect(received).toEqual(['partial '])
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
+    })
+
+    it('maps an overload the provider reports in the middle of a stream, where no status comes with it', async () => {
+        const sse = `event: error\ndata: ${JSON.stringify(errorBody('overloaded_error'))}\n\n`
+        stubFetch(() => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }))
+        const error = await rejection(
+            (async () => {
+                for await (const chunk of createRealLlm('key', { maxRetries: 0 }).stream(request)) void chunk
+            })(),
+        )
+        expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'overloaded' })
+    })
+
+    it('starts a stream again after a refusal before its first text, never after text was delivered', async () => {
+        const ok = () =>
+            new Response(
+                `event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { ...messageBody([]), content: [], stop_reason: null } })}\n\n` +
+                    `event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}\n\n` +
+                    `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hello' } })}\n\n` +
+                    `event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+                { status: 200, headers: { 'content-type': 'text/event-stream' } },
+            )
+        const fetchMock = stubFetch((_init, call) =>
+            call === 1 ? json(529, errorBody('overloaded_error'), { 'retry-after-ms': '1' }) : ok(),
+        )
+        const received: string[] = []
+        for await (const chunk of createRealLlm('key').stream(request)) received.push(chunk)
+        expect(received).toEqual(['hello'])
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
     it('stops the request when a stream consumer leaves early', async () => {
         const fetchMock = stubFetch(quietAfterOneChunk)
         for await (const chunk of createRealLlm('key').stream({ ...request, timeoutMs: 5000 })) {
@@ -259,31 +350,30 @@ describe('createRealLlm: runToolLoop', () => {
         expect(fetchMock.mock.calls.map(([, init]) => init?.signal instanceof AbortSignal)).toEqual([true, true])
     })
 
-    it('counts the app`s `execute` against the deadline: a slow tool ends the loop as timed-out', async () => {
+    it('stops waiting for a slow `execute` when the deadline passes: the call ends on time as timed-out', async () => {
         const fetchMock = stubFetch(() => json(200, toolUse))
+        const started = Date.now()
         const error = await rejection(
             createRealLlm('key').runToolLoop({
                 ...request,
                 tools,
                 timeoutMs: 40,
-                execute: () => new Promise((resolve) => setTimeout(() => resolve('late'), 120)),
+                execute: () => new Promise((resolve) => setTimeout(() => resolve('late'), 600)),
             }),
         )
         expect(error).toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
-        // The second turn was never answered: its call was refused by the spent deadline.
-        expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(2)
+        expect(Date.now() - started).toBeLessThan(400)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
-    it('does not turn the app`s own error into an LLM error, even past the deadline', async () => {
+    it('does not turn the app`s own error into an LLM error', async () => {
         stubFetch(() => json(200, toolUse))
         const boom = new Error('the tool broke')
         const error = await rejection(
             createRealLlm('key').runToolLoop({
                 ...request,
                 tools,
-                timeoutMs: 20,
                 execute: async () => {
-                    await new Promise((resolve) => setTimeout(resolve, 60))
                     throw boom
                 },
             }),

@@ -9,15 +9,20 @@
  */
 export const LLM_DEFAULT_TIMEOUT_MS = 25_000
 
+/** The longest a timer can wait: Node fires one set for more than this after 1 ms. */
+const LLM_MAX_TIMEOUT_MS = 2 ** 31 - 1
+
 /**
- * The deadline for a call: what the request asked for, else `fallback`. A value that is not a positive finite number
- * of milliseconds is a bug in the caller, so it throws a `RangeError` instead of becoming a call with no bound (`0`
- * and `Infinity` would both mean "never" to a timer).
+ * The deadline for a call: what the request asked for, else `fallback`. A value that is not a positive number of
+ * milliseconds a timer can wait (up to 2^31 - 1, about 24 days) is a bug in the caller, so it throws a `RangeError`
+ * instead of becoming a call with no bound or one that ends at once (`0` and `Infinity` would be "now" and "never").
  */
 export function llmTimeoutMs(requested: number | undefined, fallback: number = LLM_DEFAULT_TIMEOUT_MS): number {
     if (requested === undefined) return fallback
-    if (!Number.isFinite(requested) || requested <= 0) {
-        throw new RangeError(`llm timeoutMs must be a positive, finite number of milliseconds, got ${requested}`)
+    if (!Number.isFinite(requested) || requested <= 0 || requested > LLM_MAX_TIMEOUT_MS) {
+        throw new RangeError(
+            `llm timeoutMs must be a positive number of milliseconds no more than ${LLM_MAX_TIMEOUT_MS}, got ${requested}`,
+        )
     }
     return requested
 }

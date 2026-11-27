@@ -11,6 +11,7 @@ describe('llmTimeoutMs', () => {
         expect(llmTimeoutMs(undefined, 90_000)).toBe(90_000)
         expect(llmTimeoutMs(300_000, 90_000)).toBe(300_000)
         expect(llmTimeoutMs(0.5)).toBe(0.5)
+        expect(llmTimeoutMs(2 ** 31 - 1)).toBe(2 ** 31 - 1)
     })
 
     it('refuses what a timer would read as "never" or "now"', () => {
@@ -20,6 +21,7 @@ describe('llmTimeoutMs', () => {
             Number.NaN,
             Infinity,
             -Infinity,
+            2 ** 31,
             '5' as unknown as number,
             null as unknown as number,
         ]) {
