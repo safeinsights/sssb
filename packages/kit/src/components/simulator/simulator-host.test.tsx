@@ -24,7 +24,7 @@ vi.mock('@sssb/app-config/tours', () => ({
 }))
 
 const AGREEMENT = {
-    id: 'a1',
+    id: '6f1c2a3e-0b4d-4e5f-8a9b-1c2d3e4f5a6b',
     tenantSlug: 'harbor',
     kind: 'tos',
     title: 'Harbor rules',
@@ -64,7 +64,10 @@ beforeEach(() => {
         }
         return respond(answers[`${method} ${path}`] ?? { status: method === 'POST' ? 204 : 404 })
     })
-    vi.stubGlobal('location', { ...window.location, pathname: '/en/dashboard', assign, reload })
+    // Location's fields are getters on its prototype, so a spread copies none of them: the stub names each one.
+    const url = new URL('http://localhost:3000/en/dashboard')
+    const { href, origin, protocol, host, hostname, port, pathname, search, hash } = url
+    vi.stubGlobal('location', { href, origin, protocol, host, hostname, port, pathname, search, hash, assign, reload })
     window.localStorage.setItem('app-simulator-collapsed', 'false')
     window.localStorage.setItem('app-simulator-tab', 'snapshots')
 })
@@ -126,7 +129,7 @@ describe('SimulatorHost: Snapshots', () => {
         const container = await renderHost()
         expect(byTestId(container, 'snapshots-row-harbor-noon')).toBeTruthy()
         expect(byTestId(container, 'flag-toggle-jobs-held')).toBeTruthy()
-        expect(byTestId(container, 'simulator-agreement-a1')).toBeTruthy()
+        expect(byTestId(container, `simulator-agreement-${AGREEMENT.id}`)).toBeTruthy()
         expect(byTestId(container, 'preset-load-busy-harbor')).toBeTruthy()
     })
 
@@ -186,8 +189,8 @@ describe('SimulatorHost: Snapshots', () => {
     it('an agreement bump posts its id and says the new version', async () => {
         answers['POST agreements/bump'] = { body: { version: 2 } }
         const container = await renderHost()
-        await click(container, 'agreement-bump-a1')
-        expect(posts).toEqual([{ path: 'agreements/bump', body: { agreementId: 'a1' } }])
+        await click(container, `agreement-bump-${AGREEMENT.id}`)
+        expect(posts).toEqual([{ path: 'agreements/bump', body: { agreementId: AGREEMENT.id } }])
         expect(notices(container).join(' ')).toContain('v2')
     })
 

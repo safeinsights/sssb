@@ -474,9 +474,12 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
 
     function handleToggleFlag(flag: string, enabled: boolean) {
         // A full reload: what a flag changes (the demo banner, say) is server output, read again only on a new request.
-        void post('flags', { flag, enabled }).then((response) => {
-            if (response.ok) window.location.reload()
-        })
+        void post('flags', { flag, enabled })
+            .then((response) => {
+                if (response.ok) window.location.reload()
+            })
+            // The dev server stopped: the switch stays where the server has it.
+            .catch(() => undefined)
     }
 
     function handleBumpAgreement(id: string) {

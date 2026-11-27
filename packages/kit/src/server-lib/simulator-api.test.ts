@@ -297,6 +297,7 @@ describe('snapshots, flags, agreements and presets', () => {
     })
 
     test('a refused POST changes nothing', async () => {
+        await call('flags', { json: { flag: 'jobs-held', enabled: true } })
         const refused = await call('flags', {
             method: 'POST',
             headers: { 'content-type': 'text/plain' },
