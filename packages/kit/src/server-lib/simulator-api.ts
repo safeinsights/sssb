@@ -125,6 +125,9 @@ export interface SimulatorAgreements {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** The most `inbound/compose` takes, in characters: an address's limit, a long subject line, a long email's text. */
+const COMPOSE_LIMITS = { address: 320, subject: 1_000, body: 100_000 }
+
 /** GET `events`: every analytics event the world captured. The flags are on `flags`: the Snapshots tab owns them. */
 export interface SimulatorEvents {
     events: AnalyticsEvent[]
@@ -551,6 +554,13 @@ async function inboundCompose(request: Request): Promise<Response> {
     if (!from || !orgSlug || !handler) return badRequest('invalid-payload')
     const subject = body?.['subject']
     const text = body?.['body']
+    // A demo's message, not a mailbox's: bounded, since each one is a row, a handler run and often a reply.
+    const oversized =
+        from.length > COMPOSE_LIMITS.address ||
+        orgSlug.length + handler.length > COMPOSE_LIMITS.address ||
+        (typeof subject === 'string' && subject.length > COMPOSE_LIMITS.subject) ||
+        (typeof text === 'string' && text.length > COMPOSE_LIMITS.body)
+    if (oversized) return badRequest('too-large')
     const outcome = await intakeInboundEmail(db, auth, {
         to: formatInboundRecipient(orgSlug, handler, DEMO_INBOUND_DOMAIN),
         from,
@@ -579,7 +589,10 @@ async function webhookFail(request: Request): Promise<Response> {
     const body = await jsonObject(request)
     const endpointId = body?.['endpointId']
     const failing = body?.['failing']
-    if (typeof endpointId !== 'string' || typeof failing !== 'boolean') return badRequest('invalid-request')
+    // An endpoint's id is a uuid: the fake store keeps whatever it is given, and every Hooks poll reads it back.
+    if (typeof endpointId !== 'string' || !UUID_PATTERN.test(endpointId) || typeof failing !== 'boolean') {
+        return badRequest('invalid-request')
+    }
     setEndpointFailing(endpointId, failing)
     return Response.json({ ok: true, failing })
 }

@@ -348,32 +348,77 @@ describe('the subsystem tabs', () => {
         [{ from: 'a@b.test', orgSlug: 'depot' }],
         [{ from: '  ', orgSlug: 'depot', handler: 'support' }],
         [[]],
+        [{ from: 'a@b.test', orgSlug: 'depot', handler: 'support', body: 'x'.repeat(100_001) }],
+        [{ from: 'a@b.test', orgSlug: 'depot', handler: 'support', subject: 'x'.repeat(1_001) }],
+        [{ from: `${'x'.repeat(320)}@b.test`, orgSlug: 'depot', handler: 'support' }],
     ])('compose refuses %j', async (json) => {
         expect((await call('inbound/compose', { json })).status).toBe(400)
     })
 
-    test('webhooks lists the world, makes an endpoint fail, and runs what is due', async () => {
-        const listed = (await (await call('webhooks')).json()) as SimulatorHooks
-        expect(listed).toMatchObject({
-            endpoints: expect.any(Array),
-            deliveries: expect.any(Array),
-            failingEndpointIds: [],
+    test('webhooks delivers what is due with its signature, and a failing endpoint fails its delivery', async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { createEndpoint, enqueueWebhookEvent } = await import('../db/webhooks')
+        const { worldNow } = await import('../adapters/fake/clock')
+        const raw = fakeDb.getDb()
+        const tenant = await raw
+            .selectFrom('tenants')
+            .select('id')
+            .where('slug', '=', 'harbor')
+            .executeTakeFirstOrThrow()
+        const org = await raw
+            .selectFrom('organizations')
+            .select('id')
+            .where('slug', '=', 'depot')
+            .executeTakeFirstOrThrow()
+        const { id: endpointId } = await createEndpoint(fakeDb, {
+            tenantId: tenant.id,
+            orgId: org.id,
+            url: 'https://harbor.example.test/hook',
+            eventKinds: ['docket.filed'],
+            secret: 'whsec_fixture',
+            createdBy: 'test',
         })
+        const emit = () =>
+            enqueueWebhookEvent(
+                fakeDb,
+                {
+                    tenantId: tenant.id,
+                    orgId: org.id,
+                    kind: 'docket.filed',
+                    payload: { docketId: 'd1', label: 'crane', orgId: org.id },
+                },
+                worldNow(),
+            )
 
-        expect(await (await call('webhooks/fail', { json: { endpointId: 'ep-1', failing: true } })).json()).toEqual({
+        await emit()
+        const ran = (await (await call('webhooks/run-due', { json: {} })).json()) as { deliveries: unknown }
+        expect(ran.deliveries).toMatchObject({ delivered: 1, failed: 0 })
+        const listed = (await (await call('webhooks')).json()) as SimulatorHooks
+        expect(listed.endpoints.map((endpoint) => endpoint.id)).toContain(endpointId)
+        const delivered = listed.deliveries.find((delivery) => delivery.status === 'delivered')
+        expect(delivered?.signature).toEqual(expect.stringContaining('v1='))
+        expect(JSON.parse(delivered?.body ?? '{}')).toMatchObject({ kind: 'docket.filed' })
+
+        expect(await (await call('webhooks/fail', { json: { endpointId, failing: true } })).json()).toEqual({
             ok: true,
             failing: true,
         })
-        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual(['ep-1'])
-        await call('webhooks/fail', { json: { endpointId: 'ep-1', failing: false } })
-        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual([])
-
-        expect((await call('webhooks/fail', { json: { endpointId: 'ep-1' } })).status).toBe(400)
-        expect((await call('webhooks/fail', { json: { endpointId: 7, failing: true } })).status).toBe(400)
+        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual([endpointId])
+        await emit()
         expect(await (await call('webhooks/run-due', { json: {} })).json()).toMatchObject({
-            ok: true,
-            deliveries: expect.any(Object),
+            deliveries: { delivered: 0, failed: 1 },
         })
+        await call('webhooks/fail', { json: { endpointId, failing: false } })
+        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual([])
+    })
+
+    test.each([
+        [{ endpointId: '6f1c2a3e-0b4d-4e5f-8a9b-1c2d3e4f5a6b' }],
+        [{ endpointId: 7, failing: true }],
+        [{ endpointId: 'x'.repeat(10_000), failing: true }],
+    ])('webhooks/fail refuses %j and stores nothing', async (json) => {
+        expect((await call('webhooks/fail', { json })).status).toBe(400)
+        expect(((await (await call('webhooks')).json()) as SimulatorHooks).failingEndpointIds).toEqual([])
     })
 
     test('error-scenario shows an event before and after scrubbing', async () => {

@@ -175,6 +175,7 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
     const inboundTickets = useTickets()
     const messagesTickets = useTickets()
     const eventsTickets = useTickets()
+    const auditTickets = useTickets()
     const hooksTickets = useTickets()
     // The app's tours (`@sssb/app-config/tours`, read by the engine itself). A tour's starting world resolves the same
     // way on every host (`resolveWorldStart`): a reset, a registered demo preset, or here a saved snapshot. Each reloads
@@ -267,17 +268,20 @@ export function SimulatorHost({ locale, children }: { locale: string; children: 
         if (next && messagesTickets.fresh(ticket)) setMessagesData(next)
     }, [messagesTickets])
 
-    // The audit trail renders on the Events tab, beneath the events, so the two are fetched together.
+    // The audit trail renders on the Events tab, beneath the events, so the two are fetched together; each lands on its
+    // own, so one that fails never holds the other back.
     const refreshEvents = useCallback(async () => {
-        const ticket = eventsTickets.take()
-        const [nextEvents, nextAudit] = await Promise.all([
-            getJson<SimulatorEvents>('events'),
-            getJson<SimulatorAudit>('audit'),
+        const eventsTicket = eventsTickets.take()
+        const auditTicket = auditTickets.take()
+        await Promise.all([
+            getJson<SimulatorEvents>('events').then((next) => {
+                if (next && eventsTickets.fresh(eventsTicket)) setEventsData(next)
+            }),
+            getJson<SimulatorAudit>('audit').then((next) => {
+                if (next && auditTickets.fresh(auditTicket)) setAuditData(next)
+            }),
         ])
-        if (!nextEvents || !nextAudit || !eventsTickets.fresh(ticket)) return
-        setEventsData(nextEvents)
-        setAuditData(nextAudit)
-    }, [eventsTickets])
+    }, [eventsTickets, auditTickets])
 
     const refreshHooks = useCallback(async () => {
         const ticket = hooksTickets.take()

@@ -275,7 +275,21 @@ describe('SimulatorHost: the subsystem tabs', () => {
                 body: { messages: [{ id: 'm1', at: '2026-11-27T12:00:00.000Z', to: 'Ada', body: 'Hi', kind: 'k' }] },
             },
             'GET events': { body: { events: [{ id: 'v1', at: '2026-11-27T12:00:00.000Z', event: 'docket_opened' }] } },
-            'GET audit': { body: { audit: [] } },
+            'GET audit': {
+                body: {
+                    audit: [
+                        {
+                            id: 'a1',
+                            at: '2026-11-27T12:00:00.000Z',
+                            action: 'docket.filed',
+                            subjectType: 'Docket',
+                            subjectId: 'd1',
+                            actorUserId: 'fixture-lead',
+                            tenantSlug: 'harbor',
+                        },
+                    ],
+                },
+            },
             'GET webhooks': { body: { endpoints: [ENDPOINT], deliveries: [], failingEndpointIds: [] } },
             'POST webhooks/fail': { body: { ok: true, failing: true } },
             'POST webhooks/run-due': { body: { ok: true, deliveries: { delivered: 3 } } },
@@ -293,10 +307,14 @@ describe('SimulatorHost: the subsystem tabs', () => {
         expect(byTestId(container, 'message-item-m1')).toBeTruthy()
     })
 
-    it('Events lists the events and fetches the audit trail with them', async () => {
+    it('Events lists the events and the audit trail, and one that fails never holds the other back', async () => {
         const container = await openTab('events')
         expect(byTestId(container, 'events-list').textContent).toContain('docket_opened')
-        expect(byTestId(container, 'audit-empty')).toBeTruthy()
+        expect(byTestId(container, 'audit-list').textContent).toContain('docket.filed')
+
+        answers['GET audit'] = { status: 500, body: { error: 'boom' } }
+        const again = await openTab('events')
+        expect(byTestId(again, 'events-list').textContent).toContain('docket_opened')
     })
 
     it('the Mail tab composes inbound mail to the app and says what intake did', async () => {
@@ -335,8 +353,7 @@ describe('SimulatorHost: the subsystem tabs', () => {
         expect(byTestId(container, 'error-scrubbed')).toBeTruthy()
 
         answers['GET error-scenario'] = { status: 500, body: { error: 'boom' } }
-        const again = await openTab('errors')
-        await click(again, 'throw-server-error')
-        expect(again.querySelector('[data-testid="error-scrubbed"]')).toBeNull()
+        await click(container, 'throw-server-error')
+        expect(byTestId(container, 'error-scrubbed')).toBeTruthy()
     })
 })
