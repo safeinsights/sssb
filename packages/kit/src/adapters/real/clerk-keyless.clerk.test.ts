@@ -65,17 +65,17 @@ const CI_VARIABLES = [
 const KEYLESS_KEY = 'clerk_keyless_dummy_key'
 
 /**
- * `AES.encrypt(text, passphrase)` as crypto-js (which Clerk vendors) does it: OpenSSL's salted format, the key and IV
- * derived from the passphrase and an 8-byte salt by EVP_BytesToKey with MD5, AES-256-CBC, base64 of
+ * `AES.encrypt(text, secret)` as crypto-js (which Clerk vendors) does it: OpenSSL's salted format, the key and IV
+ * derived from the secret and an 8-byte salt by EVP_BytesToKey with MD5, AES-256-CBC, base64 of
  * `Salted__ + salt + ciphertext`.
  */
-function cryptoJsEncrypt(text: string, passphrase: string): string {
+function cryptoJsEncrypt(text: string, secret: string): string {
     const salt = randomBytes(8)
     let derived = Buffer.alloc(0)
     let block = Buffer.alloc(0)
     while (derived.length < 48) {
         block = createHash('md5')
-            .update(Buffer.concat([block, Buffer.from(passphrase), salt]))
+            .update(Buffer.concat([block, Buffer.from(secret), salt]))
             .digest()
         derived = Buffer.concat([derived, block])
     }
