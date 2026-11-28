@@ -8525,6 +8525,147 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
   (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
 
+## Pages, layouts and metadata routes are judged as reads (2026-11-27, `fix/authz-pages`)
+
+safeinsights/sssb#221 and #259. The design and what it accepts are ADR-0012's last 2026-11-27 addendum; the calls it
+did not settle:
+
+- **Seen failing first.** With the scan change alone, the showcase's conformance check went red on eight pages, the
+  dashboard first: "showcase: ../[locale]/dashboard/page.tsx (at ../[locale]/(protected)/dashboard/page.tsx) default is
+  a page export, rendered on the server for every request, that does not reach authorize(...) on its own path, and
+  reads something: `auth.listMembers` is used, and a page may use `auth` only as `auth.getCurrentUser()`, …". The org
+  page failed the same way (a second copy of the #259 leak, its member list with emails and roles), and the starter
+  three times (its layouts and sign-in page reading the seed). A starter dashboard that called `auth.listMembers`, and
+  one that imported `findTenant` from the seed, each turned the starter's check red, and passed again restored.
+- **The page allow-list, entry by entry** (each pages only; routes keep INERT_IMPORTS):
+    - `setRequestLocale`, `getTranslations`, `getMessages` (`next-intl/server`): the catalog and the locale, on every
+      page; `getMessages` is next-intl's layout pattern. `getLocale` is left out: neither app needs it.
+    - `hasLocale` (`next-intl`) and `routing.locales` (`@sssb/kit/i18n/routing`, the member only): the locale layout's
+      segment check.
+    - `canInActiveOrg` (`@sssb/kit/authz/authorize`): a UI ability check of the caller's own abilities, never a read.
+    - `isDemoMode` (`@sssb/kit/adapters/index`): the run mode beside `appMode` and `isSimulated`, the demo badge.
+    - `sameOriginPath` (`@sssb/kit/core/same-origin-path`): the sign-in page's `returnTo` normaliser, a pure function.
+    - `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`): the locale layout's theme and
+      document shell, branding and constants.
+    - `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()`, `auth.listMyOrgs()`: the
+      caller's own session and placements (the header's org switcher), each only called. `auth` itself and every other
+      member are refused outright, `auth.listMembers` first.
+    - A component used only as a JSX tag from a `'use client'` module or a package; a same-file component only
+      rendered (read as part of the page); a real adapter's component loaded with `import()` only to render it (the
+      guide's own shape for real mode), from such a module.
+    - Added in review: `useTranslations` (`next-intl`), the same catalog read in a component that is not async, and
+      a default import of a stylesheet or an image used as a value (class names, a URL), both false positives the
+      first draft had.
+- **Narrowed in review.** The first draft rendered any imported component out of sight, so an async server component
+  of the app's own that loads its data (`<MemberList slug={user.orgSlug} />` calling `auth.listMembers`) passed as
+  reading nothing, by a named, default or namespace import and through `import()` alike. Round 1 made a tag out of sight only
+  when its module resolves to a file whose prologue is `'use client'` or to a package (under `node_modules`, or outside
+  the app's directory: `@sssb/kit`'s screens resolve to the framework's source in this repository); otherwise its name
+  is counted (narrowed again in rounds 2 and 3, below). Every component both apps render was already one of those, so neither app's verdict changed; seen
+  working by taking `'use client'` off the starter's `WelcomeScreen`, which turned its home page red ("it names
+  `WelcomeScreen`"). Also: `auth` and `routing` are checked before the tag allowance (`<auth.listMembers />` passed),
+  through a namespace and `import()` too, and refused from any other module (an app's re-export of `auth` plus a
+  `reads-only` entry naming it passed `auth.listMembers`); a lowercase `<auth />` stays allowed, since JSX makes it an
+  HTML element, not the import. `generateViewport` and `global-not-found` are judged; a page-named file with an
+  unread code extension (`page.mdx`, `page.mts`) and a Pages Router `pages` directory fail, as `route.mts` and
+  `pages/api` did; a `'use client'` metadata route is judged, since it runs on the server.
+- **Narrower than the issue's sketch.** `redirect` and `notFound` were already inert. Not listed: `analytics.isFlagEnabled`
+  (the showcase's two flag reads sit in pages that authorize now), `next/og`'s `ImageResponse` (no app has an image
+  route; one names it in its app's entry), `DEFAULT_TENANT_SLUG` (the showcase alone uses it).
+- **What each app names instead, and why there.** Seed and simulated-world reads are the app's, so they are app
+  entries, where an adopter sees them: the starter now ships `authz-exemptions.mjs` with `[locale]/layout.tsx`
+  (`tenants`, `findTenant`: the locale layout's theme fallback and the protected layout's tenant name; groups are
+  dropped, so the two layouts share one key and one reason) and `[locale]/signin/page.tsx` (`listAllPeople`,
+  `findTenant`: the simulated-mode picker). The showcase names the same sign-in reads, `DEFAULT_TENANT_SLUG` in its locale
+  layout, `findInvite` and `findOrg` on its accept-invite page (authorized by possession of the invite token, as the
+  framework's `auth/accept-invite/route.ts` exemption says), and `isActorId` on the Simulator's actor frame. Pages that
+  read the caller's own records authorize them instead of being named: the profile page and the protected layout read
+  the caller's acceptances and authorize the self-only `AgreementAcceptance` (the layout's `listAgreementsForTenant` and
+  feature flag ride on that authorize, as a route's other reads ride on its own). Rejected: an exemption listing `db`,
+  `tenantIdForSlug`, the agreement readers and seven pure gate functions, a list that described the layout but excused
+  `db` whole.
+- **Narrowed again in review (round 2): by the resolved file, not the text.** The asset allowance had trusted the
+  specifier's ending, so `import load from '../lib/members.css'` (which TypeScript and webpack resolve to a
+  `members.css.ts` beside it), `'./members?x.css'` and a missing file passed; now a `?` or `#` is refused, a specifier
+  that resolves to code or a declaration (but a `.d.css.ts` of `allowArbitraryExtensions`) is refused, and a relative or
+  alias one must name an asset file on disk. "A package" had been anything outside the app's directory, which put an
+  adopter's own workspace package (`packages/ui`, linked or reached by a path) out of sight, and a `node_modules` link
+  back into the app's own `src` too; now only a real path with a `node_modules` segment (pnpm's store) or
+  `@sssb/kit`'s real package directory counts, so the kit's screens stay out of sight here as for an adopter who
+  installs it. The `'use client'` check now reads the module that declares the component, through a barrel's
+  re-exports (a server `components/index.ts` re-exporting a client `x.tsx` was a false failure), and fails closed on a
+  cycle or an unresolvable re-export. The unread-page guard flags only `<name>.<one extension>` (`page.css.ts`,
+  `layout.styles.ts`, `page.spec.e2e.ts` were false failures), and no walk of routes or pages enters a private `_`
+  folder, which Next does not route: that drops a route there from the route walk too, which never served one, while
+  the Server Action walk still enters it. Neither app has a `_` folder under `src/app`; both apps' verdicts and file
+  counts are unchanged.
+- **Narrowed rather than patched (round 3).** A third round found more resolution edges in the same two allowances,
+  so both shrank instead of gaining cases. An asset is now only a relative or `paths`-alias specifier whose literal
+  file exists (no `?` or `#`, no resolution to code, no declaration but the asset's own sibling `.d.css.ts`); a bare
+  specifier (a package's `styles.css`, `baseUrl`, a self-reference, `imports`, a bundler alias) is never one, and is
+  refused as any default import is. "Installed" now means a real path through a `node_modules` whose parent is the
+  app's directory or an ancestor (where a package manager installs), never one below the app's root (`src/node_modules`)
+  and never a pnpm `file:` or `link:` dependency (`.pnpm/<name>@file+…`), which are the adopter's own code; the kit's
+  directory is not trusted for an app inside it. And a `next.config` that sets `pageExtensions` now fails the check
+  (read with the TypeScript parser, so a comment does not count), since the scan reads no custom extension and the
+  unread-file guard catches only `.mts`, `.cts`, `.cjs`, `.mdx` and `.md`. Neither app nor the fixture changed verdict.
+- **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
+Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
+  (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only
+  when `canInActiveOrg(user, 'read', 'Membership')` and authorizing inside that branch, which the scan would pass but
+  the guide's rule (authorize on a path every request takes) forbids. The first draft let a person without standing
+  reach that `authorize` and get its `ForbiddenError`, which in a server component with no error boundary is a 500,
+  on the page sign-in sends everyone to by default. Now both pages check standing first, with the non-throwing
+  `canInActiveOrg(user, 'read', 'Membership')`, and send such a person to their own profile (the one page here that is
+  theirs, which authorizes its self-only read), then authorize unconditionally on the path every other request takes,
+  so the scan still counts the call and `listMembers` never runs for them. Rejected: `notFound()` (says the page does
+  not exist) and a no-access screen (new copy in both catalogs; safeinsights/sssb#265 is that screen). Pinned by
+  `apps/showcase/src/app/[locale]/(protected)/dashboard/page.test.tsx` and its org twin (real abilities, faked
+  adapters: a member gets the active members, `none` is redirected to `/<locale>/profile` and `listMembers` never runs).
+- **Matched by URL, as routes.** A route group's layout and its parent's share a key, which a reviewer may find
+  surprising: one entry, each layout judged by it alone; an `outsideApi.prefixes` entry covers the pages under it too.
+  A page under an intercepting segment (Next's modal pattern) was refused outright in the first draft, even one that
+  authorized; it is now judged as any page with no exemption applying, so it authorizes or reads nothing, and an entry
+  only it would use is stale. An intercepting route is still refused outright (its `service/` and `webhooks/` gates are
+  path-keyed).
+- **Found on the way:** following `export *` for a page's `default`, as the lookups follow it for a verb, would have
+  taken a default JavaScript never re-exports through one; both lookups now skip it. The check keeps its id `authz-mutations`; its title
+  and second test name now say pages.
+
+## The ticker marker is written whole and cleared without a gap; a failing default fixture always fails typed (2026-11-27, `fix/marker-atomic-and-fake-failure`)
+
+`safeinsights/sssb#258`, `#257` and `#249`: three leftovers of the `#146` and `#145` work.
+
+- **`#258`: the marker is written to a name beside it and renamed onto it** (`writeTickerMarker`; `<file>.<pid>.<random>.tmp`),
+  so a Playwright config that loads in that instant reads the marker that was there or the whole new one, never half of
+  it (a half-written file read as "no marker", and the config passed over a ticking dev server). A process killed between
+  the write and the rename leaves the `.tmp` file, which nothing reads. Pinned by standing inside the write
+  (`tests/tooling/ticker-marker-atomic.test.ts`): `writeFileSync` is wrapped to write half of its data, look at the marker as
+  a reader would, then write the rest; written straight onto the marker the reader sees half of a JSON document
+  (checked by making the write direct). Rejected: a stress test with a child process writing in a loop and the parent
+  reading, which can pass for a long time on the code it is meant to catch. Left as it was, and open in the issue: an
+  unparseable marker (damaged by anything else) still reads as no marker, not as "a ticker may be starting".
+- **`#257`: the stale marker is moved aside, and judged from the copy** (`clearStaleMarker`). Read-then-`rm` left a gap in
+  which a wrapper's new marker could be written and then removed. A rename is atomic and takes whatever file is there at
+  that instant: if it is the stale one it is deleted; if it is a newer one (written between the judgment and the move)
+  it is put back with `link`, which fails rather than overwrite, so a still newer marker written meanwhile wins and the
+  copy is dropped; a marker written after the move finds the name free and is never touched. Where a file system has no
+  hard links the put-back is a copy that fails rather than overwrite. **What it costs, found in review and filed as
+  `safeinsights/sssb#260`:** in that race a reader that looks while the newer marker is out of place sees none (a stress
+  run of one writer and four clearers spinning found the marker absent most of the time, which no real use approaches: a
+  clearer runs only after a marker was judged stale); a ticker that stops in that instant has its marker put back
+  (fails safe: the config refuses until the process exits); and two clearers meeting a newer and a newer-still marker
+  may leave the older. A write that fails now leaves no `.tmp` beside the marker. `clearStaleMarker` is exported, with a `hooks.afterClaim` seam, for its tests, which interleave a
+  writer at each step. Not changed: `removeTickerMarker` (the owner removing its own, by pid) has the same read-then-remove
+  shape, but only another wrapper's write into the same data directory in those microseconds could be lost, and the
+  token logic cannot tell one live ticker from two. `ps`'s start is to the second on macOS, so two processes born in the
+  same second share a token; a pid reused in the second it was released is not a case.
+- **`#249`: a default entry with a `failure` (one with a `reason`; `{}` is none) fails typed whatever answer it has, and every method reads the same default entry,** in `complete`, `stream` and
+  `runToolLoop`: `response: null` and no `conversation` (or an empty one) used to end in the plain "no default entry"
+  `Error`, which hid the failure the person wrote the entry to see. A default entry with no answer and no failure still
+  throws that error. (`response: null` is the recorder's "to record" marker and the recorder skips failing entries, so the
+  fixture is not rewritten.)
+
 ## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
 
 safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind
@@ -8879,3 +9020,58 @@ starter ran on CI's production build with the budgets sized for `next dev`.
 - **At the new budgets**, five more CI runs: every shard green each time (showcase 60, destructive 16, starter 5),
   none flaky. Locally under `next dev`, `pnpm verify` green. Not measured: more than one worker (`E2E_WORKERS`,
   safeinsights/sssb#99) on these budgets.
+## A CodeBuild job marked from its first write, and a bounded sweep (2026-11-28, `fix/codebuild-starting-and-sweep-bound`)
+
+The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
+
+- **safeinsights/sssb#251: the `starting` mark goes in the row's own write.** The CodeBuild runner used to write
+  `jobs.runner_ref = 'starting'` as a statement of its own, just before StartBuild. If that statement failed after
+  `submitJob`'s transaction committed, `start` threw before anything reached CodeBuild. The job then stayed queued
+  with no ref, which the sweep never judges (so that jobs from before migration 0020 are left alone).
+    - The jobs port now declares what a job's row starts as: `JobsPort.startingRef`, optional, `starting` for the
+      CodeBuild runner. Every writer of a row the runner will start writes it in the same statement: `submitJob`'s
+      insert, a schedule spawn's insert, and the retry drain's claim (the update that readies a waiting retry). `start`
+      itself writes nothing before StartBuild.
+    - A start that throws, for whatever reason, therefore leaves a job the sweep judges: `refused` after five minutes
+      when CodeBuild said so, `starting` after the hour otherwise.
+    - Rejected: **judging a NULL-ref queued job created after some cutoff**, which needs a cutoff the sweep can know
+      (the migration's apply time is not recorded anywhere it can read). Also rejected: **catching the write and
+      calling StartBuild anyway**, which leaves the same hole when the second write (the build id) fails too.
+- **safeinsights/sssb#252: the sweep takes a budget from the tick.** `JobsPort.sweep(now, budget?)`, where `budget`
+  is the drains' shape (`SweepBudget`, restated in the port so it imports nothing). The tick gives it a window of its
+  own, its first two seconds (`SWEEP_WINDOW_MS`), and at most 100 jobs failed (`maxSweep`, `sweepWindowMs` on the tick's
+  budget).
+    - Both runners' sweeps take tenants in a fresh random order (the drains' `shuffled`) and stop once the budget is
+      spent, checked before each tenant, each BatchGetBuilds call and each failure. What a sweep leaves, the next tick's
+      sweep finds; nothing it skips is lost, since a lost job stays lost.
+    - **The CodeBuild sweep fails each loss as soon as it knows it.** First the losses that need no CodeBuild call
+      (`refused`, and `starting` past the hour), then each BatchGetBuilds answer's before the next call; a tenant's build
+      ids are shuffled too. Round 1 of review found the first version, which read every batch before failing any, could
+      spend the whole window reading and throw away what it had found, every tick, for a tenant with many open builds.
+    - **The tick checks the sweep's budget as it checks the drains'** (`resolveDrainBudget`), before the sweep runs: a
+      `maxSweep` or `sweepWindowMs` of `NaN` would have left the sweep unbounded (every comparison with `NaN` is false),
+      and a `maxSweep` of 0 would have stopped it for good. Both throw now. Found in round 2.
+    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the
+      schedules about four seconds of theirs. A judgment, or a BatchGetBuilds call, already under way at the deadline
+      runs to its end; the SDK sets no timeout on that call, so one that stalls can outlast the window
+      (safeinsights/sssb#267, filed from round 2).
+    - `lazyJobs` passes the budget through. A sweep called with no budget judges everything, as before.
+    - Not changed: the sweep still lists every tenant once a tick within its window (the drains' due hints,
+      safeinsights/sssb#263, do not extend to it).
+- **Proofs.**
+    - `adapters/real/jobs.test.ts`:
+        - the starting ref written by `submitJob`, a schedule spawn and a retry claim;
+        - a job whose start threw before writing anything, failed by the sweep after the hour;
+        - a bounded sweep failing at most its count, nothing after its deadline, and the rest next time;
+        - the tenants, and one tenant's builds, taken in the order the random gives;
+        - the losses needing no CodeBuild call failed even when a read spends the window, and one read's losses failed
+          before a later read is cut off.
+    - `adapters/real/jobs-in-process.test.ts`: the in-process sweep, bounded the same way, its tenants shuffled.
+    - `server-lib/scheduled-tick.test.ts`: the tick hands the sweep its budget, and refuses a malformed one.
+    - `adapters/lazy-jobs.test.ts`: the budget passes through.
+    - Removing any of these turns them red: the ref from each of the three writers, either runner's bound, either
+      runner's tenant shuffle, the build-id shuffle, failing as found (free losses first, each batch's before the next),
+      the tick's deadline, its budget check, or the pass-through.
+- **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
+  the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
+  and #267. Then a claims pass over the prose.

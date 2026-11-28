@@ -737,15 +737,17 @@ the showcase carries the same route over the same function.
   construct never puts the secret's value in an environment, so getting it into the server's `WEBHOOK_SECRET` is
   yours, as for your other secrets. Without the option nothing in a deployment ticks the route: the `scheduled-tick`
   row of the [cutover checklist](cutover-checklist.md).
-- **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick
-  spawns at most 100 due schedules, in its first 6 seconds, starts at most 100 due job retries (a failed attempt of a
+- **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick's
+  sweep for lost jobs fails at most 100, starting none after its first 2 seconds (a CodeBuild read already under way
+  may run past them: safeinsights/sssb#267); it spawns at most 100 due schedules, in
+  its first 6 seconds, starts at most 100 due job retries (a failed attempt of a
   kind whose `jobRetry` lets it retry, once its delay has passed), none after 10 seconds, and attempts at most 100 due
-  webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes one due
-  row from each tenant in turn, the tenants in a fresh random order every tick, so one tenant's backlog or slow endpoint
+  webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each drain's bound it takes one due
+  row from each tenant in turn, the tenants in a fresh random order every tick (the sweep's tenants too), so one tenant's backlog or slow endpoint
   cannot keep another's work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the
   route's JSON says how much it left (`deferred`, at least that many, for schedules and inside `retries` and
-  `deliveries`) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
-  bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional.
+  `deliveries`; the sweep's is not reported) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
+  bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional, and one that is not a usable bound (`NaN`, `0`) throws.
 - **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler. Its Simulator panel's Jobs tab
   advances the world clock and runs what is then due, or runs what is due without moving it, once per click. To run
   the route itself, three ways to ask:

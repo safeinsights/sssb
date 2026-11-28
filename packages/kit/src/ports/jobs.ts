@@ -62,6 +62,20 @@ interface JobContext {
 export type JobHandler = (payload: unknown, ctx: JobContext) => Promise<{ resultKey?: string }>
 
 /**
+ * How much of the scheduled tick one `sweep` may spend (safeinsights/sssb#252): at most `maxItems` jobs failed, and
+ * nothing started after `deadline` (in `clock`'s milliseconds, `Date.now` by default). `random` shuffles the order the
+ * tenants (and a runner's own items within one) are looked at, so a bound that stops a sweep short does not always leave
+ * the same ones for later. The shape of the drains' `DrainBudget` (packages/kit/src/db/drain-budget.ts), restated here
+ * so the port imports nothing; the tick checks it as it checks theirs (`resolveDrainBudget`).
+ */
+export interface SweepBudget {
+    maxItems: number
+    deadline: number
+    clock?: () => number
+    random?: () => number
+}
+
+/**
  * Jobs port — the execution SEAM only. The `jobs` row, its status column, and the
  * `job_status_changes` timeline are app-owned in packages/kit/src/db/jobs.ts, where recordJobStatus is the
  * single choke point for every transition (state-machine guarded). This port just kicks the work
@@ -75,8 +89,15 @@ export interface JobsPort {
     start(job: SubmittedJob): Promise<void>
     /**
      * Optional: for a runner whose jobs can be lost mid-run (the in-process runner, whose invocation can end before it
-     * records an outcome), fails each job it judges lost and says how many. The scheduled tick calls it, when the port
-     * has it, before it drains the due schedules.
+     * records an outcome; the CodeBuild runner, whose build can end without reporting), fails each job it judges lost
+     * and says how many. The scheduled tick calls it, when the port has it, before it drains the due schedules, with a
+     * budget of its own: a sweep stops judging once that is spent, and what it leaves the next tick's sweep finds.
      */
-    sweep?(now: Date): Promise<number>
+    sweep?(now: Date, budget?: SweepBudget): Promise<number>
+    /**
+     * Optional: the `jobs.runner_ref` a job's row is written with when this runner is the one to start it, so the row
+     * says so from its first write (safeinsights/sssb#251). The CodeBuild runner's is `starting`, which its sweep can
+     * judge even when `start` never gets as far as a write of its own. A runner without one leaves it null.
+     */
+    startingRef?: string
 }

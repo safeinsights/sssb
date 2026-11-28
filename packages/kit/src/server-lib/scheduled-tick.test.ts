@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
     simulated: true,
     sweeps: [] as string[],
     startThrows: false,
+    sweepBudget: undefined as unknown,
 }))
 vi.mock('../adapters/index', async () => {
     const { fakeDb } = await import('../adapters/fake/db')
@@ -18,8 +19,9 @@ vi.mock('../adapters/index', async () => {
             state.sweeps.push('start')
             state.calls.push(job)
         },
-        async sweep() {
+        async sweep(_now, budget) {
             state.sweeps.push('sweep')
+            state.sweepBudget = budget
             return 0
         },
     }
@@ -245,6 +247,24 @@ describe('runScheduledTick', () => {
         expect(notified.map((n) => n.payload)).toContainEqual(
             expect.objectContaining({ jobId: third.retry!.jobId, status: 'failed', attempts: 3 }),
         )
+    })
+
+    test("gives the jobs port's sweep a budget of its own: a hundred jobs, and the tick's first two seconds (#252)", async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        let readings = 0
+        await runScheduledTick({ clock: () => (readings++ === 0 ? 1_000 : 1_000) })
+        expect(state.sweepBudget).toMatchObject({ maxItems: 100, deadline: 3_000 })
+        await runScheduledTick({ budget: { maxSweep: 5, sweepWindowMs: 500 }, clock: () => 0 })
+        expect(state.sweepBudget).toMatchObject({ maxItems: 5, deadline: 500 })
+    })
+
+    test("refuses a malformed sweep budget, as it does a drain's, rather than unbounding or stopping the sweep (#252)", async () => {
+        const { runScheduledTick } = await import('./scheduled-tick')
+        state.sweepBudget = undefined
+        await expect(runScheduledTick({ budget: { maxSweep: Number.NaN } })).rejects.toThrow(RangeError)
+        await expect(runScheduledTick({ budget: { maxSweep: 0 } })).rejects.toThrow(RangeError)
+        await expect(runScheduledTick({ budget: { sweepWindowMs: Number.NaN } })).rejects.toThrow(RangeError)
+        expect(state.sweepBudget, 'no sweep ran').toBeUndefined()
     })
 
     test('reports the outbound-delivery drain beside the schedules', async () => {

@@ -36,4 +36,14 @@ describe('lazyJobs', () => {
         expect(await port.sweep?.(new Date())).toBe(0) // a runner with no sweep sweeps nothing
         expect(loads).toBe(2)
     })
+
+    it("passes the tick's sweep budget through to the runner (safeinsights/sssb#252)", async () => {
+        const seen: unknown[] = []
+        const port = lazyJobs(async () => ({
+            start: async () => {},
+            sweep: async (_now, budget) => (seen.push(budget), 0),
+        }))
+        await port.sweep?.(new Date(), { maxItems: 3, deadline: 9 })
+        expect(seen).toEqual([{ maxItems: 3, deadline: 9 }])
+    })
 })

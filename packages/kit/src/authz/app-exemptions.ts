@@ -1,6 +1,7 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import ts from 'typescript'
 import { FRAMEWORK_POLICY, isGate } from './route-policy'
 import {
     type Exemption,
@@ -9,13 +10,16 @@ import {
     type ScanRoot,
     type ScanPolicy,
     exemptionFor,
+    isPageFileName,
     isReadVerb,
     isUnroutedSegment,
     judge,
     judgeServerAction,
+    scanPages,
     scanRoutes,
     scanServerActions,
     serverActionFilesOutsideSrc,
+    unreadPageFiles,
     unreadRouteFiles,
 } from './route-scan'
 
@@ -46,6 +50,9 @@ import {
  * for one route are both refused; one `reads-only` file entry may sit under the framework's `webhooks/` prefix (the
  * one overlap allowed, for reads only); a `reads-only` entry is stale without a read handler it governs, and each name
  * it lists must be one such a read uses.
+ *
+ * Since safeinsights/sssb#221: pages, layouts and metadata routes are judged as reads, so an `outsideApi.files` key may
+ * name one of them (`[locale]/signin/page.tsx`), and a page's export is a read handler for staleness and unused names.
  */
 
 /** The file, beside the app's `package.json`. */
@@ -134,8 +141,17 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
                 problems.push(`${where} is a prefix, so it must end with /`)
                 continue
             }
-            if (!prefix && !ROUTE_FILE.test(rel)) {
-                problems.push(`${where} must name one route file (route.ts, route.tsx, route.js, route.jsx, route.mjs)`)
+            // Outside src/app/api a file entry may also name a page, a layout or a metadata route (safeinsights/sssb#221),
+            // which the scan judges as reads.
+            if (!prefix && !ROUTE_FILE.test(rel) && !(outside && isPageFileName(rel.split('/').pop() ?? ''))) {
+                problems.push(
+                    outside
+                        ? `${where} must name one route file (route.ts, route.tsx, route.js, route.jsx, route.mjs), or one ` +
+                              'page, layout or metadata route file (page, layout, template, default, loading, not-found, ' +
+                              'global-not-found, forbidden, unauthorized, sitemap, robots, manifest, opengraph-image, twitter-image, icon, ' +
+                              'apple-icon, with one of those extensions)'
+                        : `${where} must name one route file (route.ts, route.tsx, route.js, route.jsx, route.mjs)`,
+                )
                 continue
             }
             const { reason, mustMatch } = (entry ?? {}) as { reason?: unknown; mustMatch?: unknown }
@@ -357,10 +373,16 @@ export interface AppScan {
     root: ScanRoot
     /** Every route file under the app's `src/app`, whether or not it exports a handler. Empty when there is no `src/app`. */
     routes: ScannedRoute[]
+    /**
+     * Every page, layout and metadata route under the app's `src/app` (safeinsights/sssb#221), each export Next calls
+     * judged as a read; a `'use client'` COMPONENT file has none (a metadata route is judged whatever its prologue).
+     */
+    pages: ScannedRoute[]
     /** Every Server Action under the app's `src`. */
     actions: ScannedAction[]
     /**
-     * One message per route handler or Server Action that fails (`<root>: <rel> <VERB> …why`), and one for each
+     * One message per route handler, page export or Server Action that fails (`<root>: <rel> <VERB> …why`, the export's
+     * name for a page's), and one for each
      * Pages Router API directory the app has, which the scan cannot read.
      */
     failures: string[]
@@ -377,15 +399,53 @@ function isDirectory(file: string): boolean {
     }
 }
 
-/** Where Next looks for Pages Router API routes: `pages/api` beside `src`, or inside it. */
-const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
+/** The names Next loads its config from, beside the app's `package.json`. */
+const NEXT_CONFIGS = [
+    'next.config.js',
+    'next.config.mjs',
+    'next.config.cjs',
+    'next.config.ts',
+    'next.config.mts',
+    'next.config.cts',
+]
+
+/**
+ * The app's Next configs that name `pageExtensions` (as a property, a shorthand or a string key; read with the
+ * TypeScript parser, so a comment does not count). The scan reads only its own extensions, so a custom list would let
+ * Next serve a route or page nobody checked: the check fails it rather than pass silently.
+ */
+function configsSettingPageExtensions(appDir: string): string[] {
+    return NEXT_CONFIGS.filter((name) => {
+        let text: string
+        try {
+            text = readFileSync(path.join(appDir, name), 'utf8')
+        } catch {
+            return false
+        }
+        if (!text.includes('pageExtensions')) return false
+        const sf = ts.createSourceFile(name, text, ts.ScriptTarget.ESNext, false)
+        let found = false
+        const visit = (node: ts.Node): void => {
+            if (found) return
+            if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === 'pageExtensions') found = true
+            else ts.forEachChild(node, visit)
+        }
+        visit(sf)
+        return found
+    })
+}
+
+/** Where Next looks for the Pages Router: `pages` beside `src`, or inside it. */
+const PAGES_DIRS = ['pages', 'src/pages']
 
 /**
  * The authorization scan over ONE app: every `route.*` under `<appDir>/src/app` (Next serves one from anywhere
- * there, so not only `api/`, and through a symbolic link too), each exported handler, read or mutation, judged against the framework's policy plus the app's
+ * there but a private `_` folder, so not only `api/`, and through a symbolic link too), each exported handler, read or mutation, judged against the framework's policy plus the app's
  * own exemptions, which are measured from `<appDir>/src/app/api` (so a route outside `api/` can match only an
  * `outsideApi` entry, whose gate is `reads-only` and which covers reads only; a mutation there must call
- * `authorize(...)` itself). Every Server Action under `<appDir>/src` (a `'use server'` file's
+ * `authorize(...)` itself). Every page, layout and metadata route there (./route-scan.ts `scanPages`) is judged too,
+ * each export Next calls as a read, which may match only a `reads-only` entry (`outsideApi` names one by its file, a
+ * `page.tsx` or a `layout.tsx` as a route's `route.ts`). Every Server Action under `<appDir>/src` (a `'use server'` file's
  * exports, and each function whose body opens with `'use server'`) is judged as a POST is, and can match no
  * exemption. A Pages Router API directory fails outright: SSSB apps are App Router, and the scan reads no
  * `pages/api` handler. So does a root-level `app/` directory (Next serves it instead of `src/app`), and a file under
@@ -397,13 +457,15 @@ export async function scanApp(appDir: string): Promise<AppScan> {
         label: name,
         dir: path.join(appDir, 'src/app'),
         exemptDir: path.join(appDir, 'src/app/api'),
+        appDir,
         // An app without one (a JS app's jsconfig.json, or neither) still gets scanned: relative re-exports resolve
         // without a config, and an alias that does not resolve is refused, loudly.
         tsconfig: ['tsconfig.json', 'jsconfig.json'].map((file) => path.join(appDir, file)).find((f) => existsSync(f)),
     }
     const { exemptions, problems } = await readAppExemptions(appDir)
     const routes = existsSync(root.dir) ? scanRoutes([root]) : []
-    const judged = routes.filter((route) => route.handlers.length > 0)
+    const pages = existsSync(root.dir) ? scanPages([root]) : []
+    const judged = [...routes, ...pages].filter((route) => route.handlers.length > 0)
     const policy = policyWithApp(exemptions)
     const srcDir = path.join(appDir, 'src')
     const actions = existsSync(srcDir) ? scanServerActions({ ...root, dir: srcDir, exemptDir: srcDir }) : []
@@ -419,6 +481,13 @@ export async function scanApp(appDir: string): Promise<AppScan> {
                       `app's routes in src/app.`,
               ]
             : []),
+        ...(existsSync(root.dir) ? unreadPageFiles(root.dir) : []).map(
+            (file) =>
+                `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} is named like a page, layout or ` +
+                `metadata route, but the authorization scan reads only those with a .ts, .tsx, .js, .jsx or .mjs ` +
+                `extension. If Next serves it (a pageExtensions entry), nothing checked it: rename it to one of those, ` +
+                `or to a name Next does not render.`,
+        ),
         ...(existsSync(root.dir) ? unreadRouteFiles(root.dir) : []).map(
             (file) =>
                 `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} is named like a route, but the ` +
@@ -437,19 +506,38 @@ export async function scanApp(appDir: string): Promise<AppScan> {
                 `where the authorization scan does not judge them. Move them under src. (Actions a workspace package ` +
                 `exports are not read either.)`,
         ),
-        ...PAGES_API_DIRS.filter((dir) => existsSync(path.join(appDir, dir))).map(
-            (dir) =>
-                `${name}: ${dir} is a Pages Router API directory. SSSB apps are App Router, and the authorization scan ` +
-                `reads only route handlers under src/app and Server Actions, so nothing in ${dir} is checked. Move ` +
-                `each handler to a route.ts under src/app/api.`,
+        ...configsSettingPageExtensions(appDir).map(
+            (config) =>
+                `${name}: ${config} sets pageExtensions. The authorization scan reads route and page files with the .ts, ` +
+                `.tsx, .js, .jsx and .mjs extensions only, not the config, so a route or page Next serves for another ` +
+                `extension would go unchecked. Leave pageExtensions at Next's default.`,
+        ),
+        ...PAGES_DIRS.filter((dir) => isDirectory(path.join(appDir, dir))).map((dir) =>
+            isDirectory(path.join(appDir, dir, 'api'))
+                ? `${name}: ${dir}/api is a Pages Router API directory. SSSB apps are App Router, and the authorization ` +
+                  `scan reads only route handlers and pages under src/app and Server Actions, so nothing in ${dir} is ` +
+                  `checked. Move each handler to a route.ts under src/app/api, and each page under src/app.`
+                : `${name}: ${dir} is a Pages Router directory, whose pages Next renders on the server. SSSB apps are App ` +
+                  `Router, and the authorization scan reads only pages under src/app, so nothing in ${dir} is checked. ` +
+                  `Move each page under src/app (as a page.tsx).`,
         ),
     ]
     const label = `${name}/${APP_EXEMPTIONS_FILE}`
     return {
         root,
         routes,
+        pages,
         actions,
         failures,
-        exemptionProblems: [...problems, ...staleAppExemptions(exemptions, judged, policy, label)],
+        // An intercepting page can match no exemption, so none keeps an entry alive.
+        exemptionProblems: [
+            ...problems,
+            ...staleAppExemptions(
+                exemptions,
+                judged.filter((route) => !route.intercepting),
+                policy,
+                label,
+            ),
+        ],
     }
 }

@@ -1121,3 +1121,103 @@ can tell which URL it answers.
 from the environment arrives through `config/params.ts`, an import a `reads-only` gate can name); letting any value
 of the route's own file be listed (above); letting a `reads-only` entry under a
 framework prefix fall back to the prefix's gate for a read it refuses (an exact entry wins, as before).
+
+## Addendum (2026-11-27, last): pages are judged as reads
+
+safeinsights/sssb#221. The two addenda above judge route handlers' reads; what Next renders on the server outside a
+route handler was still kept by hand, and the first page the new check read showed why: the showcase's dashboard
+handed the team's member names to anyone signed in, the role `none` included (safeinsights/sssb#259), and its org page
+did the same.
+
+**What is judged.** Under an app's `src/app`, every `page`, `layout`, `template`, `default`, `loading`, `not-found`,
+`global-not-found`, `forbidden` and `unauthorized` file, and every metadata route (`sitemap`, `robots`, `manifest`, `opengraph-image`,
+`twitter-image`, `icon`, `apple-icon`, an image one with Next's one-digit suffix), with the route extensions. Each
+one's `default`, `generateMetadata`, `generateImageMetadata`, `generateSitemaps` and `generateViewport` export is a
+read handler, labelled by its name. `generateStaticParams` (build time) and the value exports (`metadata`, `viewport`, segment options) are
+not. `error` and `global-error` are not read: Next requires both to be client components. A component file whose prologue is
+`'use client'`, or an export whose function sits in one, is skipped: it runs in the browser and reaches data only
+through routes, which are judged. A metadata route is judged whatever its prologue: it runs on the server. A file named
+for one of these with one extension the scan does not read (`.mts`, `.cts`, `.cjs`, `.mdx` or `.md`: `page.mts`,
+`page.mdx`) fails, as an unread `route.<ext>` does, so does a `next.config` that sets `pageExtensions` at all (the scan
+reads no custom extension, so it says so rather than pass), and so does a `pages` or `src/pages` directory (the Pages Router), where
+before only `pages/api` did. A private folder (`_lib`), which Next does not route, is not walked for routes or pages
+(the route walk read one before), though Server Actions there are still judged. Re-exports are followed and an unreadable page is refused, as for a route; `export *`
+re-exports no `default`, as in JavaScript, so the lookup does not follow one through it.
+
+**How a page passes.** As a read route does, three ways: it reaches `authorize(...)`; it reads nothing; or an app entry
+whose gate is `reads-only` holds for it. Pages sit outside `src/app/api`, so the entry goes under `outsideApi`, whose
+`files` may now name a page, layout or metadata route file. No other gate kind applies to a page, even under
+`src/app/api`: `wrapped-by`, `calls` and the simulated-mode 404 each prove a route's shape, not a render's. A prefix's
+required gate (`service/`) is required of a page under it. A page is matched by its URL as a route is (groups and slots
+dropped), so a route group's layout shares its parent layout's key, one entry covers both and each is judged on its
+own, and an `outsideApi.prefixes` entry covers the pages under it as well as the routes. A page under an intercepting
+segment (`(.)x`, Next's modal pattern), which Next also serves at the URL it intercepts, is judged with no exemption
+applying: it authorizes or reads nothing (an intercepting route is still refused outright).
+
+**What a page may name and still read nothing.** Wider than for a route, and only for a page, because nearly every page
+reads the session, its copy and its locale, and renders components:
+
+- named imports, by exported name (PAGE_IMPORTS): `setRequestLocale`, `getTranslations`, `getMessages`
+  (`next-intl/server`), `hasLocale` and `useTranslations` (`next-intl`), `canInActiveOrg` (`@sssb/kit/authz/authorize`), `isDemoMode`
+  (`@sssb/kit/adapters/index`), `sameOriginPath` (`@sssb/kit/core/same-origin-path`), `getTenantTheme`
+  (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`); and a default import of a static asset (a stylesheet
+  or an image) as a value, decided by the file it names, not its text: only a relative specifier or a tsconfig `paths`
+  alias, with no `?` or `#`, whose literal file exists with an asset extension, and which TypeScript's resolution does
+  not land on code (`./members.css` resolves to a `members.css.ts` beside it) or a declaration other than the asset's
+  own sibling `.d.css.ts`. A bare specifier (a package, `baseUrl`, a package's self-reference or `imports`, a bundler
+  alias) is never one: it is counted as any default import is, so it is refused;
+- imports allowed only through listed members (PAGE_MEMBERS): `auth.getCurrentUser()`, `auth.requireUser()`,
+  `auth.signInPath()`, `auth.refusal()` and `auth.listMyOrgs()` (the caller's own session and placements), each only
+  as a call's callee, and `routing.locales` (`@sssb/kit/i18n/routing`). The object used any other way, passed along,
+  aliased, spread, destructured, read by a computed key, rendered as a tag, reached through a namespace or `import()`,
+  any other member (`auth.listMembers`), or an `auth` or `routing` from any other module (an app's re-export), is
+  refused outright, checked before anything else: no exemption's name can excuse it, so the page authorizes;
+- an imported component it only renders, a reference that is a JSX tag's name, when it is declared in a client module
+  (the module that declares it, followed through a barrel's re-exports, opens with `'use client'`), or is an installed
+  package's (its file's real path runs through a `node_modules` whose parent is the app's directory or one of its
+  ancestors, where a package manager installs, and through no pnpm `file:` or `link:` dependency; a `node_modules`
+  folder below the app's root, under its `src`, is the app's code) or `@sssb/kit`'s (its real package directory, as the
+  app resolves it, not trusted for an app inside it). What it renders is out of sight, as an imported helper is. Any other
+  server component, the app's own or a workspace package's (linked into `node_modules`, whose real path is in the
+  repository, or reached by a path or an alias), is counted under its name instead, since it may load its own data
+  (an async `<MemberList slug={…} />` that calls `auth.listMembers` passed as reading nothing in the first draft; the
+  second treated everything outside the app's directory as a package). A re-export that does not resolve or leads back
+  to itself fails closed. Every component both reference apps render is a client one or the kit's or a package's;
+- a component of its own file that it only renders, a function declared once and never reassigned or a `const` bound
+  to a function literal: it is in sight, so its text is read as part of the page, by the same rules, once each;
+- a module it loads with `import()` only to render what it takes from it, the shape the app guide gives a real
+  adapter's form: `const { Form } = await import('…')`, or one element of an awaited global `Promise.all([...])`
+  destructured the same way, every name plain and kept under its exported name, each used only as a JSX tag, from a
+  client module or a package by the same rule (from a server module of your own, the name is counted). Any other `import()` is refused,
+  in a page as in a route.
+
+Each entry is a case both reference apps' pages or a typical adopter page have, and none carries org-scoped data. What
+an app's pages read beyond them is the app's to name: the showcase names the default tenant's slug in its locale
+layout, the simulated world's people and the seed's tenants on its sign-in page, an invite and its org on its
+accept-invite page, and the seam's actor ids on the Simulator's actor frame; the starter (so every generated app)
+names the seed's tenants in its two layouts and the simulated people on its sign-in page, in an
+`authz-exemptions.mjs` it now ships. The showcase's dashboard and org page now authorize `read Membership` on the
+active org, the slug anchoring both sides as the invite route's check does, and its profile page and protected layout,
+which read the caller's own acceptances, authorize the self-only `AgreementAcceptance`.
+
+**What it does not see.** What a package's component or a client component does: the scan does not follow an
+import, so a package's server component that loads data passes unseen, and the rule is "load in the page, authorize
+there". A page's top-level code (a `metadata` object built from a query at load). (A custom `pageExtensions` is not
+read, so a `next.config` that sets it fails the check, and a page-named file with another extension than the scan's,
+`page.page.tsx`, is not found.) And a `'use client'` component's server render: Next renders a client component on
+the server too, so one could read server-side data during that render (a module-level read of something the server
+holds); the skip rests on it running in the browser, where it reaches data only through a route or a Server Action,
+both judged. That residual is accepted. Like a gate, reading nothing proves the kind of page.
+
+**Decided: a person without standing does not reach the dashboard** (#259's open question). Every card on it reads
+through a route that refuses them, and the member list is the team's. The page checks standing first with
+`canInActiveOrg(user, 'read', 'Membership')` and sends a person without it to their own profile, the one page that is
+theirs, then authorizes on the path every other request takes, so the scan counts the call and `listMembers` never runs
+for them; the org page does the same. The first draft let the refusal throw, which Next answered with a 500 on the
+page sign-in lands on. A "no standing" screen is safeinsights/sssb#265.
+
+**Rejected:** following an imported component into its module (#221's option (c)), a cost that grows with the app,
+left for a follow-up; growing INERT_IMPORTS instead of a page list, which would have widened every route; letting a
+`reads-only` name excuse `auth` on a page, which would let an entry re-open the leak #259 found; an allowance for
+`analytics.isFlagEnabled` and `next/og`'s `ImageResponse`, which neither app's pages needed once the pages that read
+data authorized (an image metadata route names `ImageResponse` in its app's entry).
