@@ -312,6 +312,59 @@ describe('jobs and the clock', () => {
         expect(await (await call('clock', { json: { action: 'reset' } })).json()).toMatchObject({ clockOffsetMs: 0 })
         expect(await (await call('schedules/run-due', { json: {} })).json()).toMatchObject({ ok: true, spawned: 0 })
     })
+
+    // safeinsights/sssb#135 through this host, which is what the Simulator moves time with since it took over the clock
+    // and run-due routes: moving the clock past a failed attempt's backoff starts its next attempt.
+    test("moving the clock past a failed attempt's backoff starts its next attempt, and run-due alone does not", async () => {
+        const { fakeDb } = await import('../adapters/fake/db')
+        const { fakeJobs } = await import('../adapters/fake/jobs')
+        const { submitJob } = await import('../db/jobs')
+        const db = fakeDb.getDb()
+        const tenant = await db
+            .selectFrom('tenants')
+            .select('id')
+            .where('slug', '=', 'harbor')
+            .executeTakeFirstOrThrow()
+        const org = await db
+            .selectFrom('organizations')
+            .select('id')
+            .where('tenant_id', '=', tenant.id)
+            .where('slug', '=', 'depot')
+            .executeTakeFirstOrThrow()
+        // `flaky-dockets` retries after a minute (the fixture's `jobRetry`); this one fails its first attempt only.
+        const { id } = await submitJob(fakeDb, fakeJobs, {
+            tenantId: tenant.id,
+            orgId: org.id,
+            kind: 'flaky-dockets',
+            payload: { failTimes: 1 },
+        })
+        const attempts = () =>
+            db
+                .selectFrom('jobs')
+                .select(['attempt', 'status'])
+                .where((eb) => eb.or([eb('id', '=', id), eb('retry_of', '=', id)]))
+                .orderBy('attempt', 'asc')
+                .execute()
+        expect(await attempts()).toEqual([
+            { attempt: 1, status: 'failed' },
+            { attempt: 2, status: 'queued' },
+        ])
+
+        // Not due yet: running what is due without moving the clock leaves the retry waiting.
+        expect(await (await call('schedules/run-due', { json: {} })).json()).toMatchObject({
+            retries: { started: 0, failed: 0 },
+        })
+        expect((await attempts())[1]).toEqual({ attempt: 2, status: 'queued' })
+
+        // Past its delay, the clock route starts it, and the simulated runner runs it to its end.
+        const moved = await call('clock', { json: { action: 'advance', deltaMs: 120_000 } })
+        expect(await moved.json()).toMatchObject({ ok: true, retries: { started: 1, failed: 0 } })
+        expect(await attempts()).toEqual([
+            { attempt: 1, status: 'failed' },
+            { attempt: 2, status: 'completed' },
+        ])
+        expect(await (await call('clock', { json: { action: 'reset' } })).json()).toMatchObject({ clockOffsetMs: 0 })
+    })
 })
 
 describe('the subsystem tabs', () => {
