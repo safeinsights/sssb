@@ -18,3 +18,7 @@ untouched. The route's JSON gains `deferred` and `stoppedBy`, for schedules and 
 and `runDueDeliveries` take an optional budget as a last argument (called without one they still drain every due
 row), and `runScheduledTick` takes optional `{ budget }` for a server whose limit differs. `pnpm tick` and the dev
 ticker say when a tick stopped on its bound and what it left.
+
+A drain lists tenants for at most half of what is left of its window, and runs what it listed in the rest. With more
+tenants than that half can list (each a transaction of its own: about four calls on the RDS
+Data API), each tick serves a fresh random set of them, and the others wait for a later tick.

@@ -71,7 +71,7 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
  * first 2 seconds, safeinsights/sssb#252), then schedules, then job retries, then deliveries, so schedules may start work
  * until 6 seconds, retries until 10 and deliveries until 16. A delivery started at 16 seconds
  * may take the POST's 10 (`WEBHOOK_TIMEOUT_MS`, ../server-lib/webhook-dispatch.ts) plus its claim, record and audit
- * transactions, which leaves about four seconds for those, a listing query begun just before the deadline, and the
+ * transactions, which leaves about four seconds for those, the drain's other queries (its listing stops halfway, `LISTING_SHARE`), and the
  * response. Giving each drain a window of its own means none can spend the whole tick: retries always get from where
  * schedules stopped until 10 seconds, deliveries from there until 16. A schedule's spawn and a retry's start under the
  * in-process jobs runner run the job itself (`jobs.start`), which no window can bound; such work belongs on a runner

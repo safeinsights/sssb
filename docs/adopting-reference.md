@@ -744,7 +744,10 @@ the showcase carries the same route over the same function.
   kind whose `jobRetry` lets it retry, once its delay has passed), none after 10 seconds, and attempts at most 100 due
   webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each drain's bound it takes one due
   row from each tenant in turn, the tenants in a fresh random order every tick (the sweep's tenants too), so one tenant's backlog or slow endpoint
-  cannot keep another's work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the
+  cannot keep another's work waiting tick after tick. Each drain lists tenants (a transaction each, about four calls on
+  the RDS Data API) for at most half of what is left of its window, and runs what it listed in the rest: past the
+  number of tenants it can list in that time, it serves a fresh random set of them each tick, not none, and the rest
+  wait for a later tick. What a tick leaves is not touched and the next tick takes it; the
   route's JSON says how much it left (`deferred`, at least that many, for schedules and inside `retries` and
   `deliveries`; the sweep's is not reported) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
   bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional, and one that is not a usable bound (`NaN`, `0`) throws.

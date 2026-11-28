@@ -9051,3 +9051,55 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
 - **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
   the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
   and #267. Then a claims pass over the prose.
+
+## A drain lists for half its window; a retry that may have started is left to the sweep (2026-11-28, `fix/review-drains-and-retry-start`)
+
+Two findings of the whole-branch review of `int-fixes` before 0.10.0, both where #217's bounded drains, #238's retries
+and #248/#268's CodeBuild sweep meet.
+
+- **J1 (HIGH): past a tenant count, a drain started nothing, every tick.** `drainFairly` listed every tenant (one
+  `withTenant` each, even a tenant with nothing due) before it ran any row, and both phases shared one deadline. Once
+  listing every tenant took longer than what was left of the window, the drain listed until the deadline and started
+  nothing, every tick, with `stoppedBy: 'time'` the only sign. The reviewer's case: 1,000 tenants at 5 ms a listing, the
+  schedules' drain starting 2 s into its 6 s window, listed 800 and ran 0. 0.9.1's unbounded drains made progress for
+  the same deployment.
+    - **The fix, for this release:** listing has a deadline of its own, `LISTING_SHARE` (half) of the way from the
+      drain's start to its deadline. Past it the drain lists no more tenants and runs what it has in the other half. The
+      tenants are still shuffled afresh each tick, so the ones a tick does not list are a different random set each
+      time: every tenant with due work is reached in time, though at a large enough count not every tick.
+    - **The full fix is next release's:** the due hints of safeinsights/sssb#202 (PR #263, held for after 0.10.0) list
+      only the tenants with work due, which removes the per-tenant listing cost instead of rationing it.
+    - Rejected: interleaving listing and running (list a tenant, run its first row, and so on), which is the larger
+      change to the fairness argument #217 rests on (one shuffled order for listing and turns), too late for this
+      release; and a fixed number of tenants listed per tick, which needs a per-transport cost the drain cannot know.
+    - Accepted: a drain over few tenants now has half its window for listing where it had all of it, which costs
+      nothing (listing a few tenants takes little of it); and a drain that does list everyone in its half may stop
+      running its rows at the deadline as before.
+- **J3 (MEDIUM): a retry whose StartBuild may have started a build was failed at once.** `startRetry`'s catch failed
+  the attempt on any error from `start`, which armed the next attempt. The CodeBuild adapter treats a non-client fault
+  (a timeout, a server fault) as one that may have started a build and leaves the row `starting` for the sweep;
+  `submitJob` and a schedule's spawn honour that (neither catches), a retry did not. A build that had started then ran
+  beside the next attempt, its `completed` webhook met a failed row (409) and its result was dropped, and on the last
+  attempt the job was notified failed though it had succeeded.
+    - **The fix:** `start`'s error says so. The CodeBuild adapter marks a non-client fault `mayHaveStarted: true`
+      (`markMayHaveStarted`), and `startRetry`, on such an error from a port with a `startingRef`, leaves the claimed
+      row as the claim wrote it (queued, `starting`, no `run_after`) and notifies nothing; the sweep fails it after the
+      hour (`CODEBUILD_STARTING_LOST_AFTER_MS`), which arms the next attempt then. The helper `mayHaveStarted` is in
+      `ports/jobs.ts`, and `JobsPort.start`'s doc states the contract.
+    - The `startingRef` condition: a port with none has no sweep that judges a row left as it is, so its marked error
+      still fails the attempt, rather than leave a row nothing will ever look at.
+    - Rejected: reading the row's `runner_ref` after the failure (`refused` versus still `starting`) to tell the two
+      apart, which works for CodeBuild only by its storage convention and takes a `refused` whose own write failed for
+      an unsure start.
+    - The drain still counts such a retry in `failed` (it did not start, as far as anyone knows).
+- **Proofs.**
+    - `db/drain-budget.test.ts`: the reviewer's shape (1,000 tenants at 5 ms, the drain 2 s into a 6 s window, 50 ms a
+      row) lists 400 and runs 40; listing stops at its share and the rest runs; a drain begun past its deadline lists
+      nothing.
+    - `db/job-retries.test.ts`: a marked error from a port with a starting ref leaves the retry `starting`, unfailed and
+      unnotified; from a port with none, it fails the attempt and arms the next.
+    - `adapters/real/jobs.test.ts`, against the fake CodeBuild: a server fault on a retry's StartBuild leaves it
+      `starting` with no next attempt, the sweep leaves it alone at 30 minutes and fails it after the hour, arming
+      attempt 3; a client fault fails it at once.
+    - Removing the listing share, the leave-it branch, its `startingRef` condition, or the adapter's mark each turns
+      the named tests red.
