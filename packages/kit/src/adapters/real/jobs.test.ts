@@ -205,7 +205,7 @@ describe("the CodeBuild jobs runner: a job's row is `starting` from its first wr
         expect(jobs.startingRef).toBe('starting')
 
         // A runner whose start throws before it writes anything: the row still says the runner owns it.
-        const refusing = { startingRef: jobs.startingRef, start: async () => Promise.reject(new Error('down')) }
+        const refusing = { startingRef: 'starting', start: async () => Promise.reject(new Error('down')) }
         await expect(
             submitJob(fakeDb, refusing, { tenantId, orgId, kind: 'export-dockets', payload: {} }),
         ).rejects.toThrow()
@@ -267,7 +267,7 @@ describe("the CodeBuild jobs runner: a job's row is `starting` from its first wr
         const { fakeDb, tenantId, orgId } = await world()
         const { jobs } = await runner()
         const { submitJob } = await import('../../db/jobs')
-        const refusing = { startingRef: jobs.startingRef, start: async () => Promise.reject(new Error('down')) }
+        const refusing = { startingRef: 'starting', start: async () => Promise.reject(new Error('down')) }
         await submitJob(fakeDb, refusing, { tenantId, orgId, kind: 'export-dockets', payload: {} }).catch(
             () => undefined,
         )
