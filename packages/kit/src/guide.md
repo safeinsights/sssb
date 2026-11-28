@@ -146,8 +146,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   identical answers.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
-  app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
-  `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
+  app serves routes and pages from `src/app` alone: a root-level `app/` directory, a `pages` or `src/pages` directory
+  (the Pages Router), or a file named `route.<ext>`, `page.<ext>` or for another page file below with an extension the
+  check does not read (`route.mts`, `page.mdx`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names (a `reads-only`
   entry, reads only), each judged on
@@ -177,25 +178,31 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   (`[locale]/feed.xml/route.ts`), and a route group's `(name)` or a slot's `@name` is not part of it, as it is not
   part of the URL. A route under an
   intercepting segment (`(.)x`, `(..)x`) fails the check: serve the handler from a route that does not intercept.
-- A page is a read too. Every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `forbidden` and
-  `unauthorized` file under `src/app`, and every metadata route (`sitemap`, `robots`, `manifest`, `opengraph-image`,
-  `twitter-image`, `icon`, `apple-icon`), with a route's extensions: its `default` export, `generateMetadata`,
-  `generateImageMetadata` and `generateSitemaps` are each judged as a read handler is, and fail the check the same way.
-  A `'use client'` file is not judged: it reaches data only through routes. Besides the inert values above, a page reads
-  nothing when it names only the session (`auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`,
-  `auth.refusal()` and `auth.listMyOrgs()`, never `auth` itself or another member of it: `auth.listMembers` is a team's
-  member list), its copy and locale (`setRequestLocale`, `getTranslations` and `getMessages` from `next-intl/server`,
-  `hasLocale` from `next-intl`, `routing.locales`), `canInActiveOrg`, `isDemoMode`, `sameOriginPath`, `getTenantTheme`
-  and Mantine's `mantineHtmlProps`; a component it only renders as a JSX tag; a component of its own file it only renders,
-  which is read as part of it; and a real adapter's component it loads with `const { Form } = await import('…')` (alone,
-  or in an awaited `Promise.all`) only to render it. Anything else it names (the seed, a port, a data helper, `auth`
-  used any other way) means it authorizes, as `src/app/[locale]/(protected)/dashboard/page.tsx` would before reading
-  the team's data, or, only if it reads nothing org-scoped, has a `reads-only` entry under `outsideApi` keyed by its
-  file, as `authz-exemptions.mjs` names the sign-in page's. A route group is dropped from the key, so a group's layout
-  shares its parent's (`[locale]/layout.tsx`). An intercepting page fails, as an intercepting route does.
-- A component a page renders is out of the check's sight, as a helper in another module is: one that loads its own data
-  passes unseen. Load the data in the page, authorize there, and hand the component the rows. A person the page's
-  `authorize` refuses gets its `ForbiddenError` instead of the page.
+- A page is a read too. Every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `global-not-found`,
+  `forbidden` and `unauthorized` file under `src/app`, and every metadata route (`sitemap`, `robots`, `manifest`,
+  `opengraph-image`, `twitter-image`, `icon`, `apple-icon`), with a route's extensions: its `default` export,
+  `generateMetadata`, `generateImageMetadata`, `generateSitemaps` and `generateViewport` are each judged as a read
+  handler is, and fail the check the same way. A `'use client'` component file is not judged: it reaches data only
+  through routes (a metadata route always is). Besides the inert values above, a page reads nothing when it names only
+  the session (`auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()` and
+  `auth.listMyOrgs()`, never `auth` itself, another member of it, or an `auth` from any other module: `auth.listMembers`
+  is a team's member list), its copy and locale (`setRequestLocale`, `getTranslations` and `getMessages` from
+  `next-intl/server`, `hasLocale` and `useTranslations` from `next-intl`, `routing.locales`), `canInActiveOrg`,
+  `isDemoMode`, `sameOriginPath`, `getTenantTheme`, Mantine's `mantineHtmlProps` and a default-imported stylesheet or
+  image; a component it only renders as a JSX tag, from a `'use client'` module or a package; a component of its own
+  file it only renders, which is read as part of it; and a real adapter's component it loads with
+  `const { Form } = await import('…')` (alone, or in an awaited `Promise.all`) only to render it. Anything else it names
+  (the seed, a port, a data helper, a server component of the app's own, `auth` used any other way) means it
+  authorizes, as `src/app/[locale]/(protected)/dashboard/page.tsx` would before reading the team's data, or, only if
+  it reads nothing org-scoped, has a `reads-only` entry under `outsideApi` keyed by its file, as `authz-exemptions.mjs`
+  names the sign-in page's, or an `outsideApi.prefixes` entry above it, which covers the pages under it as it covers the
+  routes. A route group is dropped from the key, so a group's layout shares its parent's (`[locale]/layout.tsx`). A page
+  under an intercepting segment (`(.)x`) can match no entry: it authorizes or reads nothing.
+- A component from a package or a `'use client'` module is out of the check's sight, as a helper in another module is.
+  A server component of the app's own is named instead, since it may load its own data: load the data in the page,
+  authorize there, and hand the component the rows. A person the page's `authorize` refuses gets its `ForbiddenError`
+  instead of the page, so a page a person without standing may open checks `canInActiveOrg` first and sends them
+  where they have something to see.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.

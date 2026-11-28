@@ -8499,8 +8499,25 @@ did not settle:
     - `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()`, `auth.listMyOrgs()`: the
       caller's own session and placements (the header's org switcher), each only called. `auth` itself and every other
       member are refused outright, `auth.listMembers` first.
-    - An imported component used only as a JSX tag; a same-file component only rendered (read as part of the page); a
-      real adapter's component loaded with `import()` only to render it (the guide's own shape for real mode).
+    - A component used only as a JSX tag from a `'use client'` module or a package; a same-file component only
+      rendered (read as part of the page); a real adapter's component loaded with `import()` only to render it (the
+      guide's own shape for real mode), from such a module.
+    - Added in review: `useTranslations` (`next-intl`), the same catalog read in a component that is not async, and
+      a default import of a stylesheet or an image used as a value (class names, a URL), both false positives the
+      first draft had.
+- **Narrowed in review.** The first draft rendered any imported component out of sight, so an async server component
+  of the app's own that loads its data (`<MemberList slug={user.orgSlug} />` calling `auth.listMembers`) passed as
+  reading nothing, by a named, default or namespace import and through `import()` alike. A tag is now out of sight only
+  when its module resolves to a file whose prologue is `'use client'` or to a package (under `node_modules`, or outside
+  the app's directory: `@sssb/kit`'s screens resolve to the framework's source in this repository); otherwise its name
+  is counted. Every component both apps render was already one of those, so neither app's verdict changed; seen
+  working by taking `'use client'` off the starter's `WelcomeScreen`, which turned its home page red ("it names
+  `WelcomeScreen`"). Also: `auth` and `routing` are checked before the tag allowance (`<auth.listMembers />` passed),
+  through a namespace and `import()` too, and refused from any other module (an app's re-export of `auth` plus a
+  `reads-only` entry naming it passed `auth.listMembers`); a lowercase `<auth />` stays allowed, since JSX makes it an
+  HTML element, not the import. `generateViewport` and `global-not-found` are judged; a page-named file with an
+  unread code extension (`page.mdx`, `page.mts`) and a Pages Router `pages` directory fail, as `route.mts` and
+  `pages/api` did; a `'use client'` metadata route is judged, since it runs on the server.
 - **Narrower than the issue's sketch.** `redirect` and `notFound` were already inert. Not listed: `analytics.isFlagEnabled`
   (the showcase's two flag reads sit in pages that authorize now), `next/og`'s `ImageResponse` (no app has an image
   route; one names it in its app's entry), `DEFAULT_TENANT_SLUG` (the showcase alone uses it).
@@ -8519,16 +8536,22 @@ did not settle:
 - **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
 Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
   (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only
-  when `canInActiveOrg(user, 'read', 'Membership')` and authorizing inside that branch, which the scan would pass but the
-  guide's rule (authorize on a path every request takes) forbids. So a person without standing gets the page's
-  `ForbiddenError`; every card on the dashboard already 403s for them. Pinned by
+  when `canInActiveOrg(user, 'read', 'Membership')` and authorizing inside that branch, which the scan would pass but
+  the guide's rule (authorize on a path every request takes) forbids. The first draft let a person without standing
+  reach that `authorize` and get its `ForbiddenError`, which in a server component with no error boundary is a 500,
+  on the page sign-in sends everyone to by default. Now both pages check standing first, with the non-throwing
+  `canInActiveOrg(user, 'read', 'Membership')`, and send such a person to their own profile (the one page here that is
+  theirs, which authorizes its self-only read), then authorize unconditionally on the path every other request takes,
+  so the scan still counts the call and `listMembers` never runs for them. Rejected: `notFound()` (says the page does
+  not exist) and a no-access screen (new copy in both catalogs; safeinsights/sssb#265 is that screen). Pinned by
   `apps/showcase/src/app/[locale]/(protected)/dashboard/page.test.tsx` and its org twin (real abilities, faked
-  adapters: a member gets the active members, `none` is refused and `listMembers` never runs). A no-standing screen in
-  the protected layout, as the agreement gate renders in place, is a follow-up.
+  adapters: a member gets the active members, `none` is redirected to `/<locale>/profile` and `listMembers` never runs).
 - **Matched by URL, as routes.** A route group's layout and its parent's share a key, which a reviewer may find
-  surprising: one entry, each layout judged by it alone. An intercepting page is refused, as an intercepting route is,
-  though intercepted pages (a modal) are Next's main use of interception; a page there that authorizes is refused too.
-  Left as the issue's brief said; revisit if an adopter needs one.
+  surprising: one entry, each layout judged by it alone; an `outsideApi.prefixes` entry covers the pages under it too.
+  A page under an intercepting segment (Next's modal pattern) was refused outright in the first draft, even one that
+  authorized; it is now judged as any page with no exemption applying, so it authorizes or reads nothing, and an entry
+  only it would use is stale. An intercepting route is still refused outright (its `service/` and `webhooks/` gates are
+  path-keyed).
 - **Found on the way:** following `export *` for a page's `default`, as the lookups follow it for a verb, would have
   taken a default JavaScript never re-exports through one; both lookups now skip it. The check keeps its id `authz-mutations`; its title
   and second test name now say pages.
