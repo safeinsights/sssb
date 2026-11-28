@@ -1049,3 +1049,34 @@ describe('round-2 review of the page scan (safeinsights/sssb#221)', () => {
         expect(scan.failures).toEqual([expect.stringMatching(/^acme: app\/_lib\/actions\.ts Server Action `wipe`/)])
     })
 })
+
+describe('round-3 review of the page scan (safeinsights/sssb#221)', () => {
+    /** A scratch app with a Next config of `name` holding `src`. */
+    function withConfig(name: string, src: string): string {
+        const dir = app({ 'api/dockets/route.ts': AUTHORIZED_POST })
+        writeFileSync(path.join(dir, name), src)
+        return dir
+    }
+
+    it.each([
+        ['next.config.ts', "export default { pageExtensions: ['tsx', 'mdx'] }\n"],
+        ['next.config.mjs', "const pageExtensions = ['page.tsx']\nexport default { pageExtensions }\n"],
+        ['next.config.js', "module.exports = { 'pageExtensions': ['tsx'] }\n"],
+    ])('fails a %s that sets pageExtensions, which the scan does not read', async (name, src) => {
+        const scan = await scanApp(withConfig(name, src))
+        expect(scan.failures).toEqual([
+            `acme: ${name} sets pageExtensions. The authorization scan reads route and page files with the .ts, .tsx, .js, ` +
+                '.jsx and .mjs extensions only, not the config, so a route or page Next serves for another extension would ' +
+                "go unchecked. Leave pageExtensions at Next's default.",
+        ])
+    })
+
+    it('passes a config that only mentions pageExtensions in a comment, and one without it', async () => {
+        expect(
+            (await scanApp(withConfig('next.config.ts', '// no pageExtensions here\nexport default {}\n'))).failures,
+        ).toEqual([])
+        expect(
+            (await scanApp(withConfig('next.config.ts', 'export default { reactStrictMode: true }\n'))).failures,
+        ).toEqual([])
+    })
+})

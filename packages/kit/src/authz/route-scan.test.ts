@@ -3844,8 +3844,12 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
         files: Record<string, string>,
         links: Record<string, string> = {},
         tsconfig?: object,
+        /** The app's directory within the case (its pages, tsconfig and `node_modules` resolution root), if not the case. */
+        appSub = '',
     ): ScannedRoute[] {
-        const dir = path.join(SCRATCH, `case-${++caseNumber}`)
+        const base = path.join(SCRATCH, `case-${++caseNumber}`)
+        const dir = path.join(base, appSub)
+        mkdirSync(dir, { recursive: true })
         for (const [rel, src] of Object.entries(files)) {
             mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
             writeFileSync(path.join(dir, rel), src)
@@ -3925,7 +3929,10 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/gone.png') }, {}, options))).toMatch(
             /^refusal: `asset` is a default import/,
         )
-        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toBe('reads nothing')
+        // A bare specifier is never an asset here, whatever it resolves to (round 3).
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
         // A loader query or a hash is refused by its text, where no file lookup would catch it: a package's specifier,
         // and a file whose name carries the character.
         for (const specifier of ['some-ui/styles.css?inline', './members?x.css', './members#x.css']) {
@@ -4045,5 +4052,150 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
             'route.ts': 'export {}\n',
         })
         expect(routes.map((r) => r.rel)).toEqual(['route.ts'])
+    })
+})
+
+describe('round-3 review of the page scan: asset and package allowances narrowed (safeinsights/sssb#221)', () => {
+    function scan(files: Record<string, string>, links: Record<string, string> = {}, appSub = '', tsconfig?: object) {
+        const base = path.join(SCRATCH, `case-${++caseNumber}`)
+        const dir = path.join(base, appSub)
+        mkdirSync(dir, { recursive: true })
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(base, rel)), { recursive: true })
+            writeFileSync(path.join(base, rel), src)
+        }
+        for (const [rel, target] of Object.entries(links)) {
+            mkdirSync(path.dirname(path.join(base, rel)), { recursive: true })
+            symlinkSync(target, path.join(base, rel))
+        }
+        if (tsconfig) writeFileSync(path.join(dir, 'tsconfig.json'), JSON.stringify(tsconfig))
+        const pages = scanPages([
+            {
+                label: 'case',
+                dir,
+                exemptDir: dir,
+                appDir: dir,
+                tsconfig: tsconfig ? path.join(dir, 'tsconfig.json') : undefined,
+            },
+        ])
+        return pageState(pages.find((p) => p.rel === 'page.tsx')!.handlers[0]!)
+    }
+    const renders = (specifier: string) =>
+        `import { X } from '${specifier}'\nexport default function P() { return <X /> }\n`
+    const SERVER = 'export async function X() { return null }\n'
+    const ASSET = (specifier: string) =>
+        `import asset from '${specifier}'\nexport default function P() { return <img src={asset} /> }\n`
+
+    it('takes an asset only by a relative or alias specifier naming the file itself', () => {
+        expect(scan({ 'page.tsx': ASSET('./logo.png'), 'logo.png': 'png' })).toBe('reads nothing')
+        expect(scan({ 'app/page.tsx': ASSET('../shared/gone.png') }, {}, 'app')).toMatch(/^refusal/)
+        expect(scan({ 'app/page.tsx': ASSET('../shared/logo.png'), 'shared/logo.png': 'png' }, {}, 'app')).toBe(
+            'reads nothing',
+        )
+        // An absolute path, baseUrl, and a package are bare: never an asset here.
+        const base = { compilerOptions: { baseUrl: '.', moduleResolution: 'bundler', module: 'esnext' } }
+        expect(scan({ 'page.tsx': ASSET('assets/logo.png'), 'assets/logo.png': 'png' }, {}, '', base)).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
+        expect(
+            scan({
+                'page.tsx': ASSET('ui/styles.css'),
+                'node_modules/ui/styles.css': '.x {}\n',
+                'node_modules/ui/package.json': '{"name":"ui"}',
+            }),
+        ).toMatch(/^refusal: `asset` is a default import/)
+    })
+
+    it("takes a resolution to a declaration only when it is the asset's own sibling", () => {
+        const options = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                allowArbitraryExtensions: true,
+                paths: { '@/*': ['./assets/*'] },
+            },
+        }
+        expect(
+            scan(
+                {
+                    'page.tsx': ASSET('@/members.css'),
+                    'assets/members.css': '.x {}\n',
+                    'assets/members.d.css.ts': 'export default {}\n',
+                },
+                {},
+                '',
+                options,
+            ),
+        ).toBe('reads nothing')
+        // The alias maps to two places: the file exists in one, and TypeScript lands on code in the other.
+        const twice = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                paths: { '@/*': ['./code/*', './assets/*'] },
+            },
+        }
+        expect(
+            scan(
+                {
+                    'page.tsx': ASSET('@/members.css'),
+                    'assets/members.css': '.x {}\n',
+                    'code/members.css.ts': 'export default 1\n',
+                },
+                {},
+                '',
+                twice,
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
+    })
+
+    it('counts a node_modules folder as installed only at the app or above it, and never a pnpm file: or link: dependency', () => {
+        // The workspace root's node_modules, above the app: installed.
+        expect(
+            scan(
+                {
+                    'app/page.tsx': renders('ui'),
+                    'node_modules/ui/package.json': '{"name":"ui","main":"index.js"}',
+                    'node_modules/ui/index.js': SERVER,
+                },
+                {},
+                'app',
+            ),
+        ).toBe('reads nothing')
+        // A node_modules folder inside the app, below its root: the app's own code.
+        expect(
+            scan({ 'page.tsx': renders('./src/node_modules/ui/index.js'), 'src/node_modules/ui/index.js': SERVER }),
+        ).toBe('names: X')
+        // pnpm's injected (file:) and linked (link:) dependencies are the adopter's own code.
+        for (const store of ['@acme+ui@file+packages+ui', '@acme+ui@link+packages+ui']) {
+            expect(
+                scan(
+                    {
+                        'page.tsx': renders('@acme/ui'),
+                        [`node_modules/.pnpm/${store}/node_modules/@acme/ui/package.json`]:
+                            '{"name":"@acme/ui","main":"index.js"}',
+                        [`node_modules/.pnpm/${store}/node_modules/@acme/ui/index.js`]: SERVER,
+                    },
+                    { 'node_modules/@acme/ui': `../.pnpm/${store}/node_modules/@acme/ui` },
+                ),
+                store,
+            ).toBe('names: X')
+        }
+    })
+
+    it("does not trust the kit's directory for an app inside it", () => {
+        const files = {
+            'package.json': JSON.stringify({ name: '@sssb/kit' }),
+            'screen.js': SERVER,
+            'app/page.tsx': renders('@sssb/kit/screen'),
+        }
+        expect(scan(files, { 'app/node_modules/@sssb/kit': '../../..' }, 'app')).toBe('names: X')
+        // Outside it, the same kit is trusted.
+        const outside = {
+            'kit/package.json': JSON.stringify({ name: '@sssb/kit' }),
+            'kit/screen.js': SERVER,
+            'app/page.tsx': renders('@sssb/kit/screen'),
+        }
+        expect(scan(outside, { 'app/node_modules/@sssb/kit': '../../../kit' }, 'app')).toBe('reads nothing')
     })
 })
