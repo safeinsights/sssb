@@ -3926,6 +3926,12 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
             /^refusal: `asset` is a default import/,
         )
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toBe('reads nothing')
+        // A loader query or a hash is refused by its text, where no file lookup would catch it: a package's specifier,
+        // and a file whose name carries the character.
+        for (const specifier of ['some-ui/styles.css?inline', './members?x.css', './members#x.css']) {
+            const files = { 'page.tsx': ASSET_PAGE(specifier), 'members?x.css': '.x {}\n', 'members#x.css': '.x {}\n' }
+            expect(defaultOf(scanCase(files)), specifier).toMatch(/^refusal: `asset` is a default import/)
+        }
     })
 
     it('follows a re-export to the module that declares the component, and fails closed', () => {
