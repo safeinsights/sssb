@@ -21,3 +21,9 @@
   CodeBuild never throws away what it found. `runScheduledTick`'s budget takes `maxSweep` and `sweepWindowMs`, both
   optional, and throws a `RangeError` for one that is not a usable bound (`NaN`, or a `maxSweep` below 1), as it does
   for the drains' fields.
+- **A retry whose StartBuild may have started a build is left to the sweep.** A timeout or a server fault from
+  StartBuild may still have started the build. A first attempt already stayed `starting` then, for the sweep to judge
+  after the hour; a retry was failed at once, which armed the next attempt beside a build that might be running and
+  dropped that build's result. It now stays `starting` too. A client fault (CodeBuild refused) still fails the attempt
+  at once. A runner of your own can say the same: `start` throws an error with `mayHaveStarted: true`, and the port
+  has a `startingRef` and a `sweep` (`mayHaveStarted`, `@sssb/kit/ports/jobs`).

@@ -86,6 +86,13 @@ export interface SweepBudget {
  * (packages/kit/src/adapters/real/jobs-in-process.ts), and `none` throws `AbsentPortError`.
  */
 export interface JobsPort {
+    /**
+     * Starts the job's work. A start that throws has started nothing, unless its error says otherwise: one marked
+     * `mayHaveStarted: true` (`mayHaveStarted` below, for a timeout or a server fault, say) may have started the work all
+     * the same. For a port with a `startingRef` and a `sweep`, a caller then leaves the row as it is, for the sweep to
+     * judge once the work has had time to report (safeinsights/sssb#251), rather than fail it and arm another attempt
+     * beside work that may be running. For any other port nothing would judge such a row, so the caller fails it.
+     */
     start(job: SubmittedJob): Promise<void>
     /**
      * Optional: for a runner whose jobs can be lost mid-run (the in-process runner, whose invocation can end before it
@@ -100,4 +107,14 @@ export interface JobsPort {
      * judge even when `start` never gets as far as a write of its own. A runner without one leaves it null.
      */
     startingRef?: string
+}
+
+/**
+ * Whether `start` threw an error after which the work may have started anyway (see `JobsPort.start`). Only meaningful
+ * for a port with a `startingRef` and a `sweep`: without both, nothing would ever judge a row left as it is.
+ */
+export function mayHaveStarted(error: unknown): boolean {
+    return (
+        typeof error === 'object' && error !== null && (error as { mayHaveStarted?: unknown }).mayHaveStarted === true
+    )
 }

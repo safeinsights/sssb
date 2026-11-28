@@ -9144,3 +9144,104 @@ Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its modul
 - **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
   gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
   filed separately.
+## The keyless guard refuses what Clerk leaves open, and no more (2026-11-27, `fix/review-keyless-guard`)
+
+Finding A3 of the whole-branch review of `int-fixes`, against safeinsights/sssb#193's fix (the entry "The Clerk adapter:
+one read per render, the keyless fallback closed, a client sign-out"). That cut refused the adapter in every process that
+was not a production Next build, before every session read and every Backend API call, so a plain `node` process (an
+adopter's CodeBuild job program, an ops script, the auth contract suite) threw "...wherever real mode runs under next
+dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMembers`, would have failed on upgrade.
+
+- **The rule is now Clerk's own two conditions, re-read in @clerk/nextjs 7.10** (`decryptClerkRequestData`,
+  `canUseKeyless`, `createAuthOptions`): the keyless key is Clerk's FIRST key only when neither `CLERK_ENCRYPTION_KEY` nor
+  `CLERK_SECRET_KEY` is set (the dummy key when `NODE_ENV` is not `production`, an empty passphrase in a production
+  build, which a forger has just as well); it is the FALLBACK, after the real key fails, only when
+  `NODE_ENV` is `development`, it is not CI, and the disable flag is unset. And a forged token is checked against
+  `CLERK_SECRET_KEY`, empty when unset, in every `NODE_ENV`. So the guard refuses when `CLERK_SECRET_KEY` is unset, and when
+  `NODE_ENV` is `development` and the flag is not `1` or `true`; a process with the secret key set and `NODE_ENV` unset,
+  `test` or `production` is let through, and the real-Clerk test shows Clerk itself refuses a forgery there (it fails to
+  decrypt). Stricter than Clerk in one place on purpose, as before: it ignores the CI exemption.
+- **A missing secret key is refused in production too**, which the review's wording left out ("outside production").
+  A production process with no key checks a forged token against an empty key (shown against real Clerk in the same
+  test), `assertRealEnv` already refuses to boot without the key, and no process that calls Clerk can work without it, so
+  nothing legitimate loses. Rejected: refusing only outside production, which would leave that one case to boot alone.
+- **`check-real-env` reports it two ways.** `assertRealEnv` now throws the guard's problem as a cutover item on `auth-dev`
+  (so `createRealPorts` stops at boot too, instead of failing every request), which sees the process's own `NODE_ENV`; and
+  `realEnvNotices` prints what `next dev` would do with the environment when this process is not `next dev` (the preflight
+  of `dev:real` runs before it, with no `NODE_ENV=development`), computed by the guard itself with `NODE_ENV`
+  `development`, so the two cannot disagree. A notice, not a failure: an adopter who sets the flag only on `next dev` is
+  right, if less helped. The showcase's `dev:real` now exports the flag first, so the notice stays quiet there. Rejected:
+  forcing `NODE_ENV=development` in the preflight, which would fail every script that follows the earlier changeset's
+  advice to set the flag on `next dev` alone.
+- **Considered in review, and not done.** (1) Refusing when the RUNTIME `NODE_ENV` says `development` as well as the
+  inlined one, against the case where an adopter puts `@clerk/nextjs` in `serverExternalPackages` (so Clerk reads the
+  runtime value) and runs a production build with `NODE_ENV=development` preset. It needs two unusual choices at once, and
+  would refuse every request of a production build merely started with a preset `NODE_ENV=development` (Clerk's bundled
+  copy is inlined as `production` there and safe): the outage class finding A3 was about, for the opposite combination.
+  The literal reads, which agree with the bundled Clerk, are pinned by a source assertion because no run can tell them
+  from the whole-environment read. (2) Validating the secret key's shape (`sk_live_…`): it would refuse only a deployment
+  already broken (every Backend API call and sign-in fails), and a format check can refuse a legitimate key. (3) A notice
+  from a preflight run with `NODE_ENV=production` that is then followed by `next dev`: it fails closed on the first
+  request, and a production-looking preflight is not the `dev:real` this notice speaks for.
+
+## A drain lists for half its window; a retry that may have started is left to the sweep (2026-11-28, `fix/review-drains-and-retry-start`)
+
+Two findings of the whole-branch review of `int-fixes` before 0.10.0, both where #217's bounded drains, #238's retries
+and #248/#268's CodeBuild sweep meet.
+
+- **J1 (HIGH): past a tenant count, a drain started nothing, every tick.** `drainFairly` listed every tenant (one
+  `withTenant` each, even a tenant with nothing due) before it ran any row, and both phases shared one deadline. Once
+  listing every tenant took longer than what was left of the window, the drain listed until the deadline and started
+  nothing, every tick, with `stoppedBy: 'time'` the only sign. The reviewer's case: 1,000 tenants at 5 ms a listing, the
+  schedules' drain starting 2 s into its 6 s window, listed 800 and ran 0. 0.9.1's unbounded drains made progress for
+  the same deployment.
+    - **The fix, for this release:** under a deadline the drain works in passes over one shuffled order. Each pass
+      lists for at most `LISTING_SHARE` (half) of what is left of the window, then runs what it listed; a pass that
+      finishes its rows with time to spare lists on from where the last stopped. `maxItems` counts across the passes.
+      The tenants are still shuffled afresh each tick, so the ones a tick does not reach are a different random set each
+      time: every tenant with due work is reached in time, though at a large enough count not every tick.
+    - **The full fix is next release's:** the due hints of safeinsights/sssb#202 (PR #263, held for after 0.10.0) list
+      only the tenants with work due, which removes the per-tenant listing cost instead of rationing it.
+    - Rejected: interleaving listing and running (list a tenant, run its first row, and so on), which is the larger
+      change to the fairness argument #217 rests on (one shuffled order for listing and turns), too late for this
+      release; and a fixed number of tenants listed per tick, which needs a per-transport cost the drain cannot know.
+    - **Why passes:** review found that the first version, one listing share and no second pass, made a mid-sized
+      drain worse: one that finished its listed rows early left the window unused and the rest of its tenants unlisted,
+      which the old code would have reached (the reviewer's probe: 100 tenants at 10 ms, 75 listed, 675 ms unused).
+    - Accepted: a pass's turns go round only the tenants it listed, so a tenant reached by a later pass takes its turns
+      after the earlier pass's tenants; the shuffle decides which pass a tenant falls in, so no tenant is favoured across
+      ticks.
+- **J3 (MEDIUM): a retry whose StartBuild may have started a build was failed at once.** `startRetry`'s catch failed
+  the attempt on any error from `start`, which armed the next attempt. The CodeBuild adapter treats a non-client fault
+  (a timeout, a server fault) as one that may have started a build and leaves the row `starting` for the sweep;
+  `submitJob` and a schedule's spawn honour that (neither catches), a retry did not. A build that had started then ran
+  beside the next attempt, its `completed` webhook met a failed row (409) and its result was dropped, and on the last
+  attempt the job was notified failed though it had succeeded.
+    - **The fix:** `start`'s error says so. The CodeBuild adapter marks a non-client fault `mayHaveStarted: true`
+      (`markMayHaveStarted`), and `startRetry`, on such an error from a port with a `startingRef` and a `sweep`, leaves
+      the claimed
+      row as the claim wrote it (queued, `starting`, no `run_after`) and notifies nothing; the sweep fails it after the
+      hour (`CODEBUILD_STARTING_LOST_AFTER_MS`), which arms the next attempt then. The helper `mayHaveStarted` is in
+      `ports/jobs.ts`, and `JobsPort.start`'s doc states the contract.
+    - The `startingRef` and `sweep` condition: a port without both has nothing that judges a row left as it is (a
+      CodeBuild port built by the public `createRealPorts` without its `failLostJob` hook, has no sweep), so its marked error
+      still fails the attempt, rather than leave a row nothing will ever look at. Review found the first version checked
+      only `startingRef`.
+    - Rejected: reading the row's `runner_ref` after the failure (`refused` versus still `starting`) to tell the two
+      apart, which works for CodeBuild only by its storage convention and takes a `refused` whose own write failed for
+      an unsure start.
+    - The drain still counts such a retry in `failed` (it did not start, as far as anyone knows).
+- **Proofs.**
+    - `db/drain-budget.test.ts`: the review's shape (1,000 tenants at 5 ms, the drain 2 s into a 6 s window, 50 ms a
+      row) lists 400 and runs 40; the reviewer's probe (100 tenants at 10 ms) lists and runs all 100; `maxItems` counts
+      across passes; listing stops at its share and the rest runs; a drain begun past its deadline lists nothing.
+    - `db/job-retries.test.ts`: a marked error from a port with a starting ref leaves the retry `starting`, unfailed and
+      unnotified; from a port with no starting ref, or with no sweep, it fails the attempt and arms the next.
+    - `adapters/real/jobs.test.ts`, against the fake CodeBuild: a server fault on a retry's StartBuild leaves it
+      `starting` with no next attempt, the sweep leaves it alone at 30 minutes and fails it after the hour, arming
+      attempt 3; a client fault fails it at once.
+    - Removing the listing share, the second pass, the count across passes, the leave-it branch, its `startingRef` or
+      its `sweep` condition, or the adapter's mark each turns the named tests red.
+- **Review.** One Opus round: the MEDIUM (passes) and the LOW (the `sweep` condition) above, both fixed. Then a claims
+  pass. The release-notes findings J8 (the schedules' window stated as 8 s) and J2 (a paused cluster's first tick) are
+  fixed in `bounded-tick-drains.md` and `job-retries.md` on the same branch.

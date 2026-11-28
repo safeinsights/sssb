@@ -744,7 +744,10 @@ the showcase carries the same route over the same function.
   kind whose `jobRetry` lets it retry, once its delay has passed), none after 10 seconds, and attempts at most 100 due
   webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each drain's bound it takes one due
   row from each tenant in turn, the tenants in a fresh random order every tick (the sweep's tenants too), so one tenant's backlog or slow endpoint
-  cannot keep another's work waiting tick after tick. What a tick leaves is not touched and the next tick takes it; the
+  cannot keep another's work waiting tick after tick. Each drain lists tenants (a transaction each, about four calls on
+  the RDS Data API) for at most half of what is left of its window, runs what it listed, and lists on if time is left: past the
+  number of tenants it can list in that time, it serves a fresh random set of them each tick, not none, and the rest
+  wait for a later tick. What a tick leaves is not touched and the next tick takes it; the
   route's JSON says how much it left (`deferred`, at least that many, for schedules and inside `retries` and
   `deliveries`; the sweep's is not reported) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
   bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional, and one that is not a usable bound (`NaN`, `0`) throws.
@@ -776,7 +779,8 @@ the showcase carries the same route over the same function.
       that one is running and leaves it to be stopped where it was started. Your app's Simulator has no such control; the
       route is the showcase's app code, and an app that wants one copies it.
 
-    The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
+    The answer is `{"ok":true,"spawned":0,"failed":0,"deferred":0,"stoppedBy":null,"retries":{…},"deliveries":{…}}`, which
+    `pnpm tick` prints as one line. In a
     simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick
     honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line; the tick
     itself succeeded, so the exit code stays 0. The next tick retries a failed delivery, and a schedule whose failure
@@ -834,13 +838,15 @@ domain" is a proof.
 SSSB's file opens with a worked row — closed, dated, owned, with a proof column that was thought through
 rather than restated. Read it once for the level of detail each row deserves before you fill in your own.
 
-**Running real mode under `next dev`.** Set `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1` wherever real mode runs outside
-a production build (the showcase's `dev:real` in SSSB's repository does). Outside one, Clerk's keyless fallback
-would read request data under a key Clerk publishes, so on a path your proxy's matcher skips a forged
-`x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter refuses to read a
-session or call Clerk's Backend API there until the variable and `CLERK_SECRET_KEY` are set, and names what is
-missing when it refuses. A production build (`next build`, then
-`next start`) needs nothing.
+**Running real mode under `next dev`.** Set `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1` for the whole of your `dev:real`
+script, the preflight included (the showcase's, in SSSB's repository, exports it first). Under `next dev`
+(`NODE_ENV=development`) Clerk's keyless fallback would read request data under a key Clerk publishes, so on a path your
+proxy's matcher skips a forged `x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter
+refuses to read a session or call Clerk's Backend API there until the variable is set, and also in any process with no
+`CLERK_SECRET_KEY`, and names what is missing when it refuses. A production build (`next build`, then `next start`) needs
+nothing, and neither does another process with the secret key set, such as a job program on CodeBuild or an ops script.
+`sssb check-real-env` reports it: as a failure if it runs with `NODE_ENV=development`, and otherwise as a `notice:` saying
+what `next dev` would do.
 
 ### Ports your app does not use
 

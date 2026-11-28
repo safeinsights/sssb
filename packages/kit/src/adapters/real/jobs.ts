@@ -109,11 +109,13 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
         async start(job) {
             const started = await client.send(startBuild(job)).catch(async (error: unknown) => {
                 // A client fault is CodeBuild saying no build started; anything else (a timeout, a server fault) may
-                // have started one, so the job stays `starting` and gets the longer wait.
+                // have started one, so the job stays `starting` and gets the longer wait, and the error says so, so a
+                // caller does not fail the job (and arm its next attempt) beside a build that may be running.
                 if ((error as { $fault?: unknown }).$fault === 'client') {
                     await setRef(job.tenantId, job.id, CODEBUILD_REFUSED).catch(() => undefined)
+                    throw error
                 }
-                throw error
+                throw markMayHaveStarted(error)
             })
             const buildId = started.build?.id
             if (!buildId) {
@@ -242,6 +244,12 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
             return failed
         },
     }
+}
+
+/** `error`, marked as one after which a build may have started (`mayHaveStarted`, ../../ports/jobs.ts). */
+function markMayHaveStarted(error: unknown): Error {
+    const marked = error instanceof Error ? error : new Error(String(error))
+    return Object.assign(marked, { mayHaveStarted: true })
 }
 
 /** The StartBuild call for `job`: the project, and the job's context as the build's environment. */
