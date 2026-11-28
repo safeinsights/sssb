@@ -9,6 +9,7 @@ import {
     type PendingAgreement,
     pendingAgreementForGateId,
 } from '@sssb/kit/core/agreements'
+import { authorize } from '@sssb/kit/authz/authorize'
 import { advisoryGates, evaluateGates, firstBlockingGate } from '@sssb/kit/core/gates'
 import { listAgreementsForTenant, readAcceptancesForUser } from '@sssb/kit/db/agreements'
 import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
@@ -32,6 +33,9 @@ export default async function ProtectedLayout({
 
     const user = await auth.getCurrentUser()
     if (!user) redirect(`/${locale}${auth.signInPath()}`)
+    // The gates below read the tenant's agreements and the caller's OWN acceptances of them: a self-only read, which
+    // authorizes its self-only subject (a person without standing still reads their own, and still sees the gate).
+    authorize(user, user.orgSlug, 'read', { type: 'AgreementAcceptance', ownerId: user.id })
 
     const orgs = await auth.listMyOrgs()
     const tenantName = findTenant(user.tenantSlug)?.name ?? user.tenantSlug
