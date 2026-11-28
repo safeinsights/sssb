@@ -1,4 +1,5 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import ts from 'typescript'
 
@@ -163,9 +164,19 @@ const PAGE_FILE =
 /** The metadata routes among PAGE_FILE: they run on the server whatever their prologue says, so none is skipped as a client file. */
 const METADATA_FILE = /^(?:sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\./
 
-/** The base names PAGE_FILE reads, before the extension: a file named for one with another extension is not read. */
-const PAGE_BASE =
-    /^(?:page|layout|template|default|loading|not-found|global-not-found|forbidden|unauthorized|sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\./
+/** A file named for a page, layout or metadata route with one extension of code the scan does not read (`unreadPageFiles`). */
+const UNREAD_PAGE_FILE =
+    /^(?:page|layout|template|default|loading|not-found|global-not-found|forbidden|unauthorized|sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\.(?:mts|cts|cjs|mdx|md)$/
+
+/**
+ * Whether Next routes what is under a directory: not a private folder, `_name` (Next's own convention: a folder whose
+ * name starts with `_` and everything in it is left out of routing; `%5Fname` is how a URL segment starting with `_` is
+ * written). The route, page and unread-file walks skip one; the Server Action walk does not, since an action is served
+ * wherever it is declared.
+ */
+function isRoutedDirectory(name: string): boolean {
+    return !name.startsWith('_')
+}
 
 /** Whether `name` (a file's base name) is one of the files `scanPages` judges. */
 export function isPageFileName(name: string): boolean {
@@ -321,7 +332,7 @@ function scanFiles(roots: readonly ScanRoot[], options: ScanOptions, page: boole
         const files = walkFiles(
             root.dir,
             (name) => accept.test(name),
-            () => true,
+            isRoutedDirectory,
             new Set(),
             new Map(),
             unreadable,
@@ -418,23 +429,19 @@ export function unreadRouteFiles(dir: string): string[] {
         !/^route\.(?:[\w-]+\.)*(?:test|spec|stories|bench|test-d)\.[cm]?[jt]sx?$/.test(name) &&
         !/\.d\.[cm]?ts$/.test(name) &&
         !name.endsWith('.snap')
-    return walkFiles(dir, named, () => true)
+    return walkFiles(dir, named, isRoutedDirectory)
 }
 
 /**
- * Files under `dir` named for a page, layout or metadata route (PAGE_BASE) with a code extension the scan does not read
- * as one (`page.mts`, `layout.cjs`, `page.page.tsx`, `page.mdx`): Next serves it for a `pageExtensions` entry, which the
- * scan does not read, so it may be a page nobody checked. A colocated test artefact, a declaration file, and an asset
- * (`page.module.css`, a static `icon.png`, `manifest.json`, `robots.txt`) are not pages.
+ * Files under `dir` named for a page, layout or metadata route with one extension of code the scan does not read
+ * (`page.mts`, `layout.cjs`, `page.mdx`, `default.md`): Next serves it for a `pageExtensions` entry, which the scan does
+ * not read, so it may be a page nobody checked. Only `<name>.<extension>`: a file with a middle segment (`page.css.ts`,
+ * `layout.styles.ts`, `page.spec.e2e.ts`) is a module of its own, and an asset (`page.module.css`, a static `icon.png`,
+ * `manifest.json`, `robots.txt`) is not code. A private folder (`_lib`) is not walked, as Next routes nothing in it.
  */
 export function unreadPageFiles(dir: string): string[] {
-    const named = (name: string) =>
-        PAGE_BASE.test(name) &&
-        !PAGE_FILE.test(name) &&
-        /\.(?:[cm]?[jt]sx?|mdx?)$/.test(name) &&
-        !/^[\w-]+\.(?:[\w-]+\.)*(?:test|spec|stories|bench|test-d)\.[cm]?[jt]sx?$/.test(name) &&
-        !/\.d\.[cm]?ts$/.test(name)
-    return walkFiles(dir, named, () => true)
+    const named = (name: string) => UNREAD_PAGE_FILE.test(name)
+    return walkFiles(dir, named, isRoutedDirectory)
 }
 
 /**
@@ -951,41 +958,102 @@ class RootScanner {
     private readonly resolution: ts.CompilerOptions
     private readonly authorizeModules: readonly string[]
     private readonly appDir: string
-    /** Whether a module, by the file importing it and its specifier, is one a page may render out of sight. */
+    /** The directory the tsconfig's `paths` are measured from (its `baseUrl`, else its own directory). */
+    private readonly pathsBase: string
+    /** `@sssb/kit`'s real package directory as the app resolves it, or undefined where it does not. */
+    private readonly kitDir: string | undefined
+    /** Whether a component, by importing file, specifier and exported name, is one a page may render out of sight. */
     private readonly renderable = new Map<string, boolean>()
 
     constructor(root: ScanRoot, authorizeModules: readonly string[]) {
         this.authorizeModules = authorizeModules
         this.resolution = root.tsconfig ? readCompilerOptions(root.tsconfig) : DEFAULT_RESOLUTION
         this.appDir = path.resolve(root.appDir ?? root.dir)
+        this.pathsBase = this.resolution.baseUrl ?? (root.tsconfig ? path.dirname(root.tsconfig) : this.appDir)
+        this.kitDir = kitPackageDir(this.appDir)
     }
 
     /**
-     * Whether a page may render a component `specifier` names, imported from `from`, as reading nothing
-     * (safeinsights/sssb#221): its module is a client one (the file it resolves to opens with `'use client'`: it runs in
-     * the browser, and reaches data only through routes), or a package's (it resolves under `node_modules`, or outside the
-     * app's directory, as `@sssb/kit`'s screens do). A server component of the app's own, which may load its own data out
-     * of sight, is not: the page counts its name. A module that does not resolve, or could be any of several files, is
-     * not either.
+     * Whether a page may render the component exported as `name` from the module `specifier` names, imported from
+     * `from`, as reading nothing (safeinsights/sssb#221): it is declared in a client module (the module that DECLARES it,
+     * followed through re-exports, opens with `'use client'`: it runs in the browser, and reaches data only through
+     * routes), or it is an installed package's (its file's real path has a `node_modules` segment, as pnpm's store does)
+     * or SSSB's own (`@sssb/kit`'s real package directory, as the app resolves it, so its screens stay out of sight here
+     * as for an adopter who installs it). Anything else, in the app or out of it (a workspace package of the adopter's
+     * own, linked or reached by a path or an alias), is out of sight only when it is a client module: a server component
+     * may load its own data, so the page counts its name. A module that does not resolve, a re-export that cannot be
+     * followed or leads back to itself, and a module that could be any of several files, are not either.
      */
-    private isRenderable(from: Source, specifier: string): boolean {
-        const key = `${from.fileName}\0${specifier}`
+    private isRenderable(from: Source, specifier: string, name: string | undefined, seen = new Set<string>()): boolean {
+        const key = `${from.fileName}\0${specifier}\0${name ?? '*'}`
         const known = this.renderable.get(key)
         if (known !== undefined) return known
+        if (seen.has(key)) return false
+        seen.add(key)
         const resolved = ts.resolveModuleName(specifier, from.fileName, this.resolution, ts.sys).resolvedModule
         let answer = false
         if (resolved) {
-            const file = path.resolve(resolved.resolvedFileName)
-            const inApp = file.startsWith(this.appDir + path.sep)
-            if (resolved.isExternalLibraryImport || file.split(path.sep).includes('node_modules') || !inApp)
-                answer = true
+            const real = realpathOrUndefined(resolved.resolvedFileName)
+            const kit = this.kitDir
+            if (real !== undefined && real.split(path.sep).includes('node_modules')) answer = true
+            else if (real !== undefined && kit !== undefined && real.startsWith(kit + path.sep)) answer = true
             else {
                 const target = this.resolve(from, specifier)
-                answer = typeof target !== 'string' && hasDirective(target.sf.statements, 'use client')
+                if (typeof target === 'string') answer = false
+                else if (name === undefined) answer = hasDirective(target.sf.statements, 'use client')
+                else {
+                    // Follow the export to the module that declares it: a server barrel's re-export of a client
+                    // component is the client component.
+                    const binding = this.exportNamed(target, name, new Set())
+                    if (binding?.kind === 'decl') answer = hasDirective(binding.src.sf.statements, 'use client')
+                    else if (binding?.kind === 'module') {
+                        answer = this.isRenderable(binding.src, binding.specifier, binding.name, seen)
+                    }
+                }
             }
         }
         this.renderable.set(key, answer)
         return answer
+    }
+
+    /**
+     * Whether a page's default import of `specifier` is a static asset (a stylesheet's class names, an image's URL), told
+     * by what the specifier lands on, never by its text alone: no `?` or `#` (a loader query), an asset extension
+     * (STATIC_ASSET), no resolution to code or a declaration (TypeScript resolves `./members.css` to a `members.css.ts`
+     * beside it; a `.d.css.ts` of `allowArbitraryExtensions` declares the asset and is fine), and for a relative or alias
+     * specifier the asset file itself on disk. A package's asset (a bare specifier no `paths` entry maps) is not looked up.
+     */
+    private isStaticAsset(from: Source, specifier: string): boolean {
+        if (/[?#]/.test(specifier) || !STATIC_ASSET.test(specifier)) return false
+        const resolved = ts.resolveModuleName(specifier, from.fileName, this.resolution, ts.sys).resolvedModule
+        if (resolved && !/\.d\.[^./]+\.ts$/.test(resolved.resolvedFileName)) return false
+        const literal = this.literalFiles(from, specifier)
+        return literal === undefined || literal.some((file) => STATIC_ASSET.test(file) && isFile(file))
+    }
+
+    /**
+     * The files a relative specifier, or one a `paths` entry maps, names as written (no extension added), or undefined
+     * for a bare package specifier.
+     */
+    private literalFiles(from: Source, specifier: string): string[] | undefined {
+        if (/^\.{1,2}\//.test(specifier) || path.isAbsolute(specifier)) {
+            return [path.resolve(path.dirname(from.fileName), specifier)]
+        }
+        const mapped = Object.entries(this.resolution.paths ?? {}).flatMap(([pattern, targets]) => {
+            const star = pattern.indexOf('*')
+            if (star < 0) return pattern === specifier ? targets : []
+            const [head, tail] = [pattern.slice(0, star), pattern.slice(star + 1)]
+            if (
+                !specifier.startsWith(head) ||
+                !specifier.endsWith(tail) ||
+                specifier.length < head.length + tail.length
+            ) {
+                return []
+            }
+            const captured = specifier.slice(head.length, specifier.length - tail.length)
+            return targets.map((target) => target.replace('*', captured))
+        })
+        return mapped.length === 0 ? undefined : mapped.map((target) => path.resolve(this.pathsBase, target))
     }
 
     handlers(file: string): Handler[] {
@@ -1214,7 +1282,12 @@ class RootScanner {
             } = outsideNamesOf(
                 node.src,
                 node.fn,
-                page ? (specifier) => this.isRenderable(node.src, specifier) : undefined,
+                page
+                    ? {
+                          renderable: (specifier, name) => this.isRenderable(node.src, specifier, name),
+                          asset: (specifier) => this.isStaticAsset(node.src, specifier),
+                      }
+                    : undefined,
             )
             // Each listed import's module, resolved, so two routes importing one name from two modules can be told apart.
             const outsideSources =
@@ -2438,7 +2511,35 @@ function memberSource(name: string, from: string): string {
     )
 }
 
-/** A static asset a page may default-import as a value: a stylesheet (its class names) or an image (its URL). */
+/** What the scanner resolves for a page's analysis: modules it may render, and default imports that are static assets. */
+interface PageResolution {
+    /** Whether the component exported as `name` (a namespace's whole module: undefined) from `specifier` renders out of sight. */
+    renderable(specifier: string, name: string | undefined): boolean
+    /** Whether a default import of `specifier` is a static asset. */
+    asset(specifier: string): boolean
+}
+
+/** Whether `file` is a file (through a link); false when it is missing or a directory. */
+function isFile(file: string): boolean {
+    try {
+        return statSync(file).isFile()
+    } catch {
+        return false
+    }
+}
+
+/** `@sssb/kit`'s real package directory, resolved from `appDir` as the app's own imports resolve it, or undefined. */
+function kitPackageDir(appDir: string): string | undefined {
+    try {
+        return realpathSync(
+            path.dirname(createRequire(path.join(appDir, 'package.json')).resolve('@sssb/kit/package.json')),
+        )
+    } catch {
+        return undefined
+    }
+}
+
+/** The extensions a page may default-import as a static asset (checked on the resolved file too: `isStaticAsset`). */
 const STATIC_ASSET = /\.(?:css|scss|png|jpe?g|gif|svg|webp|avif|ico)$/
 
 /** Member names that lead from any value to the `Function` constructor or a prototype the scan cannot see. */
@@ -2496,13 +2597,13 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
 function outsideNamesOf(
     src: Source,
     fn: ts.FunctionLikeDeclaration,
-    /** For a page's export: whether a module the page renders a component from is one it may render out of sight. */
-    renderable?: (specifier: string) => boolean,
+    /** For a page's export: what the scanner resolves for it (`PageResolution`). */
+    pageResolution?: PageResolution,
 ):
     | { names: ReadonlySet<string>; sources: ReadonlyMap<string, string>; refusal: null }
     | { names: null; sources: null; refusal: string } {
     const { checker, sf } = src
-    const page = renderable !== undefined
+    const page = pageResolution !== undefined
     const within = (node: ts.Node, root: ts.Node) => node.getStart(sf) >= root.getStart(sf) && node.end <= root.end
     const assigned = new Map<string, boolean>()
     const assignedGlobal = (name: string): boolean => {
@@ -2515,7 +2616,7 @@ function outsideNamesOf(
         if (imported !== undefined) {
             if (imported.kind !== 'named') return false
             // A page's static asset (a stylesheet's class names, an image's URL): the bundler's output, no data.
-            if (page && ts.isImportClause(decl) && STATIC_ASSET.test(imported.module)) return true
+            if (page && ts.isImportClause(decl) && pageResolution.asset(imported.module)) return true
             if (!ts.isImportSpecifier(decl) || decl.name.text !== imported.name) return false
             return (
                 (INERT_IMPORTS[imported.module] ?? []).includes(imported.name) ||
@@ -2638,7 +2739,7 @@ function outsideNamesOf(
                     )
                 }
                 // Rendered out of sight only from a client module or a package; a server module of the app is counted.
-                if (renderable?.(loaded) !== true) {
+                if (pageResolution?.renderable(loaded, id.text) !== true) {
                     names.add(id.text)
                     sources.set(id.text, loaded)
                 }
@@ -2664,7 +2765,8 @@ function outsideNamesOf(
                         }
                         // An imported component the page renders, from a client module or a package: out of sight. A
                         // server component of the app's own may load its own data, so it is counted below.
-                        if (renderable?.(imported.module) === true) return true
+                        const exported = imported.kind === 'namespace' ? member : imported.name
+                        if (pageResolution?.renderable(imported.module, exported) === true) return true
                     } else {
                         // A component of the page's own file: in sight, so read as part of the page.
                         const component = isDirectJsxTag(id) ? sameFileComponent(src, decl) : undefined
