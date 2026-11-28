@@ -170,6 +170,51 @@ describe('drainFairly', () => {
         expect(left.stoppedBy).toBe('time')
     })
 
+    test('a pass that runs out of listed rows early lists on, so a mid-sized drain reaches every tenant', async () => {
+        // The review's probe: 100 tenants at 10 ms a listing, one due row each at 1 ms, a 1,500 ms window. A single
+        // pass would list 75 by its half and finish at 825 ms with the other 25 never listed.
+        let now = 0
+        let listed = 0
+        let ran = 0
+        const tenants = Array.from({ length: 100 }, (_, i) => ({ id: `t${String(i).padStart(3, '0')}` }))
+        const left = await drainFairly(
+            tenants,
+            { maxItems: NONE, deadline: 1_500, clock: () => now, random: seeded(9) },
+            async () => {
+                listed += 1
+                now += 10
+                return ['row']
+            },
+            (row) => row,
+            async () => {
+                ran += 1
+                now += 1
+            },
+        )
+        expect({ listed, ran }).toEqual({ listed: 100, ran: 100 })
+        expect(left).toEqual({ deferred: 0, stoppedBy: null })
+    })
+
+    test('maxItems counts every pass, not each', async () => {
+        // 20 tenants at 10 ms a listing, one row each, rows instant, a 100 ms window: the first pass lists 5 (to 50 ms)
+        // and runs them; the second may start only 2 more of the 3 it lists.
+        let now = 0
+        const ran: string[] = []
+        const tenants = Array.from({ length: 20 }, (_, i) => ({ id: `t${String(i).padStart(2, '0')}` }))
+        const left = await drainFairly(
+            tenants,
+            { maxItems: 7, deadline: 100, clock: () => now, random: seeded(4) },
+            async (tenantId) => {
+                now += 10
+                return [`${tenantId}-0`]
+            },
+            (row) => row,
+            async (row) => void ran.push(row),
+        )
+        expect(ran).toHaveLength(7)
+        expect(left).toEqual({ deferred: 1, stoppedBy: 'items' })
+    })
+
     test('a drain that starts at or past its deadline lists nothing', async () => {
         const left = await drainFairly(
             [{ id: 'a' }],

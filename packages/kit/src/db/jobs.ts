@@ -304,7 +304,7 @@ async function startRetry(
         // A start that may have started the work anyway (a timeout, a server fault) leaves the claimed row as it is,
         // `startingRef`, for the runner's sweep to judge, as `submitJob` and a schedule's spawn do: failing it here
         // would arm the next attempt beside a build that may be running, and drop that build's result.
-        if (jobs.startingRef !== undefined && mayHaveStarted(error)) throw error
+        if (jobs.startingRef !== undefined && jobs.sweep !== undefined && mayHaveStarted(error)) throw error
         // The runner refused it (CodeBuild's StartBuild refused, say): this attempt failed, which arms the next one.
         await recordJobStatus(db, tenantId, jobId, 'failed', {
             error: `the jobs runner did not start it: ${error instanceof Error ? error.message : String(error)}`,

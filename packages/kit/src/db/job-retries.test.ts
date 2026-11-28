@@ -409,6 +409,7 @@ describe('the retry drain', () => {
         // A runner with a starting ref, whose sweep judges a row left `starting`: the row is left as the claim wrote it.
         const unsure: JobsPort = {
             startingRef: 'starting',
+            sweep: async () => 0,
             start: async () => {
                 throw timedOut()
             },
@@ -429,7 +430,10 @@ describe('the retry drain', () => {
         expect(ended, 'no end notified: the attempt may be running').toEqual([])
     })
 
-    test('a runner with no starting ref fails the attempt even when its error says it may have started (J3)', async () => {
+    test.each([
+        ['no starting ref', { sweep: async () => 0 }],
+        ['no sweep', { startingRef: 'starting' }],
+    ])('a runner with %s fails the attempt even when its error says it may have started (J3)', async (_, shape) => {
         const { fakeDb, tenantId, orgId } = await world()
         const { recordJobStatus, runDueRetries, submitJob } = await import('./jobs')
         const { id } = await submitJob(
@@ -440,6 +444,7 @@ describe('the retry drain', () => {
         await recordJobStatus(fakeDb, tenantId, id, 'failed', { error: 'first' })
         // Nothing would ever judge a row left queued with no ref, so it is failed, which arms the next attempt.
         const unjudged: JobsPort = {
+            ...shape,
             start: async () => {
                 throw Object.assign(new Error('timed out'), { mayHaveStarted: true })
             },
