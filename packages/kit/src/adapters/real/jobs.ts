@@ -23,7 +23,10 @@ export type FailLostJob = (input: { tenantId: string; jobId: string; error: stri
  */
 export const CODEBUILD_LOST_AFTER_MS = 5 * 60_000
 
-/** The `runner_ref` written before StartBuild is called, replaced by the build's id once it returns. */
+/**
+ * The `runner_ref` a CodeBuild job's row is written with (this port's `startingRef`, in the row's own insert or claim:
+ * safeinsights/sssb#251), replaced by the build's id once StartBuild returns.
+ */
 export const CODEBUILD_STARTING = 'starting'
 
 /**
@@ -65,7 +68,7 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  * the row's own first write (this port's `startingRef`, which `submitJob`, a schedule's spawn and a retry's claim write
  * with the row, so no separate write can fail before StartBuild: safeinsights/sssb#251), then the build's id once
  * StartBuild returns. The scheduled tick calls `sweep`, which asks CodeBuild
- * (BatchGetBuilds, which the server's role must be allowed) about each of the runner's jobs still queued or running
+ * (BatchGetBuilds, which the server's role must be allowed) about the runner's jobs still queued or running
  * and quiet for `CODEBUILD_LOST_AFTER_MS`, and fails as lost:
  *
  * - a job whose build ENDED (any status but IN_PROGRESS) at least that long ago without the job reaching an end: its
@@ -82,6 +85,13 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  * caller that builds the real ports itself) the runner has no sweep, as before. A job with no
  * `runner_ref` (written before the column existed, or held by another runner) is never judged. A sweep that cannot
  * reach CodeBuild (no permission, throttling) logs and fails nothing more; the tick carries on.
+ *
+ * THE BOUND (safeinsights/sssb#252). Given a budget, the sweep looks at the tenants, and at each tenant's builds, in a
+ * fresh random order, and starts nothing (no tenant's listing, no BatchGetBuilds call, no failure) once it has failed
+ * `maxItems` or its deadline has passed. It fails each loss as soon as it knows it: first the ones that need no
+ * CodeBuild call (`refused`, and `starting` past the hour), then each BatchGetBuilds answer's before the next call, so
+ * time spent reading never throws away a loss already found. A call already under way when the deadline passes runs to
+ * its end (safeinsights/sssb#267).
  */
 export function createRealJobs(project: string, region: string, db: DbPort, failLost?: FailLostJob): JobsPort {
     const client = new CodeBuildClient({ region })

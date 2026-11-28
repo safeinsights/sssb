@@ -118,8 +118,8 @@ export async function runScheduledTick(
         deliveriesWindowMs: given.deliveriesWindowMs ?? DEFAULT_TICK_BUDGET.deliveriesWindowMs,
     }
     const now = isSimulated ? worldNow() : new Date()
-    // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
-    // reported here, the failed jobs' errors say it.
+    // A runner that can lose a job (JOBS_RUNNER=in-process mid-run, or codebuild, whose build can end unreported) fails
+    // the lost ones first, inside a window of its own; its count is not reported here, the failed jobs' errors say it.
     // Checked as the drains' budgets are, and before the sweep's try, so a malformed one (NaN, 0) throws rather than
     // unbounding the sweep or stopping it for good.
     const sweepBudget = resolveDrainBudget({

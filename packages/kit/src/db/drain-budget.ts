@@ -7,8 +7,8 @@
  * wall clock (`clock`, `Date.now` by default: the server's time limit is wall-clock time, so a simulated world clock
  * never moves it). The deadline is checked before each tenant's listing query and before each row, so past it a drain
  * lists nothing more and starts nothing more. Work already started is never cut short; the bound is on what is
- * STARTED, so the deadline has to leave room for the longest item after it (`runScheduledTick` sets both drains'
- * deadlines with that margin). A drain called with no budget at all is unbounded, as every drain was before the bound:
+ * STARTED, so the deadline has to leave room for the longest item after it (`runScheduledTick` sets each drain's
+ * deadline with that margin). A drain called with no budget at all is unbounded, as every drain was before the bound:
  * the tick always passes one, and the Simulator's own controls, which run no server limit, pass none.
  *
  * FAIRNESS. Each tenant's listed due rows form a queue; the drain takes one row from each tenant in turn

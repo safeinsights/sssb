@@ -62,6 +62,20 @@ interface JobContext {
 export type JobHandler = (payload: unknown, ctx: JobContext) => Promise<{ resultKey?: string }>
 
 /**
+ * How much of the scheduled tick one `sweep` may spend (safeinsights/sssb#252): at most `maxItems` jobs failed, and
+ * nothing started after `deadline` (in `clock`'s milliseconds, `Date.now` by default). `random` shuffles the order the
+ * tenants (and a runner's own items within one) are looked at, so a bound that stops a sweep short does not always leave
+ * the same ones for later. The shape of the drains' `DrainBudget` (packages/kit/src/db/drain-budget.ts), restated here
+ * so the port imports nothing; the tick checks it as it checks theirs (`resolveDrainBudget`).
+ */
+export interface SweepBudget {
+    maxItems: number
+    deadline: number
+    clock?: () => number
+    random?: () => number
+}
+
+/**
  * Jobs port — the execution SEAM only. The `jobs` row, its status column, and the
  * `job_status_changes` timeline are app-owned in packages/kit/src/db/jobs.ts, where recordJobStatus is the
  * single choke point for every transition (state-machine guarded). This port just kicks the work
@@ -71,19 +85,6 @@ export type JobHandler = (payload: unknown, ctx: JobContext) => Promise<{ result
  * `in-process` runs the handler in the server before `start` returns
  * (packages/kit/src/adapters/real/jobs-in-process.ts), and `none` throws `AbsentPortError`.
  */
-/**
- * How much of the scheduled tick one `sweep` may spend (safeinsights/sssb#252): at most `maxItems` jobs failed, and
- * none judged after `deadline` (in `clock`'s milliseconds, `Date.now` by default). `random` shuffles the order the
- * tenants are looked at, so a bound that stops a sweep short does not always leave the same tenants for later. The
- * shape of the drains' budget (`@sssb/kit/db/drain-budget`), restated here so the port imports nothing.
- */
-export interface SweepBudget {
-    maxItems: number
-    deadline: number
-    clock?: () => number
-    random?: () => number
-}
-
 export interface JobsPort {
     start(job: SubmittedJob): Promise<void>
     /**

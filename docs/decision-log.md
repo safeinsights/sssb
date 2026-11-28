@@ -8546,10 +8546,20 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
   is the drains' shape (`SweepBudget`, restated in the port so it imports nothing). The tick gives it a window of its
   own, its first two seconds (`SWEEP_WINDOW_MS`), and at most 100 jobs failed (`maxSweep`, `sweepWindowMs` on the tick's
   budget).
-    - Both runners' sweeps take tenants in a fresh random order (the drains' `shuffled`) and stop judging once the budget
-      is spent: before each tenant, each BatchGetBuilds call and each failure. What a sweep leaves, the next tick's sweep
-      finds; nothing it skips is lost, since a lost job stays lost.
-    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the schedules about four seconds of theirs (the sweep's last judgment may run a little past its deadline).
+    - Both runners' sweeps take tenants in a fresh random order (the drains' `shuffled`) and stop once the budget is
+      spent, checked before each tenant, each BatchGetBuilds call and each failure. What a sweep leaves, the next tick's
+      sweep finds; nothing it skips is lost, since a lost job stays lost.
+    - **The CodeBuild sweep fails each loss as soon as it knows it.** First the losses that need no CodeBuild call
+      (`refused`, and `starting` past the hour), then each BatchGetBuilds answer's before the next call; a tenant's build
+      ids are shuffled too. Round 1 of review found the first version, which read every batch before failing any, could
+      spend the whole window reading and throw away what it had found, every tick, for a tenant with many open builds.
+    - **The tick checks the sweep's budget as it checks the drains'** (`resolveDrainBudget`), before the sweep runs: a
+      `maxSweep` or `sweepWindowMs` of `NaN` would have left the sweep unbounded (every comparison with `NaN` is false),
+      and a `maxSweep` of 0 would have stopped it for good. Both throw now. Found in round 2.
+    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the
+      schedules about four seconds of theirs. A judgment, or a BatchGetBuilds call, already under way at the deadline
+      runs to its end; the SDK sets no timeout on that call, so one that stalls can outlast the window
+      (safeinsights/sssb#267, filed from round 2).
     - `lazyJobs` passes the budget through. A sweep called with no budget judges everything, as before.
     - Not changed: the sweep still lists every tenant once a tick within its window (the drains' due hints,
       safeinsights/sssb#263, do not extend to it).
@@ -8557,9 +8567,16 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
     - `adapters/real/jobs.test.ts`:
         - the starting ref written by `submitJob`, a schedule spawn and a retry claim;
         - a job whose start threw before writing anything, failed by the sweep after the hour;
-        - a bounded sweep failing at most its count, nothing after its deadline, and the rest next time.
-    - `adapters/real/jobs-in-process.test.ts`: the in-process sweep, bounded the same way.
-    - `server-lib/scheduled-tick.test.ts`: the tick hands the sweep its budget.
+        - a bounded sweep failing at most its count, nothing after its deadline, and the rest next time;
+        - the tenants, and one tenant's builds, taken in the order the random gives;
+        - the losses needing no CodeBuild call failed even when a read spends the window, and one read's losses failed
+          before a later read is cut off.
+    - `adapters/real/jobs-in-process.test.ts`: the in-process sweep, bounded the same way, its tenants shuffled.
+    - `server-lib/scheduled-tick.test.ts`: the tick hands the sweep its budget, and refuses a malformed one.
     - `adapters/lazy-jobs.test.ts`: the budget passes through.
-    - Removing any of these turns them red: the ref from each of the three writers, either runner's bound, the tick's
-      deadline, or the pass-through.
+    - Removing any of these turns them red: the ref from each of the three writers, either runner's bound, either
+      runner's tenant shuffle, the build-id shuffle, failing as found (free losses first, each batch's before the next),
+      the tick's deadline, its budget check, or the pass-through.
+- **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
+  the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
+  and #267. Then a claims pass over the prose.

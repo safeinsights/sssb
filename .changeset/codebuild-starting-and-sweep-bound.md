@@ -17,4 +17,7 @@
 - **The tick's sweep for lost jobs has a bound of its own.** It is given a budget, a window of the tick's first two
   seconds and at most 100 jobs failed (`JobsPort.sweep(now, budget)`, the budget optional). Both runners' sweeps take
   tenants in a fresh random order and stop when the budget is spent, so a sweep that finds many lost jobs leaves the
-  drains their windows. `runScheduledTick`'s budget takes `maxSweep` and `sweepWindowMs`.
+  drains their windows. The CodeBuild runner's sweep fails each lost job as soon as it finds it, so time spent asking
+  CodeBuild never throws away what it found. `runScheduledTick`'s budget takes `maxSweep` and `sweepWindowMs`, both
+  optional, and throws a `RangeError` for one that is not a usable bound (`NaN`, or a `maxSweep` below 1), as it does
+  for the drains' fields.
