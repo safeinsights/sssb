@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { JobsPort, SubmittedJob } from '../ports/jobs'
-import type { DB } from './schema'
 
 const tmp = makeTestTmpDir('app-due-hints-')
 beforeAll(async () => {
@@ -23,13 +22,16 @@ beforeEach(async () => {
         .where('status', 'in', ['pending', 'failed'])
         .execute()
     await raw.updateTable('jobs').set({ status: 'failed', run_after: null }).where('status', '=', 'queued').execute()
+    await raw.deleteFrom('due_hint_events').execute()
     await raw.deleteFrom('due_hints').execute()
 })
 
 /**
- * Due hints (safeinsights/sssb#202, migration 0022_due_hints): the tick's drains list only the tenants whose hint has
- * come. Triggers lower a hint on every write that can make work due; a drain raises it, by compare-and-set, after
- * listing a tenant with nothing due. Driven here on the fake database, through the drains as the tick calls them.
+ * Due hints (safeinsights/sssb#202, migration 0022_due_hints): the tick's drains list only the tenants whose hint, or
+ * an event, has come. Triggers append an event on every write that can make work due; a drain sets the hints of the
+ * tenants it listed, and deletes the events their listing accounted for, by compare-and-set. Driven here on the fake
+ * database, through the drains as the tick calls them. What waits on what needs real Postgres
+ * (../adapters/real/db.contract.test.ts).
  */
 
 const HINTED = { maxItems: 100, deadline: Number.MAX_SAFE_INTEGER, dueHints: true } as const
@@ -69,6 +71,28 @@ async function hint(tenantId: string, drain: 'schedules' | 'retries' | 'deliveri
         .where('tenant_id', '=', tenantId)
         .where('drain', '=', drain)
         .executeTakeFirst()
+}
+
+/** The due times of the tenant's events for `drain`, earliest first. */
+async function events(tenantId: string, drain: 'schedules' | 'retries' | 'deliveries') {
+    const { fakeDb } = await world()
+    const rows = await fakeDb
+        .getDb()
+        .selectFrom('due_hint_events')
+        .select('due')
+        .where('tenant_id', '=', tenantId)
+        .where('drain', '=', drain)
+        .orderBy('due')
+        .execute()
+    return rows.map((r) => new Date(r.due as Date).getTime())
+}
+
+/** When the tick next lists the tenant for `drain`: its hint or its earliest event, whichever is sooner (null: no hint). */
+async function effective(tenantId: string, drain: 'schedules' | 'retries' | 'deliveries') {
+    const h = await hint(tenantId, drain)
+    const e = await events(tenantId, drain)
+    const times = [...(h ? [new Date(h.list_after as Date).getTime()] : []), ...e]
+    return h ? Math.min(...times) : null
 }
 
 /** Every tenant a drain asks about, recorded by wrapping withTenant (each listing is one). */
@@ -117,33 +141,33 @@ async function insertSchedule(tenantId: string, orgId: string, nextRunAt: Date):
 }
 
 describe('the schedules drain with due hints', () => {
-    test('a first write records "unknown"; the drain lists the tenant, raises it, and a later write only lowers it', async () => {
-        const { fakeDb, tenantId, orgId } = await world()
+    test('a write appends an event; the drain lists the tenant, sets its hint and consumes the event; later writes only lower it', async () => {
+        const { tenantId, orgId } = await world()
         const { runDueSchedules } = await import('./schedules')
         // A year on, where nothing of the other tests' is due.
         const now = new Date('2031-01-05T00:00:00.000Z')
         const later = new Date(now.getTime() + 3 * 60 * MINUTE)
         const sooner = new Date(now.getTime() + 60 * MINUTE)
-        await fakeDb.getDb().deleteFrom('due_hints').where('tenant_id', '=', tenantId).execute()
         await insertSchedule(tenantId, orgId, later)
-        // The trigger found no row: it cannot know what else is due, so it records the epoch, and the tenant is listed.
-        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(0)
+        expect(await events(tenantId, 'schedules')).toEqual([later.getTime()])
+        // No hint yet: the tenant is listed.
         let { db, listed } = await listingCounter()
         await runDueSchedules(db, stubJobs(), now, HINTED)
         expect(listed).toContain(tenantId)
-        // Nothing due: raised to the tenant's next due time.
+        // Nothing due: the hint is the tenant's next due time, and the event it accounted for is gone.
         expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(later.getTime())
+        expect(await events(tenantId, 'schedules')).toEqual([])
 
-        // A write due sooner lowers it; one due later does not raise it.
+        // A write due sooner brings the tenant's turn forward; one due later does not put it back.
         await insertSchedule(tenantId, orgId, sooner)
-        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(sooner.getTime())
+        expect(await effective(tenantId, 'schedules')).toBe(sooner.getTime())
         await insertSchedule(tenantId, orgId, new Date(now.getTime() + 10 * 60 * MINUTE))
-        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(sooner.getTime())
+        expect(await effective(tenantId, 'schedules')).toBe(sooner.getTime())
         ;({ db, listed } = await listingCounter())
         await runDueSchedules(db, stubJobs(), new Date(now.getTime() + MINUTE), HINTED)
-        expect(listed, 'its hint has not come, so the next tick skips it').not.toContain(tenantId)
+        expect(listed, 'neither its hint nor an event has come, so the next tick skips it').not.toContain(tenantId)
 
-        // A schedule written due now lowers the hint, and the next tick lists the tenant and fires it.
+        // A schedule written due now appends an event that has come, and the next tick lists the tenant and fires it.
         const due = await insertSchedule(tenantId, orgId, new Date(now.getTime() + MINUTE))
         const jobs = stubJobs()
         ;({ db, listed } = await listingCounter())
@@ -152,19 +176,18 @@ describe('the schedules drain with due hints', () => {
         expect(jobs.calls.map((c) => (c.payload as { scheduleId: string }).scheduleId)).toContain(due)
     })
 
-    test("a raise is to the tenant's EARLIEST next due time, and at most a day on", async () => {
+    test("a hint is set to the tenant's EARLIEST next due time, and at most a day on", async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { runDueSchedules } = await import('./schedules')
         const { MAX_SKIP_MS } = await import('./due-hints')
         const now = new Date('2036-01-05T00:00:00.000Z')
         await insertSchedule(tenantId, orgId, new Date(now.getTime() + 5 * 60 * MINUTE))
         await insertSchedule(tenantId, orgId, new Date(now.getTime() + 2 * 60 * MINUTE))
-        await fakeDb.getDb().deleteFrom('due_hints').where('tenant_id', '=', tenantId).execute()
         await runDueSchedules(fakeDb, stubJobs(), now, HINTED)
         expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(
             now.getTime() + 2 * 60 * MINUTE,
         )
-        // Only work further off than a day: the raise stops at a day.
+        // Only work further off than a day: the hint stops at a day.
         const far = new Date('2040-01-05T00:00:00.000Z')
         await fakeDb.getDb().updateTable('job_schedules').set({ enabled: false }).execute()
         await fakeDb.getDb().deleteFrom('due_hints').where('tenant_id', '=', tenantId).execute()
@@ -175,39 +198,34 @@ describe('the schedules drain with due hints', () => {
         )
     })
 
-    test("the tick's own advance of a schedule leaves the hint alone; moving one earlier lowers it", async () => {
+    test("the tick's own advance of a schedule appends nothing; moving one earlier appends its time", async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { runDueSchedules } = await import('./schedules')
         const now = new Date('2041-01-05T00:00:00.000Z')
         const due = await insertSchedule(tenantId, orgId, new Date(now.getTime() - MINUTE))
-        const before = await hint(tenantId, 'schedules')
+        await fakeDb.getDb().deleteFrom('due_hint_events').execute()
         const jobs = stubJobs()
         await runDueSchedules(fakeDb, jobs, now, HINTED)
         expect(jobs.calls.map((c) => (c.payload as { scheduleId: string }).scheduleId)).toContain(due)
-        // The spawn moved the schedule a week on: a later due time takes no hint row (so the tick waits on no
-        // tenant transaction that holds one).
-        expect(String((await hint(tenantId, 'schedules'))!.version)).toBe(String(before!.version))
+        // The spawn moved the schedule a week on: a later due time appends nothing.
+        expect(await events(tenantId, 'schedules')).toEqual([])
 
-        // Moving a schedule earlier by an update does lower it.
+        // Moving a schedule earlier by an update does append.
         const far = await insertSchedule(tenantId, orgId, new Date(now.getTime() + 30 * 24 * 60 * MINUTE))
-        await fakeDb
-            .getDb()
-            .updateTable('due_hints')
-            .set({ list_after: new Date(now.getTime() + 20 * 60 * MINUTE) })
-            .execute()
+        await fakeDb.getDb().deleteFrom('due_hint_events').execute()
         const soon = new Date(now.getTime() + 10 * MINUTE)
         await fakeDb.getDb().updateTable('job_schedules').set({ next_run_at: soon }).where('id', '=', far).execute()
-        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(soon.getTime())
+        expect(await events(tenantId, 'schedules')).toEqual([soon.getTime()])
     })
 
-    test('re-enabling a schedule lowers the hint, so its work is not hidden', async () => {
+    test('re-enabling a schedule appends its time, so its work is not hidden', async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { runDueSchedules } = await import('./schedules')
         const now = new Date('2037-01-05T00:00:00.000Z')
         const id = await insertSchedule(tenantId, orgId, new Date(now.getTime() - MINUTE))
         await fakeDb.getDb().updateTable('job_schedules').set({ enabled: false }).where('id', '=', id).execute()
-        await fakeDb.getDb().deleteFrom('due_hints').where('tenant_id', '=', tenantId).execute()
-        // Listed with nothing due (the schedule is off): raised a day on.
+        await fakeDb.getDb().deleteFrom('due_hint_events').execute()
+        // Listed with nothing due (the schedule is off): set a day on.
         await runDueSchedules(fakeDb, stubJobs(), now, HINTED)
         expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBeGreaterThan(
             now.getTime(),
@@ -218,8 +236,8 @@ describe('the schedules drain with due hints', () => {
         expect(jobs.calls.map((c) => (c.payload as { scheduleId: string }).scheduleId)).toContain(id)
     })
 
-    test('a drain without hints lists every tenant, whatever the hints say', async () => {
-        const { tenantId, otherTenantId } = await world()
+    test('a drain without hints lists every tenant, whatever the hints say, and sets none', async () => {
+        const { fakeDb, tenantId, otherTenantId } = await world()
         const { runDueSchedules } = await import('./schedules')
         const { db, listed } = await listingCounter()
         await runDueSchedules(db, stubJobs(), new Date('2031-01-05T00:05:00.000Z'), {
@@ -227,15 +245,16 @@ describe('the schedules drain with due hints', () => {
             deadline: Number.MAX_SAFE_INTEGER,
         })
         expect(listed).toEqual(expect.arrayContaining([tenantId, otherTenantId]))
+        expect(await fakeDb.getDb().selectFrom('due_hints').selectAll().execute()).toEqual([])
     })
 })
 
 describe('the deliveries and retries drains with due hints', () => {
-    test('a delivery enqueued for a tenant whose hint is far off lowers it, and the next tick delivers it', async () => {
+    test('a delivery enqueued for a tenant whose hint is far off is delivered by the next tick', async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { createEndpoint, enqueueWebhookEvent, runDueDeliveries } = await import('./webhooks')
         const now = new Date('2032-01-01T00:00:00.000Z')
-        // Nothing due: the drain raises the tenant's hint a day on.
+        // Nothing due: the drain sets the tenant's hint a day on.
         await runDueDeliveries(fakeDb, now, () => ({ delivered: true }), HINTED)
         expect(new Date((await hint(tenantId, 'deliveries'))!.list_after as Date).getTime()).toBeGreaterThan(
             now.getTime(),
@@ -273,7 +292,7 @@ describe('the deliveries and retries drains with due hints', () => {
         expect(sent).toHaveLength(1)
     })
 
-    test('a retry armed for a tenant whose hint is far off lowers it, and the tick starts it when it is due', async () => {
+    test('a retry armed for a tenant whose hint is far off appends its time, and the tick starts it when it is due', async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { recordJobStatus, runDueRetries, submitJob } = await import('./jobs')
         const now = new Date('2033-01-01T00:00:00.000Z')
@@ -284,9 +303,7 @@ describe('the deliveries and retries drains with due hints', () => {
             { tenantId, orgId, kind: 'flaky-dockets', payload: {} },
         )
         await recordJobStatus(fakeDb, tenantId, id, 'failed', { error: 'first', now })
-        expect(new Date((await hint(tenantId, 'retries'))!.list_after as Date).getTime()).toBeLessThanOrEqual(
-            now.getTime() + MINUTE,
-        )
+        expect(await effective(tenantId, 'retries')).toBeLessThanOrEqual(now.getTime() + MINUTE)
         const jobs = stubJobs()
         expect(await runDueRetries(fakeDb, jobs, new Date(now.getTime() + 2 * MINUTE), HINTED)).toMatchObject({
             started: 1,
@@ -314,7 +331,6 @@ describe('work a drain leaves, and status-only moves', () => {
             secret: 'whsec_backlog',
             createdBy: 'test',
         })
-        await fakeDb.getDb().deleteFrom('due_hints').where('tenant_id', '=', otherTenantId).execute()
         for (let i = 0; i < 3; i++) {
             await enqueueWebhookEvent(
                 fakeDb,
@@ -335,9 +351,11 @@ describe('work a drain leaves, and status-only moves', () => {
             ).delivered
         }
         expect(delivered).toBe(3)
+        // A tenant listed with rows had its hint set to the tick's now (listed again) and its events consumed.
+        expect(await events(otherTenantId, 'deliveries')).toEqual([])
     })
 
-    test('a delivery moved back to failed by its status alone lowers the hint', async () => {
+    test('a delivery moved back to failed by its status alone appends its time', async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { createEndpoint, enqueueWebhookEvent, runDueDeliveries } = await import('./webhooks')
         const now = new Date('2039-01-01T00:00:00.000Z')
@@ -383,7 +401,6 @@ describe('work a drain leaves, and status-only moves', () => {
             .set({ status: 'dead' })
             .where('id', '=', row.id)
             .execute()
-        await fakeDb.getDb().deleteFrom('due_hints').where('tenant_id', '=', tenantId).execute()
         await runDueDeliveries(fakeDb, new Date(now.getTime() + MINUTE), () => ({ delivered: true }), HINTED)
         expect(new Date((await hint(tenantId, 'deliveries'))!.list_after as Date).getTime()).toBeGreaterThan(
             now.getTime(),
@@ -394,6 +411,7 @@ describe('work a drain leaves, and status-only moves', () => {
             .set({ status: 'failed' })
             .where('id', '=', row.id)
             .execute()
+        expect(await events(tenantId, 'deliveries')).toEqual([now.getTime()])
         const result = await runDueDeliveries(
             fakeDb,
             new Date(now.getTime() + 2 * MINUTE),
@@ -404,47 +422,85 @@ describe('work a drain leaves, and status-only moves', () => {
     })
 })
 
-describe('raiseHint and tenantsToList', () => {
-    test('a raise does not land over a write that lowered the hint after it was read', async () => {
-        const { tenantId, orgId } = await world()
-        const { raiseHint, tenantsToList } = await import('./due-hints')
-        const { fakeDb } = await world()
+describe('settleHints and tenantsToList', () => {
+    test('an event committed after the read stays, so its tenant is listed again; the ones the read saw go', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { settleHints, tenantsToList } = await import('./due-hints')
         const now = new Date('2034-01-01T00:00:00.000Z')
-        await insertSchedule(tenantId, orgId, new Date(now.getTime() - MINUTE)) // a hint row, due
-        const read = (await tenantsToList(fakeDb, 'schedules', now)).find((t) => t.id === tenantId)!
-        // Meanwhile a write makes more work due, bumping the hint's version.
-        await insertSchedule(tenantId, orgId, new Date(now.getTime() - 2 * MINUTE))
-        await raiseHint(fakeDb, read, 'schedules', now, new Date(now.getTime() + 60 * MINUTE))
-        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBeLessThanOrEqual(
-            now.getTime(),
+        await insertSchedule(tenantId, orgId, new Date(now.getTime() + 30 * MINUTE)) // an event, seen by the read
+        const read = await tenantsToList(fakeDb, 'schedules', now)
+        const tenant = read.tenants.find((t) => t.id === tenantId)!
+        // Meanwhile a write makes work due now: its event is committed after the read's snapshot.
+        await insertSchedule(tenantId, orgId, new Date(now.getTime() - MINUTE))
+        await settleHints(fakeDb, 'schedules', now, read, [
+            { tenant, hadRows: false, nextDue: new Date(now.getTime() + 30 * MINUTE) },
+        ])
+        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(
+            now.getTime() + 30 * MINUTE,
         )
+        expect(await events(tenantId, 'schedules'), 'only the later write is left').toEqual([now.getTime() - MINUTE])
+        expect((await tenantsToList(fakeDb, 'schedules', now)).tenants.map((t) => t.id)).toContain(tenantId)
     })
 
-    test('a hint further off than a day is read as come, and unreadable hints list every tenant', async () => {
+    test('a settle from a read another tick has settled since changes nothing, and deletes none of the events', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { settleHints, tenantsToList } = await import('./due-hints')
+        const now = new Date('2034-06-01T00:00:00.000Z')
+        await insertSchedule(tenantId, orgId, new Date(now.getTime() + 30 * MINUTE))
+        const stale = await tenantsToList(fakeDb, 'schedules', now)
+        const fresher = await tenantsToList(fakeDb, 'schedules', now)
+        const of = (read: typeof stale) => read.tenants.find((t) => t.id === tenantId)!
+        // The fresher tick settles first; a second write's event arrives after both reads.
+        await settleHints(fakeDb, 'schedules', now, fresher, [
+            { tenant: of(fresher), hadRows: false, nextDue: new Date(now.getTime() + 30 * MINUTE) },
+        ])
+        await insertSchedule(tenantId, orgId, new Date(now.getTime() + 5 * MINUTE))
+        await settleHints(fakeDb, 'schedules', now, stale, [
+            { tenant: of(stale), hadRows: false, nextDue: new Date(now.getTime() + 60 * MINUTE) },
+        ])
+        expect(new Date((await hint(tenantId, 'schedules'))!.list_after as Date).getTime()).toBe(
+            now.getTime() + 30 * MINUTE,
+        )
+        expect(await events(tenantId, 'schedules')).toEqual([now.getTime() + 5 * MINUTE])
+    })
+
+    test('a hint further off than a day is read as come, and unreadable hints list every tenant and set nothing', async () => {
         const { fakeDb, tenantId, otherTenantId } = await world()
-        const { MAX_SKIP_MS, tenantsToList } = await import('./due-hints')
+        const { MAX_SKIP_MS, settleHints, tenantsToList } = await import('./due-hints')
         const now = new Date('2035-01-01T00:00:00.000Z')
         await fakeDb
             .getDb()
-            .updateTable('due_hints')
-            .set({ list_after: new Date(now.getTime() + MAX_SKIP_MS + MINUTE) })
-            .where('drain', '=', 'schedules')
+            .insertInto('due_hints')
+            .values({
+                tenant_id: tenantId,
+                drain: 'schedules',
+                list_after: new Date(now.getTime() + MAX_SKIP_MS + MINUTE),
+            })
             .execute()
-        expect((await tenantsToList(fakeDb, 'schedules', now)).map((t) => t.id)).toEqual(
-            expect.arrayContaining([tenantId]),
-        )
+        expect((await tenantsToList(fakeDb, 'schedules', now)).tenants.map((t) => t.id)).toContain(tenantId)
 
-        // The hints' read (the join from `tenants as t`) fails as a missing grant would; everything else, `withSchema`'s
-        // query creator included, works.
+        // Every statement that names the hints fails, as a missing grant would; the plain tenants read works.
         const refusingHints = <Q extends object>(creator: Q): Q =>
             new Proxy(creator, {
                 get(target, prop, receiver) {
-                    if (prop === 'selectFrom') {
-                        return (table: string) => {
-                            if (String(table).startsWith('tenants as'))
-                                throw new Error('permission denied for table due_hints')
-                            return (target as { selectFrom: (t: never) => unknown }).selectFrom(table as never)
-                        }
+                    if (prop === 'getExecutor') {
+                        const executor = (target as { getExecutor: () => object }).getExecutor()
+                        return () =>
+                            new Proxy(executor, {
+                                get(e, p) {
+                                    if (p === 'executeQuery') {
+                                        return (query: { sql: string }, id: unknown) => {
+                                            if (/due_hint/.test(query.sql))
+                                                throw new Error('permission denied for table due_hints')
+                                            return (
+                                                e as { executeQuery: (q: unknown, i: unknown) => unknown }
+                                            ).executeQuery(query, id)
+                                        }
+                                    }
+                                    const value = Reflect.get(e, p)
+                                    return typeof value === 'function' ? value.bind(e) : value
+                                },
+                            })
                     }
                     if (prop === 'withSchema') {
                         return (schema: string) =>
@@ -457,74 +513,47 @@ describe('raiseHint and tenantsToList', () => {
         const broken = Object.create(fakeDb, {
             getDb: { value: () => refusingHints(fakeDb.getDb()) },
         }) as typeof fakeDb
-        const listed = await tenantsToList(broken, 'schedules', now)
-        expect(listed.map((t) => t.id)).toEqual(expect.arrayContaining([tenantId, otherTenantId]))
-        expect(listed.every((t) => t.unhinted === true)).toBe(true)
+        const read = await tenantsToList(broken, 'schedules', now)
+        expect(read.tenants.map((t) => t.id)).toEqual(expect.arrayContaining([tenantId, otherTenantId]))
+        expect(read.tenants.every((t) => t.unhinted === true)).toBe(true)
+        await settleHints(
+            broken,
+            'schedules',
+            now,
+            read,
+            read.tenants.map((tenant) => ({ tenant, hadRows: false, nextDue: null })),
+        )
     })
 })
 
-describe('migration 0022 on a database that already has tenants', () => {
-    test('writes every existing tenant an "unknown" row per drain, so the first raises update rather than insert', async () => {
-        const { Kysely } = await import('kysely')
-        const { openPglite, PGliteDialect } = await import('../adapters/fake/pglite-dialect')
-        const { frameworkMigrations } = await import('./migrations/index')
-        const { migrateRegistryToLatest } = await import('./migrate')
-        const fresh = new Kysely<DB>({ dialect: new PGliteDialect(openPglite()) })
-        try {
-            const before = Object.fromEntries(
-                Object.entries(frameworkMigrations).filter(([name]) => name < '0022_due_hints'),
-            )
-            await migrateRegistryToLatest(fresh, before)
-            const tenants = await fresh
-                .insertInto('tenants')
-                .values([
-                    { slug: 'older-a', name: 'Older A' },
-                    { slug: 'older-b', name: 'Older B' },
-                ])
-                .returning('id')
-                .execute()
-            await migrateRegistryToLatest(fresh, frameworkMigrations)
-            const rows = await fresh
-                .selectFrom('due_hints')
-                .select(['tenant_id', 'drain', 'list_after', 'version'])
-                .orderBy('tenant_id')
-                .orderBy('drain')
-                .execute()
-            expect(rows).toHaveLength(6)
-            expect(new Set(rows.map((r) => r.tenant_id))).toEqual(new Set(tenants.map((t) => t.id)))
-            expect(new Set(rows.map((r) => r.drain))).toEqual(new Set(['schedules', 'retries', 'deliveries']))
-            for (const r of rows) expect(new Date(r.list_after as Date).getTime()).toBe(0)
-        } finally {
-            await fresh.destroy()
-        }
-    })
-})
-
-describe('the owner reads the real table', () => {
-    test('a temporary table named due_hints on the same connection does not stand in for it', async () => {
+describe('the owner reads the real tables', () => {
+    test('temporary tables named like them on the same connection do not stand in', async () => {
         const { fakeDb, tenantId } = await world()
         const { sql } = await import('kysely')
         const { tenantsToList } = await import('./due-hints')
         const now = new Date()
-        // The real hint says "unknown" (listed); a temporary table of the same name says "an hour off" (skipped).
+        // The real hint says "come" (listed); temporary tables of the same names say "an hour off" (skipped).
         await fakeDb
             .getDb()
             .insertInto('due_hints')
             .values({ tenant_id: tenantId, drain: 'schedules', list_after: new Date(0), version: 7 })
-            .onConflict((oc) => oc.columns(['tenant_id', 'drain']).doUpdateSet({ list_after: new Date(0), version: 7 }))
             .execute()
         const raw = fakeDb.getDb()
         await sql`CREATE TEMP TABLE due_hints (tenant_id uuid, drain text, list_after timestamptz, version bigint)`.execute(
+            raw,
+        )
+        await sql`CREATE TEMP TABLE due_hint_events (tenant_id uuid, drain text, due timestamptz, writer xid8)`.execute(
             raw,
         )
         try {
             await sql`INSERT INTO pg_temp.due_hints VALUES (${tenantId}, 'schedules', ${new Date(now.getTime() + 3_600_000)}, 1)`.execute(
                 raw,
             )
-            const listed = await tenantsToList(fakeDb, 'schedules', now)
-            expect(listed.find((t) => t.id === tenantId)).toMatchObject({ hintVersion: '7' })
+            const read = await tenantsToList(fakeDb, 'schedules', now)
+            expect(read.tenants.find((t) => t.id === tenantId)).toMatchObject({ hintVersion: '7' })
         } finally {
             await sql`DROP TABLE pg_temp.due_hints`.execute(raw)
+            await sql`DROP TABLE pg_temp.due_hint_events`.execute(raw)
         }
     })
 })

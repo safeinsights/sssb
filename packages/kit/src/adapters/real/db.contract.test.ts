@@ -832,44 +832,136 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
     // safeinsights/sssb#135: a failure of a kind that retries inserts the next attempt in the status transaction, and
     // the tick's retry drain claims it once its delay has passed, all under FORCE RLS as app_user. Proven here on real
     // Postgres: the timestamptz comparison, the self-referencing foreign key and the partial index's predicate.
-    // safeinsights/sssb#202: a tenant's open transaction that lowered its due hint holds the hint row until it commits;
-    // the tick's raise must not wait on it (a raise that does not land only means the tenant is listed again).
-    test('a raise on a hint row another transaction holds returns at once and does not land', async () => {
-        await realDb.migrateToLatest()
-        const admin = realDb.getDb()
-        const tenant = await admin
-            .insertInto('tenants')
-            .values({ slug: `hint-lock-${randomUUID().slice(0, 8)}`, name: 'hint lock' })
-            .returning('id')
-            .executeTakeFirstOrThrow()
-        await admin
-            .insertInto('due_hints')
-            .values({ tenant_id: tenant.id, drain: 'schedules', list_after: new Date(0), version: 7 })
-            .execute()
-        const { raiseHint } = await import('../../db/due-hints')
-        const now = new Date('2030-01-01T00:00:00.000Z')
-        let elapsed = 0
-        await admin.transaction().execute(async (trx) => {
-            await trx.selectFrom('due_hints').select('version').where('tenant_id', '=', tenant.id).forUpdate().execute()
-            const started = Date.now()
-            await raiseHint(realDb, { id: tenant.id, hintVersion: '7' }, 'schedules', now, null)
-            elapsed = Date.now() - started
+    // safeinsights/sssb#202, as the whole-branch review probed it: a tenant's write that makes work due appends an
+    // event and touches no row the tick writes, so an open tenant transaction holds nothing the tick needs, and the
+    // tick's own writes that make work due wait on no tenant transaction.
+    describe('due hints wait on no tenant transaction', () => {
+        const hintTenant = async () => {
+            const admin = realDb.getDb()
+            const slug = `hint-${randomUUID().slice(0, 8)}`
+            const tenant = await admin
+                .insertInto('tenants')
+                .values({ slug, name: slug })
+                .returning('id')
+                .executeTakeFirstOrThrow()
+            const org = await admin
+                .insertInto('organizations')
+                .values({ tenant_id: tenant.id, slug: 'o', name: 'o' })
+                .returning('id')
+                .executeTakeFirstOrThrow()
+            return { id: tenant.id, orgId: org.id }
+        }
+        /** A tenant transaction that has made work due and stays open until `release()`. */
+        const openWriter = (t: { id: string; orgId: string }, write: (trx: Transaction) => Promise<unknown>) => {
+            let release!: () => void
+            const gate = new Promise<void>((resolve) => (release = resolve))
+            let wrote!: () => void
+            const written = new Promise<void>((resolve) => (wrote = resolve))
+            const done = realDb.withTenant(t.id, async (trx) => {
+                await write(trx)
+                wrote()
+                await gate
+            })
+            return { written, release, done }
+        }
+        type Transaction = Parameters<Parameters<DbPort['withTenant']>[1]>[0]
+        const schedule = (t: { id: string; orgId: string }, at: Date) => ({
+            tenant_id: t.id,
+            org_id: t.orgId,
+            kind: 'digest-email',
+            spec: { type: 'weekly' as const, utcDay: 1, atUtcHour: 13, atUtcMinute: 0 },
+            next_run_at: at,
+            enabled: true,
+            created_by: 'test',
         })
-        expect(elapsed).toBeLessThan(2_000)
-        const row = await admin
-            .selectFrom('due_hints')
-            .select('list_after')
-            .where('tenant_id', '=', tenant.id)
-            .executeTakeFirstOrThrow()
-        expect(new Date(row.list_after as Date).getTime()).toBe(0)
-        // Unlocked, the same raise lands.
-        await raiseHint(realDb, { id: tenant.id, hintVersion: '7' }, 'schedules', now, null)
-        const raised = await admin
-            .selectFrom('due_hints')
-            .select('list_after')
-            .where('tenant_id', '=', tenant.id)
-            .executeTakeFirstOrThrow()
-        expect(new Date(raised.list_after as Date).getTime()).toBeGreaterThan(now.getTime())
+
+        test("D: a hinted drain does not wait on a new tenant's open first write", async () => {
+            await realDb.migrateToLatest()
+            const t = await hintTenant()
+            const now = new Date('2031-01-05T00:00:00.000Z')
+            const writer = openWriter(t, (trx) =>
+                trx
+                    .insertInto('job_schedules')
+                    .values(schedule(t, new Date(now.getTime() + 3_600_000)))
+                    .execute(),
+            )
+            await writer.written
+            const { runDueSchedules } = await import('../../db/schedules')
+            const started = Date.now()
+            try {
+                await runDueSchedules(realDb, { start: async () => undefined }, now, {
+                    maxItems: 100,
+                    deadline: Date.now() + 500,
+                    dueHints: true,
+                })
+            } finally {
+                const elapsed = Date.now() - started
+                writer.release()
+                await writer.done
+                expect(elapsed).toBeLessThan(1_500)
+            }
+        })
+
+        test("E: the tick's retry arm does not wait on a tenant transaction that armed a retry of its own", async () => {
+            await realDb.migrateToLatest()
+            const t = await hintTenant()
+            const now = new Date('2031-01-05T00:00:00.000Z')
+            const { recordJobStatus } = await import('../../db/jobs')
+            const job = await realDb.withTenant(t.id, (trx) =>
+                trx
+                    .insertInto('jobs')
+                    .values({ tenant_id: t.id, org_id: null, kind: 'flaky-dockets', payload: {} })
+                    .returning('id')
+                    .executeTakeFirstOrThrow(),
+            )
+            await recordJobStatus(realDb, t.id, job.id, 'running')
+            const holder = openWriter(t, (trx) =>
+                trx
+                    .insertInto('jobs')
+                    .values({
+                        tenant_id: t.id,
+                        org_id: null,
+                        kind: 'flaky-dockets',
+                        payload: {},
+                        run_after: new Date(now.getTime() + 3_600_000),
+                    })
+                    .execute(),
+            )
+            await holder.written
+            const started = Date.now()
+            let armed: Awaited<ReturnType<typeof recordJobStatus>> | undefined
+            try {
+                armed = await recordJobStatus(realDb, t.id, job.id, 'failed', { error: 'x', now })
+            } finally {
+                const elapsed = Date.now() - started
+                holder.release()
+                await holder.done
+                expect(elapsed).toBeLessThan(1_000)
+            }
+            expect(armed?.retry).not.toBeNull()
+        })
+
+        test('a write committed while a drain lists keeps its event, so the next tick lists its tenant', async () => {
+            await realDb.migrateToLatest()
+            const t = await hintTenant()
+            const now = new Date('2032-01-05T00:00:00.000Z')
+            const { settleHints, tenantsToList } = await import('../../db/due-hints')
+            const read = await tenantsToList(realDb, 'schedules', now)
+            const tenant = read.tenants.find((x) => x.id === t.id)!
+            // Open across the read; commits after it, before the settle.
+            const writer = openWriter(t, (trx) =>
+                trx
+                    .insertInto('job_schedules')
+                    .values(schedule(t, new Date(now.getTime() - 60_000)))
+                    .execute(),
+            )
+            await writer.written
+            writer.release()
+            await writer.done
+            await settleHints(realDb, 'schedules', now, read, [{ tenant, hadRows: false, nextDue: null }])
+            const again = await tenantsToList(realDb, 'schedules', now)
+            expect(again.tenants.map((x) => x.id)).toContain(t.id)
+        })
     })
 
     test('a failed attempt of a kind that retries arms its next attempt, and the retry drain starts it once', async () => {
