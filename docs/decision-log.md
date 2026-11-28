@@ -8365,6 +8365,57 @@ catchRequests })`), which the conformance check uses so it never touches an app'
   its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
   can throw and how to test the path.
 
+## A world per e2e worker, and `workers` left at 1 on CI (2026-11-27, `fix/e2e-worker-worlds`)
+
+`safeinsights/sssb#99`: every Playwright worker drove one server holding one `.data`, so `workers` could not be raised
+without specs touching each other's state. Now, in the showcase, `E2E_BUILD=1 E2E_WORKERS=<n>` gives each worker a
+server and a world of its own (`apps/showcase/tests/e2e/support/worlds.ts`, read by `playwright.config.ts` and by every
+spec or helper that reads or writes its world on disk).
+
+- **The design: a server per worker over one production build.** Worker 0 is the suite as it was (the config's first
+  web server on the app's port, the app's `.data`), so one worker changes nothing. Worker `k` gets another
+  `start:e2e` (`sssb serve-standalone`) of the same build, on a port in a per-checkout band (10000 to 19999, below the
+  ports Linux hands out from 32768) and with
+  `APP_DATA_DIR` at an emptied directory under the system's temp directory. The config lists those servers after the
+  first; Playwright starts them in order, and every worker loads the config with `TEST_PARALLEL_INDEX` set, so
+  `baseURL` and `worldPath(...)` follow the worker with no change to a spec's imports (`docs/build-notes.md`, "A world
+  per Playwright worker, from the config alone"). Eleven files that named `.data` by a path relative to themselves
+  now call `worldPath`.
+- **Rejected: one server with a world per request** (a header or cookie keyed through `AsyncLocalStorage` instead of
+  `APP_DATA_DIR`). It is the seam safeinsights/sssb#161 wants for a public demo, but every fake adapter, the pglite
+  instance, the world clock and the Simulator's state would have to become per-world inside one process, and nothing
+  short of that is safe. Rejected: **a worker-scoped fixture that starts each worker's server** (Playwright's documented
+  pattern): it needs every spec to import `test` from a support module, for nothing the config cannot do on its own. Rejected: **a server per worker on `next dev`**: Next 16 allows one dev server per app directory
+  (safeinsights/sssb#113's first attempt), and a `distDir` per worker would put a test-only concern in the app's config
+  and pay a cold compile per worker. So the worlds need `E2E_BUILD`, and asking for more than one worker without it is
+  an error that says so.
+- **Measured on CI** (PR #245, temporary commits that set `E2E_WORKERS` on the e2e job and let the destructive shard use
+  it, reverted): three runs at each count, every shard green, no flaky test.
+
+    | workers                                                         | `e2e (showcase)`, 60 tests | `e2e (showcase-destructive)`, 16 tests | job (showcase / destructive) |
+    | --------------------------------------------------------------- | -------------------------- | -------------------------------------- | ---------------------------- |
+    | 1 (before: #233's last run; the destructive range over 20 runs) | 2.0 min                    | 1.5 to 2.0 min                         | 166 s / 165 s                |
+    | 2                                                               | 1.2 to 1.4 min             | 1.1 to 1.3 min                         | 134 to 151 s / 104 to 123 s  |
+    | 4                                                               | 1.3 to 1.7 min             | 1.1 to 1.2 min                         | 129 to 152 s / 109 to 129 s  |
+
+    Four workers buy nothing over two on a four-CPU runner, where each worker brings a browser and a server. Locally, on
+    a production build at three workers (load average 27 at the start): the showcase's 60 tests in 1.1 min and its 16
+    destructive ones in 1.3 min, against 5.8 min for the destructive project alone under `next dev` (at load ~330).
+
+- **`workers` stays 1 on CI, because it does not pay there.** A pull request waits on `lint-typecheck-unit` (6.3 to 9.6 min in these runs and #233's last) and on `adoption-probe` and `pack-and-consume` (4.4 to 5.6 min); the e2e shards finish inside
+  3 min at any worker count, so more workers save runner time and no one's wait. When e2e becomes the slowest job, the
+  switch is `E2E_WORKERS` on the e2e job, plus dropping `--workers=1` from `sssb ci e2e --project destructive` for an
+  app whose config gives each worker a world (an adopter's app does not, so that flag must stay for them).
+- **Guards, from review:** with more than one world the first server is never reused (a dev server or an earlier
+  build adopted on the app's port would leave the others serving an older build); a worker past the last world
+  (`--workers` above `E2E_WORKERS`) fails at once, naming `E2E_WORKERS`, rather than driving a port nothing listens on;
+  and each world is emptied by its server's own `APP_DATA_DIR`, with no path in a shell command. A port in a worker's band that another
+  program holds (this machine's Dropbox listens on 17600 and 17603) fails that server's start loudly, as a port taken in
+  `@sssb/tools/ports`' own bands does.
+- **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
+  ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
+  changes but a comment in `serve-standalone.js` (an empty changeset).
+
 ## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
 
 safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "One wait for a paused cluster, and a typed

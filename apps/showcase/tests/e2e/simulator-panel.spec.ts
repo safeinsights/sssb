@@ -1,14 +1,14 @@
 import { rmSync } from 'node:fs'
-import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import { simulatorNotice } from '../catalog'
 import { openSimulatorPanel } from './support/simulator'
 import { pickOrg } from './support/org-switcher'
 import { signInAs } from './support/people'
+import { worldPath } from './support/worlds'
 
 function clearSimulatorState() {
     try {
-        rmSync(path.resolve(__dirname, '../../.data/simulator/state.json'))
+        rmSync(worldPath('simulator', 'state.json'))
     } catch {
         // never existed / already gone — fine
     }

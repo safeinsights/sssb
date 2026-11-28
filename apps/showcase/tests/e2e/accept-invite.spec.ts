@@ -1,8 +1,8 @@
 import { rmSync } from 'node:fs'
-import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import { openSimulatorPanel } from './support/simulator'
 import { signInAs } from './support/people'
+import { worldPath } from './support/worlds'
 
 const ensurePanelOpen = openSimulatorPanel
 
@@ -11,9 +11,9 @@ const ensurePanelOpen = openSimulatorPanel
 // invites.json is NOT cleared: this spec's own invite is consumed by acceptance, and other specs'
 // leftover invites are harmless (each spec uses a unique invite email).
 function clearFiles() {
-    for (const rel of ['../../.data/simulator/state.json', '../../.data/auth/people.json']) {
+    for (const file of [worldPath('simulator', 'state.json'), worldPath('auth', 'people.json')]) {
         try {
-            rmSync(path.resolve(__dirname, rel))
+            rmSync(file)
         } catch {
             // never existed / already gone — fine
         }
