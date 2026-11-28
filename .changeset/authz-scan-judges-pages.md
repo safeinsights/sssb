@@ -110,4 +110,17 @@ If your app came from an earlier generator, copy the generated app's `authz-exem
 `apps/starter` at this release, or write the two entries above for your layouts and sign-in page. Two keys for one
 URL (`[locale]/layout.tsx` and `[locale]/(protected)/layout.tsx`) are both refused: write the one.
 
+An app that cannot fix every page at once may leave the check out while it does, by its id with a reason, in its
+suite file (`src/sssb.conformance.test.ts`):
+
+```ts
+conformanceSuite({
+    appDir: path.resolve(import.meta.dirname, '..'),
+    optOut: { 'authz-mutations': 'pages being brought to the 0.10 authorization rule; tracked in <your issue>' },
+})
+```
+
+This turns off the whole check, routes and Server Actions included, not only pages: it is a stopgap. Take the opt-out
+out again as soon as the pages pass.
+
 **Now deletable.** A comment on a page saying it is kept to the authorization rule by hand.
