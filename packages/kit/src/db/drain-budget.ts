@@ -96,7 +96,7 @@ export const DELIVERIES_WINDOW_MS = 16_000
  * is for running. A stopgap that keeps a drain making progress: listing only the tenants with work due is the fix that
  * removes the per-tenant cost (safeinsights/sssb#202).
  */
-export const LISTING_SHARE = 0.5
+const LISTING_SHARE = 0.5
 
 /** No bound: what a drain called without a budget does (every due row, as before the bound). */
 const UNBOUNDED: DrainBudget = { maxItems: Number.POSITIVE_INFINITY, deadline: Number.POSITIVE_INFINITY }
