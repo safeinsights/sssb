@@ -9111,8 +9111,13 @@ Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its modul
   `judgeServerAction`'s message names the always-rethrow exception the guide has.
 - **Proofs.** `route-scan.test.ts` ("the page shapes the authorization review found failing") and
   `app-exemptions.test.ts` (the pin's matching rules, a nearer `node_modules`, the malformed formats, a page handing on
-  an unauthorized action that still fails as an action). Each new guard was mutated and seen red; the list is in the
-  pull request.
+  an unauthorized action that still fails as an action). Each new guard was mutated and seen red: each of the three
+  allow-list entries, the attribute-value test, the `src`, `node_modules`, prologue, body and missing-export checks of
+  the action test, the reads-nothing order (and narrowing it to reads), the pin check (ignored, `some` for `every`, an
+  unplaced source passing, an inherited key), each source of a pin (the specifier resolved from the app, a relative
+  one, a `node_modules` path, the resolved and the declaring file), each of `isGate`'s and `isPin`'s refusals, and the
+  entry's pin and unused-name problems. Three refusals that turned out equivalent (an array of names, an empty pin, a
+  leading `/`: each already fails another check) were dropped rather than kept untested.
 - **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
   gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
   filed separately.

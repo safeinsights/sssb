@@ -889,10 +889,10 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
             `authorizes its self-only subject), or, only if it reads nothing org-scoped, ` +
             (route.rel.startsWith('../')
                 ? `name it in the app's authz-exemptions.mjs under \`outsideApi\` (keys relative to src/app), with ` +
-                  `a \`reads-only\` gate listing the imports it reads, the only gate a route outside src/app/api can ` +
+                  `a \`reads-only\` gate mapping each import it reads to its module, the only gate a route outside src/app/api can ` +
                   `match.`
                 : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs (a ` +
-                  `\`reads-only\` gate lists the imports a read may name).`) +
+                  `\`reads-only\` gate maps each import a read may name to its module).`) +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -964,7 +964,7 @@ function judgePage(
             ? `It is under an intercepting segment (\`(.)x\`), which Next also serves at the URL it intercepts, so no ` +
               `exemption applies to it: authorize, or read nothing.`
             : `Only if it reads nothing org-scoped, name it in the app's authz-exemptions.mjs under \`outsideApi\` (keys ` +
-              `relative to src/app), with a \`reads-only\` gate listing the imports it reads.`)
+              `relative to src/app), with a \`reads-only\` gate mapping each import it reads to its module.`)
     )
 }
 
