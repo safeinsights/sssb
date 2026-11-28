@@ -233,6 +233,153 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
     }
     expect(keyDeleteRejected).toBe(true)
 
+    // ---- organizations: cross-tenant READ, tenant-scoped WRITES (0018_organizations_write) ----
+    //
+    // An infra table like service_keys for reading: a request reads any tenant's teams (callers are resolved
+    // before a tenant context exists). But app_user also holds INSERT, UPDATE and DELETE, so a request can
+    // create, rename and delete teams, and row-level security confines each of those to the request's own tenant.
+    // Every write below is the shape a route would send; each cross-tenant one must land nowhere.
+    const orgStamp = Date.now()
+    // Every write through orgWriteFails ROLLS BACK, whatever it does, so a regression shows as a red proof and never leaves a
+    // stray or rewritten team behind in a contract database that is reused.
+    const rolledBack = new Error('rolled back')
+    const orgWriteFails = async (tenantId: string | null, write: (trx: Kysely<DB>) => Promise<unknown>) => {
+        try {
+            await appDb.transaction().execute(async (trx) => {
+                await sql`SET LOCAL ROLE app_user`.execute(trx)
+                if (tenantId !== null) {
+                    await sql`SELECT set_config('app.current_tenant', ${tenantId}, true)`.execute(trx)
+                }
+                await write(trx)
+                throw rolledBack
+            })
+        } catch (error) {
+            return error === rolledBack ? 'no error' : String(error)
+        }
+        return 'no error'
+    }
+    const demoOrgName = async () =>
+        (await db.selectFrom('organizations').select('name').where('id', '=', demoOrgId).executeTakeFirstOrThrow()).name
+
+    // the read stays cross-tenant: alpha's request sees demo's team (the exemption, unchanged)
+    const orgsSeenByAlpha = await runWithTenant(appDb, alphaTenantId, (trx) =>
+        trx.selectFrom('organizations').select('id').where('id', 'in', [alphaOrgId, demoOrgId]).execute(),
+    )
+    expect(orgsSeenByAlpha.length).toBe(2)
+
+    // a request creates, renames and deletes a team of its OWN tenant
+    const [ownOrg] = await runWithTenant(appDb, alphaTenantId, (trx) =>
+        trx
+            .insertInto('organizations')
+            .values({ tenant_id: alphaTenantId, slug: `alpha-own-${orgStamp}`, name: 'Alpha Own' })
+            .returning('id')
+            .execute(),
+    )
+    const renamed = await runWithTenant(appDb, alphaTenantId, (trx) =>
+        trx.updateTable('organizations').set({ name: 'Alpha Renamed' }).where('id', '=', ownOrg!.id).executeTakeFirst(),
+    )
+    expect(Number(renamed.numUpdatedRows)).toBe(1)
+
+    // INSERT carrying the other tenant's id is rejected by WITH CHECK
+    const foreignInsert = await orgWriteFails(alphaTenantId, (trx) =>
+        trx
+            .insertInto('organizations')
+            .values({ tenant_id: demoTenantId, slug: `smuggled-${orgStamp}`, name: 'Smuggled' })
+            .execute(),
+    )
+    expect(/row-level security/.test(foreignInsert)).toBe(true)
+
+    // UPDATE and DELETE never reach the other tenant's team: zero rows, and the row is untouched
+    const foreignRename = await runWithTenant(appDb, alphaTenantId, (trx) =>
+        trx.updateTable('organizations').set({ name: 'Hijacked' }).where('id', '=', demoOrgId).executeTakeFirst(),
+    )
+    expect(Number(foreignRename.numUpdatedRows)).toBe(0)
+    const foreignDelete = await runWithTenant(appDb, alphaTenantId, (trx) =>
+        trx.deleteFrom('organizations').where('id', '=', demoOrgId).executeTakeFirst(),
+    )
+    expect(Number(foreignDelete.numDeletedRows)).toBe(0)
+    expect(await demoOrgName()).toBe('Demo Proof Org')
+
+    // only a team's name is a request's to change: its tenant, its slug and its id are not, and a new team's id is the
+    // default (the grants are column grants)
+    for (const change of [
+        { tenant_id: demoTenantId },
+        { slug: `alpha-moved-${orgStamp}` },
+        { id: '00000000-0000-4000-8000-000000000018' },
+    ]) {
+        const refused = await orgWriteFails(alphaTenantId, (trx) =>
+            trx.updateTable('organizations').set(change).where('id', '=', ownOrg!.id).execute(),
+        )
+        expect(/permission denied/.test(refused)).toBe(true)
+    }
+    const mintedId = await orgWriteFails(alphaTenantId, (trx) =>
+        trx
+            .insertInto('organizations')
+            .values({
+                id: '00000000-0000-4000-8000-000000000018',
+                tenant_id: alphaTenantId,
+                slug: `minted-${orgStamp}`,
+                name: 'Minted',
+            })
+            .execute(),
+    )
+    expect(/permission denied/.test(mintedId)).toBe(true)
+
+    // a new team cannot take a slug another tenant's team holds: the inbound mail address names a team by its slug
+    // alone, and two matches leave that team's mail unresolved
+    const { slug: demoOrgSlug } = await db
+        .selectFrom('organizations')
+        .select('slug')
+        .where('id', '=', demoOrgId)
+        .executeTakeFirstOrThrow()
+    const squat = await orgWriteFails(alphaTenantId, (trx) =>
+        trx
+            .insertInto('organizations')
+            .values({ tenant_id: alphaTenantId, slug: demoOrgSlug, name: 'Squat' })
+            .execute(),
+    )
+    expect(/row-level security/.test(squat)).toBe(true)
+
+    // fail-closed: role set, no tenant context -> no write lands anywhere
+    const contextlessInsert = await orgWriteFails(null, (trx) =>
+        trx
+            .insertInto('organizations')
+            .values({ tenant_id: alphaTenantId, slug: `contextless-${orgStamp}`, name: 'Contextless' })
+            .execute(),
+    )
+    expect(/row-level security/.test(contextlessInsert)).toBe(true)
+    let contextlessWrites = -1
+    const contextless = await orgWriteFails(null, async (trx) => {
+        const update = await trx.updateTable('organizations').set({ name: 'Contextless' }).executeTakeFirst()
+        const remove = await trx.deleteFrom('organizations').executeTakeFirst()
+        contextlessWrites = Number(update.numUpdatedRows) + Number(remove.numDeletedRows)
+    })
+    expect(contextless).toBe('no error')
+    expect(contextlessWrites).toBe(0)
+
+    // TRUNCATE ignores row-level security, so it is not granted
+    const truncate = await orgWriteFails(alphaTenantId, (trx) => sql`TRUNCATE organizations`.execute(trx))
+    expect(/permission denied/.test(truncate)).toBe(true)
+
+    // the composite key lets a table pin its org to its own tenant: a row naming demo's team under alpha is refused.
+    // The probe table is a plain one (a temporary table may not reference a permanent one), created as the owner
+    // inside a transaction that always rolls back, so it never outlives the proof.
+    const compositeRefused = await orgWriteFails(alphaTenantId, async (trx) => {
+        await sql`RESET ROLE`.execute(trx)
+        await sql`CREATE TABLE org_pinned_probe (tenant_id uuid, org_id uuid,
+                  FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id))`.execute(trx)
+        await sql`INSERT INTO org_pinned_probe VALUES (${alphaTenantId}, ${alphaOrgId})`.execute(trx)
+        await sql`INSERT INTO org_pinned_probe VALUES (${alphaTenantId}, ${demoOrgId})`.execute(trx)
+        throw new Error("the composite key accepted another tenant's org")
+    })
+    expect(/foreign key/.test(compositeRefused)).toBe(true)
+
+    // and the request deletes the team it made, which nothing references
+    const ownDelete = await runWithTenant(appDb, alphaTenantId, (trx) =>
+        trx.deleteFrom('organizations').where('id', '=', ownOrg!.id).executeTakeFirst(),
+    )
+    expect(Number(ownDelete.numDeletedRows)).toBe(1)
+
     // ---- audit_events: tenant-only RLS, org_id NOT NULL, APPEND-ONLY (SELECT/INSERT, no UPDATE/DELETE) ----
     //
     // The compliance-grade product record. Same tenant-only RLS shape as jobs. Two extra guarantees:

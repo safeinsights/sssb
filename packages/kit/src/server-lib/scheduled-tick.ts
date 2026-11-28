@@ -5,6 +5,8 @@ import {
     DELIVERIES_WINDOW_MS,
     RETRIES_WINDOW_MS,
     SCHEDULES_WINDOW_MS,
+    SWEEP_WINDOW_MS,
+    resolveDrainBudget,
 } from '../db/drain-budget'
 import { runDueRetries } from '../db/jobs'
 import { runDueSchedules } from '../db/schedules'
@@ -59,6 +61,10 @@ export interface ScheduledTickResult {
  * server with a 30-second limit: change them only for a server whose limit differs, or to drain less per tick.
  */
 export interface TickBudget {
+    /** The most lost jobs one tick's sweep fails (safeinsights/sssb#252); optional, so a full budget written before it still is one. */
+    maxSweep?: number
+    /** Milliseconds from the tick's start after which the sweep judges no more jobs; optional, as `maxSweep`. */
+    sweepWindowMs?: number
     /** The most due schedules one tick spawns. */
     maxSchedules: number
     /** The most due job retries one tick starts. */
@@ -73,7 +79,9 @@ export interface TickBudget {
     deliveriesWindowMs: number
 }
 
-const DEFAULT_TICK_BUDGET: TickBudget = {
+const DEFAULT_TICK_BUDGET: Required<TickBudget> = {
+    maxSweep: DEFAULT_DRAIN_MAX_ITEMS,
+    sweepWindowMs: SWEEP_WINDOW_MS,
     maxSchedules: DEFAULT_DRAIN_MAX_ITEMS,
     maxRetries: DEFAULT_DRAIN_MAX_ITEMS,
     maxDeliveries: DEFAULT_DRAIN_MAX_ITEMS,
@@ -99,7 +107,9 @@ export async function runScheduledTick(
     const startedAt = clock()
     // Field by field, so a field given as `undefined` (an unset environment value, say) means the default, never a hole.
     const given = options.budget ?? {}
-    const budget: TickBudget = {
+    const budget: Required<TickBudget> = {
+        maxSweep: given.maxSweep ?? DEFAULT_TICK_BUDGET.maxSweep,
+        sweepWindowMs: given.sweepWindowMs ?? DEFAULT_TICK_BUDGET.sweepWindowMs,
         maxSchedules: given.maxSchedules ?? DEFAULT_TICK_BUDGET.maxSchedules,
         maxRetries: given.maxRetries ?? DEFAULT_TICK_BUDGET.maxRetries,
         maxDeliveries: given.maxDeliveries ?? DEFAULT_TICK_BUDGET.maxDeliveries,
@@ -108,10 +118,18 @@ export async function runScheduledTick(
         deliveriesWindowMs: given.deliveriesWindowMs ?? DEFAULT_TICK_BUDGET.deliveriesWindowMs,
     }
     const now = isSimulated ? worldNow() : new Date()
-    // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
-    // reported here, the failed jobs' errors say it.
+    // A runner that can lose a job (JOBS_RUNNER=in-process mid-run, or codebuild, whose build can end unreported) fails
+    // the lost ones first, inside a window of its own; its count is not reported here, the failed jobs' errors say it.
+    // Checked as the drains' budgets are, and before the sweep's try, so a malformed one (NaN, 0) throws rather than
+    // unbounding the sweep or stopping it for good.
+    const sweepBudget = resolveDrainBudget({
+        maxItems: budget.maxSweep,
+        deadline: startedAt + budget.sweepWindowMs,
+        clock,
+        ...(options.random && { random: options.random }),
+    })
     try {
-        await jobs.sweep?.(now)
+        await jobs.sweep?.(now, sweepBudget)
     } catch (error) {
         // A sweep that fails must not stop the schedules and deliveries behind it.
         console.warn(

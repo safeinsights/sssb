@@ -190,7 +190,7 @@ const eslintConfig = [
         rules: { 'sssb/no-raw-db-handle': 'error' },
     },
     // PARAMS CENTRALIZATION: process.env is read only inside SSSB's adapters (and an app's own real adapters). Exempt
-    // besides: the two secret readers, by exact file, and tests. The fixture is on the app side of that line, and has
+    // besides: the three secret readers, by exact file, and tests. The fixture is on the app side of that line, and has
     // no tests of its own to exempt.
     {
         files: [FRAMEWORK_FILES_GLOB],
@@ -198,6 +198,7 @@ const eslintConfig = [
             KIT_ADAPTERS_GLOB,
             'packages/kit/src/service-auth/webhook.ts',
             'packages/kit/src/service-auth/mailgun.ts',
+            'packages/kit/src/service-auth/standard-webhooks.ts',
             TEST_FILES,
         ],
         plugins: { sssb },
@@ -207,6 +208,14 @@ const eslintConfig = [
         files: [FIXTURE_FILES_GLOB],
         plugins: { sssb },
         rules: { 'sssb/no-process-env': 'error' },
+    },
+    // The visitor's origin and address, on SSSB's side of the line too: through its own edge-headers module, the one
+    // file that reads the forwarded headers it names (safeinsights/sssb#131, #132).
+    {
+        files: [FRAMEWORK_FILES_GLOB, FIXTURE_FILES_GLOB],
+        ignores: ['packages/kit/src/adapters/edge-headers.ts', TEST_FILES],
+        plugins: { sssb },
+        rules: { 'sssb/no-raw-request-origin': 'error' },
     },
     // i18n (ADR-0008) on SSSB's side of the line: its screens, its static demo, and its adapters, which render copy
     // too (the real sign-in and accept-invite forms). The fixture ships no copy (it has no components tree, and its

@@ -6,13 +6,14 @@ import { expect, type Locator, type Page, test } from '@playwright/test'
 // entry is the seam-free one SSSB ships compiled (ADR-0014 part 2).
 import { verifyWebhookSignature, WEBHOOK_REPLAY_TOLERANCE_MS } from '@sssb/kit/testing/e2e'
 import { openSimulatorPanel } from '../support/simulator'
+import { worldPath } from '../support/worlds'
 
 /**
  * Destructive: registers webhook endpoints, drains cross-tenant deliveries into pglite, and
  * writes the fake catch-store + failure toggle under .data — so it must not race the fullyParallel main
  * suite. It resets the world at the start and clears the webhook/simulator/mail residue afterwards.
  */
-const dataRoot = path.resolve(__dirname, '../../../.data')
+const dataRoot = worldPath()
 const residue = [path.join(dataRoot, 'webhooks'), path.join(dataRoot, 'simulator'), path.join(dataRoot, 'emails')]
 
 function clearResidue() {

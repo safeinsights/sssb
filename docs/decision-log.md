@@ -8117,6 +8117,43 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
 
+## A reads-only gate for public and inert reads (2026-11-27, `fix/authz-public-reads`)
+
+safeinsights/sssb#220. The design and what it accepts are ADR-0012's later 2026-11-27 addendum; the calls it did not
+settle:
+
+- **One gate kind for all three shapes**, not one allowance each. A public feed, a preflight sharing a headers object
+  and a handshake GET differ only in which names they read; a `reads-only` gate lists them, and the scan checks the
+  rest of the handler reads nothing. Rejected: **a second key space for any gate outside `src/app/api`** (a `calls`
+  gate proves only that one call is reached, not that a read outside `api/` does nothing else) and **app entries of
+  any kind under a framework prefix** (a mutation there must keep the framework's gate).
+- **Reads only, by the gate and by the lookup.** The gate never holds for a mutation, and `exemptionFor` skips a
+  `reads-only` entry for a mutating verb, so a POST beside a reads-only GET under `webhooks/` is still judged by
+  `withWebhookSecret`, and one outside `src/app/api` can match no exemption, as before.
+- **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
+  prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
+  a prefix's gate override every exact entry beneath it (an existing test caught it in the first draft).
+- **`names` are identifiers**, not dotted names: an import's exported name (never a default import, whose local name the author picks), never a
+  value of the route's own file (below). A namespace import is refused outright, since it names the whole module, and so is
+  an aliased one (`import { headers as cors }`), as for every gate.
+- **Narrowed in review.** The first draft let a listed declaration of the file excuse whatever it held (an alias of an
+  import, a helper reading the database, a `declare`d `fetch`): the first fix had the scan read a listed `const` or
+  function and count its names, and refuse an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
+  under `simulator/` too, which the issue did not ask for and whose 404-in-real guarantee such a read does not keep:
+  `webhooks/` only. A listed name nobody reads is a problem. The second round found a listed `const` that the file
+  fills elsewhere (`cache.set(…)` in a POST): a listed declaration used anywhere outside the read is now refused.
+  The third found the same thing through a sibling destructured binding (`const { get, set } = …`). Three rounds of
+  one shape meant following declarations of the file was the wrong tool. A fourth found a literal `const` filled
+  through the handler itself (code of the file calling `GET()` and writing to what it returns). So no value of the
+  route's own file can be listed at all, only imports; a shared headers object goes in a module. Rejected:
+  **following a listed declaration of the file and checking every write to it**, which four rounds showed cannot be
+  closed by syntax.
+  Review also found route groups and parallel-route slots escaping path-keyed rules (`api/(g)/service/…`,
+  `api/@s/service/…` past the `service/` gate), older than this change; the scan now matches by URL, and refuses an
+  intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
+- **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
+  own, in its own PR.
+
 ## Lost CodeBuild builds, and schedules that keep failing (2026-11-27, `fix/lost-builds-and-failing-schedules`)
 
 Two fixes in one change. safeinsights/sssb#231: a CodeBuild job whose build died without posting its webhook stayed
@@ -8328,6 +8365,85 @@ catchRequests })`), which the conformance check uses so it never touches an app'
   its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
   can throw and how to test the path.
 
+## A world per e2e worker, and `workers` left at 1 on CI (2026-11-27, `fix/e2e-worker-worlds`)
+
+`safeinsights/sssb#99`: every Playwright worker drove one server holding one `.data`, so `workers` could not be raised
+without specs touching each other's state. Now, in the showcase, `E2E_BUILD=1 E2E_WORKERS=<n>` gives each worker a
+server and a world of its own (`apps/showcase/tests/e2e/support/worlds.ts`, read by `playwright.config.ts` and by every
+spec or helper that reads or writes its world on disk).
+
+- **The design: a server per worker over one production build.** Worker 0 is the suite as it was (the config's first
+  web server on the app's port, the app's `.data`), so one worker changes nothing. Worker `k` gets another
+  `start:e2e` (`sssb serve-standalone`) of the same build, on a port in a per-checkout band (10000 to 19999, below the
+  ports Linux hands out from 32768) and with
+  `APP_DATA_DIR` at an emptied directory under the system's temp directory. The config lists those servers after the
+  first; Playwright starts them in order, and every worker loads the config with `TEST_PARALLEL_INDEX` set, so
+  `baseURL` and `worldPath(...)` follow the worker with no change to a spec's imports (`docs/build-notes.md`, "A world
+  per Playwright worker, from the config alone"). Eleven files that named `.data` by a path relative to themselves
+  now call `worldPath`.
+- **Rejected: one server with a world per request** (a header or cookie keyed through `AsyncLocalStorage` instead of
+  `APP_DATA_DIR`). It is the seam safeinsights/sssb#161 wants for a public demo, but every fake adapter, the pglite
+  instance, the world clock and the Simulator's state would have to become per-world inside one process, and nothing
+  short of that is safe. Rejected: **a worker-scoped fixture that starts each worker's server** (Playwright's documented
+  pattern): it needs every spec to import `test` from a support module, for nothing the config cannot do on its own. Rejected: **a server per worker on `next dev`**: Next 16 allows one dev server per app directory
+  (safeinsights/sssb#113's first attempt), and a `distDir` per worker would put a test-only concern in the app's config
+  and pay a cold compile per worker. So the worlds need `E2E_BUILD`, and asking for more than one worker without it is
+  an error that says so.
+- **Measured on CI** (PR #245, temporary commits that set `E2E_WORKERS` on the e2e job and let the destructive shard use
+  it, reverted): three runs at each count, every shard green, no flaky test.
+
+    | workers                                                         | `e2e (showcase)`, 60 tests | `e2e (showcase-destructive)`, 16 tests | job (showcase / destructive) |
+    | --------------------------------------------------------------- | -------------------------- | -------------------------------------- | ---------------------------- |
+    | 1 (before: #233's last run; the destructive range over 20 runs) | 2.0 min                    | 1.5 to 2.0 min                         | 166 s / 165 s                |
+    | 2                                                               | 1.2 to 1.4 min             | 1.1 to 1.3 min                         | 134 to 151 s / 104 to 123 s  |
+    | 4                                                               | 1.3 to 1.7 min             | 1.1 to 1.2 min                         | 129 to 152 s / 109 to 129 s  |
+
+    Four workers buy nothing over two on a four-CPU runner, where each worker brings a browser and a server. Locally, on
+    a production build at three workers (load average 27 at the start): the showcase's 60 tests in 1.1 min and its 16
+    destructive ones in 1.3 min, against 5.8 min for the destructive project alone under `next dev` (at load ~330).
+
+- **`workers` stays 1 on CI, because it does not pay there.** A pull request waits on `lint-typecheck-unit` (6.3 to 9.6 min in these runs and #233's last) and on `adoption-probe` and `pack-and-consume` (4.4 to 5.6 min); the e2e shards finish inside
+  3 min at any worker count, so more workers save runner time and no one's wait. When e2e becomes the slowest job, the
+  switch is `E2E_WORKERS` on the e2e job, plus dropping `--workers=1` from `sssb ci e2e --project destructive` for an
+  app whose config gives each worker a world (an adopter's app does not, so that flag must stay for them).
+- **Guards, from review:** with more than one world the first server is never reused (a dev server or an earlier
+  build adopted on the app's port would leave the others serving an older build); a worker past the last world
+  (`--workers` above `E2E_WORKERS`) fails at once, naming `E2E_WORKERS`, rather than driving a port nothing listens on;
+  and each world is emptied by its server's own `APP_DATA_DIR`, with no path in a shell command. A port in a worker's band that another
+  program holds (this machine's Dropbox listens on 17600 and 17603) fails that server's start loudly, as a port taken in
+  `@sssb/tools/ports`' own bands does.
+- **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
+  ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
+  changes but a comment in `serve-standalone.js` (an empty changeset).
+
+## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
+
+safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "One wait for a paused cluster, and a typed
+error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
+
+- **#189: kept in the framework's own transactions, not in the dialect.** Kysely's `execute()` catches the work's error, awaits
+  `driver.rollbackTransaction`, and rethrows the work's error; if the rollback throws, that replaces it. A controlled
+  transaction's `rollback()` calls the same driver method with the same connection, and nothing tells the driver which
+  caller it has, so a rule in `rollbackTransaction` (swallow a failure) would also hide a deliberate rollback's: the
+  issue's open question. `transactionKeepingWorkError` (`packages/kit/src/db/with-tenant.ts`), which `runWithTenant`
+  (both transports) and the Data API transport's `migrateToLatest` run their transactions through, sees the work's
+  error, so it throws that when something else was thrown after it, and keeps the
+  rollback's failure as a warning and as a non-enumerable `rollbackError` on the work's error when that is an object that
+  takes one (a thrown string or a frozen error gets the warning alone). The rollback's error is never `cause`: the work's
+  error may carry its own. A transaction opened on the raw handle (`getDb()`: the contract suite's proofs, which never throttle) keeps Kysely's
+  behaviour, and a commit that fails is
+  thrown as it was: nothing the work threw is there to keep. Rejected: **a Kysely subclass or a proxy of
+  `TransactionBuilder`**, to catch the same on the raw handle: private fields, and the builder's methods each return
+  another builder. Rejected: **swallowing every failed rollback**, which hides a deliberate one.
+- **#190: a probe is aborted after three of its turns, and when the wait ends.** `RdsDataClientLike.send` takes the
+  SDK's `{ abortSignal }`, which `RDSDataClient.send` accepts (the SDK's own request option, which closes the socket).
+  A probe is sent every 3 s at the soonest (its 2 s turn plus the 1 s wait), so 6 s (`PROBE_ABORT_MS`) leaves at most
+  three out, and a probe that is slow but answers inside it still ends the wait, as before. The wait aborts every probe
+  still out when it ends, by an answer, or when its last caller gives up, at once. A rejection after an abort is ours and is read as nothing: it
+  neither ends the wait nor counts as the database's answer. Rejected: **keeping at most a few in flight by not sending**,
+  which would hold up a wait the probes in flight may never end. The SDK's pool size was not read; the bound does not
+  depend on it.
+
 ## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
 
 `safeinsights/sssb#230` and `safeinsights/sssb#241`, two leftovers of the `#98` and `#145` work.
@@ -8466,3 +8582,795 @@ listing costs every tenant every tick, whether or not it has anything due. Measu
     - tests for each gap the reviewers named. Each of those mutations was run and turned red.
         - `rds-data.contract.test.ts`: a hinted drain over tenants with nothing due costs one Data API call, after the tick
           that first lists them.
+
+## A reused pid does not keep a stale ticker marker alive, and the vendor ban reads one list one way (2026-11-27, `fix/ticker-marker-and-vendor-ban`)
+
+`safeinsights/sssb#146` and `safeinsights/sssb#155`, two tooling leftovers.
+
+- **`#146`: a marker is stale when the process now at its pid is not the one that wrote it, told by a start token.** A
+  wrapper killed with SIGKILL leaves `dev-ticker.json`, and once the OS gives its pid to an unrelated process
+  `process.kill(pid, 0)` says "alive", so both Playwright configs refused to load until the file was deleted by hand.
+  The marker now carries `startToken`, the writer's own start as the kernel records it (`processStartToken`): on Linux the
+  boot id and the start time in ticks since boot (`/proc/<pid>/stat`, field 22), elsewhere `ps -o lstart=` (macOS keeps it
+  fixed per process), run with `TZ=UTC0` so two processes with other time zones read one string. A reader compares tokens
+  for equality: another token at the pid is another process, and the marker is ignored and cleared. **First written as a
+  date comparison** (`startedAt` against the start `ps` gives, plus a tolerance), and **dropped after review**: on Linux
+  `ps` computes `lstart` from the kernel's boot time plus ticks, so a wall clock stepped forward after the process began
+  (a paused guest resuming, an NTP step) moves every process's start later, past the marker's `startedAt`, and a LIVE
+  ticker's marker was judged stale and deleted, the failure the marker exists to stop; and a `TZ` that libc and V8 read
+  differently shifted it by hours. A token compared for equality has neither. Rejected: the issue's "did not start at
+  `startedAt`", for the same clock reason and because a dev server writes its marker minutes after it began.
+- **What cannot be judged is live, as before:** a marker with no token (written by an older version), a token that cannot
+  be read now (no `/proc` and no `ps`, as on Windows, an unreadable pid, `ps` timing out), tokens of different kinds
+  (another machine's, through a shared directory). A false "stale" would let an e2e run adopt a ticking dev server. A
+  process never judges its own marker, so the Simulator's status poll in a dev server spawns no `ps`. **Only a marker
+  proved stale by a token is cleared**; one whose process is gone is ignored and left, as before (a container's marker read
+  from a host shows a gone or foreign pid, and deleting it would take its ticker's protection away). The clearing re-reads
+  the file and removes it only if it is still the one judged, so a wrapper that wrote its own in between keeps it; one
+  that writes between that re-read and the removal still loses it, microseconds wide, and its ticker restores it on its
+  next start.
+- **`#155`: the vendor ban's two halves read one list through one matcher.** The static half matched the list with the
+  `ignore` package (gitignore semantics, case-insensitive), the declarationless half (`import()`, `require()`, a
+  type-position `import('…')`) with a hand-written `isVendorSpecifier`, so a bare `pg` banned a local `./pg` and
+  `some/dir/pg` in one half only, and `@CLERK/nextjs` was a vendor in one half only. The bare names in
+  `vendorSdkPattern` are anchored (`/pg`, `/posthog-js`, `/posthog-node`, `/mailgun.js`: in gitignore a leading `/`
+  anchors to the start, and `/pg` still bans what is under it, `pg/lib/x`), and the declarationless half is
+  `matchesPatterns` over the same group, as the framework/app fence's already was. An app's own bare `sssb.vendors`
+  entries are anchored in the rules (`anchorBare`) the same way, so `stripe` bans the package, not `./stripe`. Both
+  halves are now case-insensitive. Seen in the tests: `posthog-node/lib` is a vendor in both halves (a name bans what is
+  under it; the old declarationless reading agreed), a thing the issue's table did not list.
+- **What a change of fence needs:** the preset is the rules' own list, `packages/eslint-plugin/src/probes.js` probes an
+  app's vendors by naming the package itself (`stripe`), which the anchored entry still matches, so the probes needed no
+  change and `sssb check-fences` passes (`tests/lint/check-fences.test.ts`, both apps and the scratch apps that weaken a
+  fence). A negation entry (`!pg`) was already refused by the loader; anchoring would have turned one into a literal name
+  had it got through. The parity table (`tests/lint/framework-fence.test.ts`) now has a vendor block: 27 specifiers,
+  three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
+  (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
+
+## Pages, layouts and metadata routes are judged as reads (2026-11-27, `fix/authz-pages`)
+
+safeinsights/sssb#221 and #259. The design and what it accepts are ADR-0012's last 2026-11-27 addendum; the calls it
+did not settle:
+
+- **Seen failing first.** With the scan change alone, the showcase's conformance check went red on eight pages, the
+  dashboard first: "showcase: ../[locale]/dashboard/page.tsx (at ../[locale]/(protected)/dashboard/page.tsx) default is
+  a page export, rendered on the server for every request, that does not reach authorize(...) on its own path, and
+  reads something: `auth.listMembers` is used, and a page may use `auth` only as `auth.getCurrentUser()`, …". The org
+  page failed the same way (a second copy of the #259 leak, its member list with emails and roles), and the starter
+  three times (its layouts and sign-in page reading the seed). A starter dashboard that called `auth.listMembers`, and
+  one that imported `findTenant` from the seed, each turned the starter's check red, and passed again restored.
+- **The page allow-list, entry by entry** (each pages only; routes keep INERT_IMPORTS):
+    - `setRequestLocale`, `getTranslations`, `getMessages` (`next-intl/server`): the catalog and the locale, on every
+      page; `getMessages` is next-intl's layout pattern. `getLocale` is left out: neither app needs it.
+    - `hasLocale` (`next-intl`) and `routing.locales` (`@sssb/kit/i18n/routing`, the member only): the locale layout's
+      segment check.
+    - `canInActiveOrg` (`@sssb/kit/authz/authorize`): a UI ability check of the caller's own abilities, never a read.
+    - `isDemoMode` (`@sssb/kit/adapters/index`): the run mode beside `appMode` and `isSimulated`, the demo badge.
+    - `sameOriginPath` (`@sssb/kit/core/same-origin-path`): the sign-in page's `returnTo` normaliser, a pure function.
+    - `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`): the locale layout's theme and
+      document shell, branding and constants.
+    - `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()`, `auth.listMyOrgs()`: the
+      caller's own session and placements (the header's org switcher), each only called. `auth` itself and every other
+      member are refused outright, `auth.listMembers` first.
+    - A component used only as a JSX tag from a `'use client'` module or a package; a same-file component only
+      rendered (read as part of the page); a real adapter's component loaded with `import()` only to render it (the
+      guide's own shape for real mode), from such a module.
+    - Added in review: `useTranslations` (`next-intl`), the same catalog read in a component that is not async, and
+      a default import of a stylesheet or an image used as a value (class names, a URL), both false positives the
+      first draft had.
+- **Narrowed in review.** The first draft rendered any imported component out of sight, so an async server component
+  of the app's own that loads its data (`<MemberList slug={user.orgSlug} />` calling `auth.listMembers`) passed as
+  reading nothing, by a named, default or namespace import and through `import()` alike. Round 1 made a tag out of sight only
+  when its module resolves to a file whose prologue is `'use client'` or to a package (under `node_modules`, or outside
+  the app's directory: `@sssb/kit`'s screens resolve to the framework's source in this repository); otherwise its name
+  is counted (narrowed again in rounds 2 and 3, below). Every component both apps render was already one of those, so neither app's verdict changed; seen
+  working by taking `'use client'` off the starter's `WelcomeScreen`, which turned its home page red ("it names
+  `WelcomeScreen`"). Also: `auth` and `routing` are checked before the tag allowance (`<auth.listMembers />` passed),
+  through a namespace and `import()` too, and refused from any other module (an app's re-export of `auth` plus a
+  `reads-only` entry naming it passed `auth.listMembers`); a lowercase `<auth />` stays allowed, since JSX makes it an
+  HTML element, not the import. `generateViewport` and `global-not-found` are judged; a page-named file with an
+  unread code extension (`page.mdx`, `page.mts`) and a Pages Router `pages` directory fail, as `route.mts` and
+  `pages/api` did; a `'use client'` metadata route is judged, since it runs on the server.
+- **Narrower than the issue's sketch.** `redirect` and `notFound` were already inert. Not listed: `analytics.isFlagEnabled`
+  (the showcase's two flag reads sit in pages that authorize now), `next/og`'s `ImageResponse` (no app has an image
+  route; one names it in its app's entry), `DEFAULT_TENANT_SLUG` (the showcase alone uses it).
+- **What each app names instead, and why there.** Seed and simulated-world reads are the app's, so they are app
+  entries, where an adopter sees them: the starter now ships `authz-exemptions.mjs` with `[locale]/layout.tsx`
+  (`tenants`, `findTenant`: the locale layout's theme fallback and the protected layout's tenant name; groups are
+  dropped, so the two layouts share one key and one reason) and `[locale]/signin/page.tsx` (`listAllPeople`,
+  `findTenant`: the simulated-mode picker). The showcase names the same sign-in reads, `DEFAULT_TENANT_SLUG` in its locale
+  layout, `findInvite` and `findOrg` on its accept-invite page (authorized by possession of the invite token, as the
+  framework's `auth/accept-invite/route.ts` exemption says), and `isActorId` on the Simulator's actor frame. Pages that
+  read the caller's own records authorize them instead of being named: the profile page and the protected layout read
+  the caller's acceptances and authorize the self-only `AgreementAcceptance` (the layout's `listAgreementsForTenant` and
+  feature flag ride on that authorize, as a route's other reads ride on its own). Rejected: an exemption listing `db`,
+  `tenantIdForSlug`, the agreement readers and seven pure gate functions, a list that described the layout but excused
+  `db` whole.
+- **Narrowed again in review (round 2): by the resolved file, not the text.** The asset allowance had trusted the
+  specifier's ending, so `import load from '../lib/members.css'` (which TypeScript and webpack resolve to a
+  `members.css.ts` beside it), `'./members?x.css'` and a missing file passed; now a `?` or `#` is refused, a specifier
+  that resolves to code or a declaration (but a `.d.css.ts` of `allowArbitraryExtensions`) is refused, and a relative or
+  alias one must name an asset file on disk. "A package" had been anything outside the app's directory, which put an
+  adopter's own workspace package (`packages/ui`, linked or reached by a path) out of sight, and a `node_modules` link
+  back into the app's own `src` too; now only a real path with a `node_modules` segment (pnpm's store) or
+  `@sssb/kit`'s real package directory counts, so the kit's screens stay out of sight here as for an adopter who
+  installs it. The `'use client'` check now reads the module that declares the component, through a barrel's
+  re-exports (a server `components/index.ts` re-exporting a client `x.tsx` was a false failure), and fails closed on a
+  cycle or an unresolvable re-export. The unread-page guard flags only `<name>.<one extension>` (`page.css.ts`,
+  `layout.styles.ts`, `page.spec.e2e.ts` were false failures), and no walk of routes or pages enters a private `_`
+  folder, which Next does not route: that drops a route there from the route walk too, which never served one, while
+  the Server Action walk still enters it. Neither app has a `_` folder under `src/app`; both apps' verdicts and file
+  counts are unchanged.
+- **Narrowed rather than patched (round 3).** A third round found more resolution edges in the same two allowances,
+  so both shrank instead of gaining cases. An asset is now only a relative or `paths`-alias specifier whose literal
+  file exists (no `?` or `#`, no resolution to code, no declaration but the asset's own sibling `.d.css.ts`); a bare
+  specifier (a package's `styles.css`, `baseUrl`, a self-reference, `imports`, a bundler alias) is never one, and is
+  refused as any default import is. "Installed" now means a real path through a `node_modules` whose parent is the
+  app's directory or an ancestor (where a package manager installs), never one below the app's root (`src/node_modules`)
+  and never a pnpm `file:` or `link:` dependency (`.pnpm/<name>@file+…`), which are the adopter's own code; the kit's
+  directory is not trusted for an app inside it. And a `next.config` that sets `pageExtensions` now fails the check
+  (read with the TypeScript parser, so a comment does not count), since the scan reads no custom extension and the
+  unread-file guard catches only `.mts`, `.cts`, `.cjs`, `.mdx` and `.md`. Neither app nor the fixture changed verdict.
+- **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
+Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
+  (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only
+  when `canInActiveOrg(user, 'read', 'Membership')` and authorizing inside that branch, which the scan would pass but
+  the guide's rule (authorize on a path every request takes) forbids. The first draft let a person without standing
+  reach that `authorize` and get its `ForbiddenError`, which in a server component with no error boundary is a 500,
+  on the page sign-in sends everyone to by default. Now both pages check standing first, with the non-throwing
+  `canInActiveOrg(user, 'read', 'Membership')`, and send such a person to their own profile (the one page here that is
+  theirs, which authorizes its self-only read), then authorize unconditionally on the path every other request takes,
+  so the scan still counts the call and `listMembers` never runs for them. Rejected: `notFound()` (says the page does
+  not exist) and a no-access screen (new copy in both catalogs; safeinsights/sssb#265 is that screen). Pinned by
+  `apps/showcase/src/app/[locale]/(protected)/dashboard/page.test.tsx` and its org twin (real abilities, faked
+  adapters: a member gets the active members, `none` is redirected to `/<locale>/profile` and `listMembers` never runs).
+- **Matched by URL, as routes.** A route group's layout and its parent's share a key, which a reviewer may find
+  surprising: one entry, each layout judged by it alone; an `outsideApi.prefixes` entry covers the pages under it too.
+  A page under an intercepting segment (Next's modal pattern) was refused outright in the first draft, even one that
+  authorized; it is now judged as any page with no exemption applying, so it authorizes or reads nothing, and an entry
+  only it would use is stale. An intercepting route is still refused outright (its `service/` and `webhooks/` gates are
+  path-keyed).
+- **Found on the way:** following `export *` for a page's `default`, as the lookups follow it for a verb, would have
+  taken a default JavaScript never re-exports through one; both lookups now skip it. The check keeps its id `authz-mutations`; its title
+  and second test name now say pages.
+
+## The ticker marker is written whole and cleared without a gap; a failing default fixture always fails typed (2026-11-27, `fix/marker-atomic-and-fake-failure`)
+
+`safeinsights/sssb#258`, `#257` and `#249`: three leftovers of the `#146` and `#145` work.
+
+- **`#258`: the marker is written to a name beside it and renamed onto it** (`writeTickerMarker`; `<file>.<pid>.<random>.tmp`),
+  so a Playwright config that loads in that instant reads the marker that was there or the whole new one, never half of
+  it (a half-written file read as "no marker", and the config passed over a ticking dev server). A process killed between
+  the write and the rename leaves the `.tmp` file, which nothing reads. Pinned by standing inside the write
+  (`tests/tooling/ticker-marker-atomic.test.ts`): `writeFileSync` is wrapped to write half of its data, look at the marker as
+  a reader would, then write the rest; written straight onto the marker the reader sees half of a JSON document
+  (checked by making the write direct). Rejected: a stress test with a child process writing in a loop and the parent
+  reading, which can pass for a long time on the code it is meant to catch. Left as it was, and open in the issue: an
+  unparseable marker (damaged by anything else) still reads as no marker, not as "a ticker may be starting".
+- **`#257`: the stale marker is moved aside, and judged from the copy** (`clearStaleMarker`). Read-then-`rm` left a gap in
+  which a wrapper's new marker could be written and then removed. A rename is atomic and takes whatever file is there at
+  that instant: if it is the stale one it is deleted; if it is a newer one (written between the judgment and the move)
+  it is put back with `link`, which fails rather than overwrite, so a still newer marker written meanwhile wins and the
+  copy is dropped; a marker written after the move finds the name free and is never touched. Where a file system has no
+  hard links the put-back is a copy that fails rather than overwrite. **What it costs, found in review and filed as
+  `safeinsights/sssb#260`:** in that race a reader that looks while the newer marker is out of place sees none (a stress
+  run of one writer and four clearers spinning found the marker absent most of the time, which no real use approaches: a
+  clearer runs only after a marker was judged stale); a ticker that stops in that instant has its marker put back
+  (fails safe: the config refuses until the process exits); and two clearers meeting a newer and a newer-still marker
+  may leave the older. A write that fails now leaves no `.tmp` beside the marker. `clearStaleMarker` is exported, with a `hooks.afterClaim` seam, for its tests, which interleave a
+  writer at each step. Not changed: `removeTickerMarker` (the owner removing its own, by pid) has the same read-then-remove
+  shape, but only another wrapper's write into the same data directory in those microseconds could be lost, and the
+  token logic cannot tell one live ticker from two. `ps`'s start is to the second on macOS, so two processes born in the
+  same second share a token; a pid reused in the second it was released is not a case.
+- **`#249`: a default entry with a `failure` (one with a `reason`; `{}` is none) fails typed whatever answer it has, and every method reads the same default entry,** in `complete`, `stream` and
+  `runToolLoop`: `response: null` and no `conversation` (or an empty one) used to end in the plain "no default entry"
+  `Error`, which hid the failure the person wrote the entry to see. A default entry with no answer and no failure still
+  throws that error. (`response: null` is the recorder's "to record" marker and the recorder skips failing entries, so the
+  fixture is not rewritten.)
+
+## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
+
+safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind
+address and port (3000), never the visitor's host, and the first `X-Forwarded-For` entry is whatever the visitor wrote. Both issues
+left a choice open; the maintainer's standing instruction is to decide and record.
+
+- **One module, in the adapters directory: `@sssb/kit/adapters/edge-headers`.** It reads two settings from the
+  server's environment, which only an adapters module may, and holds both helpers, since they rest on one promise:
+  that every request crossed `SssbApp`'s viewer-request function. Rejected: **a `server-lib` module** taking its
+  settings from the caller, which would hand every app the job of reading `PUBLIC_ORIGIN` and the trust switch right.
+- **Both sources for the origin (#131's open question), configuration first.** `PUBLIC_ORIGIN` when set, in a request or
+  outside one; behind `SssbApp`, `https://` and `x-forwarded-host`; anywhere else, `request.url`'s origin. Configuration
+  wins over the header because a deployment served on two origins (its custom domain and `*.cloudfront.net`, both in
+  `CLERK_AUTHORIZED_PARTIES`) should mail one. Outside a request with no `PUBLIC_ORIGIN`, and behind `SssbApp` on a
+  request that never crossed the distribution (the scheduled tick invokes the server directly), it throws, naming the
+  setting. "Crossed" needs proof (both reviews of round 1 found it): Next fills a missing `x-forwarded-host` from `Host`
+  (`next/dist/server/base-server.js`), the Function URL's own on the tick's request, so the forwarded host is taken only
+  beside a valid `x-sssb-viewer-address`, which nothing but the function writes, and only when it is not `Host`. Rejected: **the header alone**, which a job cannot read; **the setting alone**, which a first deploy on
+  `*.cloudfront.net` cannot set (the server's environment cannot name the distribution's host without a dependency
+  cycle, as the authorized-parties entry above found); and **`NEXT_PUBLIC_PUBLIC_ORIGIN`**: nothing on the client needs
+  it, and a client bundle's value is fixed at build, not per deployment.
+- **Forwarded headers are believed only when the deployment says so: `SSSB_EDGE=cloudfront`, set by `SssbApp`.**
+  Without it (`pnpm dev`, `dev:real`, a host of the adopter's own) neither helper reads a forwarded header at all, so a
+  client cannot choose the answer. Rejected: **believing them whenever `!isSimulated`**, which would trust headers any
+  client writes on a real-mode server that is not behind `SssbApp`; and **believing them always**, the dev-mode hole
+  #131's fallback would otherwise have. Any other value of `SSSB_EDGE` is refused, at boot by `assertRealEnv` (cutover
+  row `domains-and-certs`) and on first use, rather than read as on or off; so is `SSSB_EDGE` off Lambda (no
+  `AWS_LAMBDA_FUNCTION_NAME`), where a deployment's environment copied into `dev:real` would otherwise trust any client.
+  Rejected: **letting an adopter set it behind a proxy of their own** (the first cut), a promise SSSB cannot check.
+  The promise it does make is checked at synth: `SssbApp` fails a behavior of any distribution in its stack, an origin
+  group's included, that reaches the server without the function. A distribution in another stack names the Function
+  URL by an import, which the check does not follow; it would also need its own origin access grant.
+- **The address comes from a header of SSSB's own, `x-sssb-viewer-address`, written by the CloudFront Function from
+  `event.viewer.ip` (#132's open question).** CloudFront's docs say neither whether a viewer's own
+  `CloudFront-Viewer-Address` is overwritten nor, by name, that `AllViewerExceptHostHeader` forwards it; and counting
+  `X-Forwarded-For` from the right depends on how many entries the Function URL appends, which only a live request would
+  show. The function already runs on every behavior that reaches the server (the synth test holds it) and already
+  overwrites `x-forwarded-host`; writing one more header there rests on nothing undocumented. Rejected:
+  **`CloudFront-Viewer-Address`**, and **the rightmost-minus-N `X-Forwarded-For` entry**, for those reasons. The
+  helper returns `undefined`, never a guess, when the header is missing or is not one IP address.
+- **A lint rule, `sssb/no-raw-request-origin`, not a conformance check.** It flags a visitor header named as a string
+  in `.get`/`.has`/`.getAll` or a computed key (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `Forwarded`,
+  `Host`, `CloudFront-Viewer-Address`, `x-sssb-viewer-address` and the other `X-Forwarded-*`, in any case), and the
+  `origin`, `host`, `hostname` or `href` of `new URL(<x>.url)` or `<x>.nextUrl` (by member or destructuring),
+  `new URL(path, <x>.url)` and `baseUrl: <x>.url`, in every module of an app's `src/` but its tests, and in the framework
+  but the module itself. A header read counts only on something plainly a request's headers (`<x>.headers`,
+  `headers()`, a variable named for headers), so `searchParams.get('host')` and `process.env['HOST']` pass. In the app's
+  proxy alone, `new URL(path, request.url)` handed straight to a `redirect` or `rewrite` passes too: Next relativizes a
+  same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`), so a route handler's would
+  send the visitor to the server's bind address (round 2). A name held in a variable gets past, as any alias does. Path
+  and search parameters stay allowed. Rejected: **a conformance check**, which would re-implement the same syntax match at
+  test time; the lint preset is where the other syntax fences are, and `sssb check-fences` probes it.
+- **Live proof is a cutover row, not this change's.** Both issues ask for it; no SSSB session deploys. The
+  `domains-and-certs` row now names the proof: forged headers through the distribution's domain, and what the server
+  and the helpers see.
+- **Every reader moved.** The showcase's invite and preset routes, and the kit's own Simulator host
+  (`simulatorApi`'s preset load, which arrived with `feat/simulator-host-snapshots` while this was in review and which
+  the rule flagged), build their links on `publicOrigin`. `clerk-proxy.ts` hands Clerk `request.url` unchanged: Clerk
+  derives its own URL from `x-forwarded-host` and `x-forwarded-proto` (`@clerk/backend` 3.29, `deriveUrlFromHeaders`).
+- **Accepted, not fixed.** A real-mode server off `SssbApp` with no `PUBLIC_ORIGIN` builds links on `request.url`'s
+  origin, the bind address, as before this change: Next names it `localhost` either way, so the helper cannot tell a
+  local `dev:real` from a host of the adopter's own, and SSSB deploys only through `SssbApp`. The adopting reference
+  tells such a host to set `PUBLIC_ORIGIN`. And in `next dev`, `X-Forwarded-Proto` still flips `request.url`'s scheme
+  (Next reads it), so a peer on the developer's network can make `publicOrigin` say `https://localhost:<port>`: one bit,
+  on a developer's machine.
+
+## The Simulator host serves Snapshots, presets and tours (2026-11-27, `feat/simulator-host-snapshots`)
+
+`safeinsights/sssb#127`: `simulatorApi` serves `reset`, `snapshots` (+ `restore`, `delete`), `flags`, `agreements`
+(+ `bump`) and `presets`, and `SimulatorHost` wires the Snapshots and Tours tabs, so a generated app's `pnpm dev` has
+them. Decisions the issue left open:
+
+- **`flags` carries the feature flags, in the panel's shape** (`{ flags: [{ flag, enabled }] }`), and `events` will
+  not (`safeinsights/sssb#128` asked which). The Snapshots tab owns the knobs, so its own GET answers them and opening
+  it fetches no Events payload. Rejected: **the showcase's split** (its `flags` GET answers a `{ name: boolean }`
+  record no client reads, and the tab takes its list from `events`), which ties the Snapshots tab to the Events tab's
+  route and would be the one path whose shape differs between the two.
+- **The Snapshots tab is fetched when it opens and after each of its own actions, never polled**, as the showcase's
+  glue does: the tab's own actions refetch it or reload the page, and a change made elsewhere (an agreement edited on an
+  app's page) shows the next time it opens. Rejected: **adding it to the open-tab poll**, which reads every tenant's
+  agreements every four seconds (`EXPANDED_POLL_MS`) for a list that rarely moves while the tab is open.
+- **A snapshot's name is judged by the snapshot store, not the route**: a missing or non-string name is a 400, and a
+  name outside the world-start pattern, or one that `reset` or a registered preset already means, is the store's 403,
+  as the showcase's routes answer. Rejected: **checking the pattern in the route first** (a 400), which would answer a
+  different status from the showcase's for the same request and leave two places that say what a name may be.
+- **A preset's links point at `request.url`**, as the showcase's route did (`applyDemoPreset`'s `baseUrl`). On
+  `pnpm dev` that is the server the browser called. If a public-origin helper lands (`safeinsights/sssb#131`), this
+  call is one of its readers.
+- **No `tours` or `presets` registration is needed for the tab to be right**: an app with none gets no Tours tab and
+  no presets section (both are the seam's off-switches already), and a reset is the one world start every host has.
+
+## Teams are writable inside their tenant, and an exempt table declares its writes (2026-11-27, `feat/org-write-rls`)
+
+`safeinsights/sssb#124`: `app_user` held `SELECT` only on `organizations`, so a route that created, renamed or deleted
+a team failed with `permission denied`, and the coverage check could only hold an exempt table to `SELECT`-only.
+
+- **The writes are tenant-scoped by row-level security; the read stays open.** Migration 0018 grants `INSERT`,
+  `UPDATE` and `DELETE` (as column grants, next item), enables RLS on `organizations`, and adds one policy per command: `SELECT` is `USING (true)`
+  (callers are resolved before a tenant context exists, and a request joins another team of its own tenant), and each
+  write compares `tenant_id` with `app.current_tenant`, in `WITH CHECK` for `INSERT` and `UPDATE` and in `USING` for
+  `UPDATE` and `DELETE`. Rejected: **the issue's proposal, the grant with no row-level security**, leaving who may write
+  to `authorize(...)`. A team is not a hostile boundary, but the tenant is, and with no policy a request in one tenant
+  could rename or delete every other tenant's teams through the sanctioned `withTenant`, which is the cross-tenant
+  write the coverage check exists to refuse on every other table. With the policies, `authorize(...)` decides only
+  which person may write which team of their own tenant.
+- **Column grants: `INSERT (tenant_id, slug, name)`, `UPDATE (name)`, `DELETE`.** A request names a new team's
+  tenant, slug and name, and renames it by its name. The slug is how the auth provider and the inbound mail address
+  (`<org-slug>+<handler>@`) name a team, and the id is what every other table holds, so neither is a request's to set
+  or change. Rejected: **table-level `INSERT, UPDATE`**, which round-1 review showed let a request change a team's
+  slug or mint an id another tenant's deleted team once had.
+- **A new team's slug may not be one another tenant's team holds** (a `NOT EXISTS` in the INSERT policy). Inbound
+  mail resolves the slug across every tenant and refuses two matches, so without it one tenant could silence another
+  team's mail by taking its slug (round-1 Fable review). It is a policy, not a constraint: two tenants creating the
+  same new slug at once can both pass, a slug freed by a delete is free to any tenant, and the owner bypasses it.
+  Rejected here: **a global unique index on `slug`**, whose migration fails on any database already holding one slug
+  in two tenants; the real fix, resolving the tenant from the recipient, is `safeinsights/sssb#211`.
+- **ENABLE, not FORCE.** FORCE would hold the table's owner to the write policies too, and the owner seeds
+  teams with no tenant context (`packages/kit/src/db/seed.ts`). An app's routes do not write as the owner: `getDb()`
+  is banned in an app's `src` bar the exceptions it names, and `withTenant` switches to `app_user`. Rejected: **FORCE with
+  an owner-only policy**, which would need the owner's role name in a framework migration, which differs per
+  deployment. A dedicated non-owner app role (the cutover checklist's `db-role-not-superuser`) is held to the
+  policies, which is the safer side: its raw reads are unchanged (`USING (true)`), and it had no write before.
+- **`TRUNCATE` is not granted, and cannot be declared**: it ignores row-level security, so it would empty every
+  tenant's teams.
+- **The coverage check: an exempt entry declares `writes`, and a declared write is proved, not trusted.**
+  `RLS_EXEMPT` entries became `{ reason, writes? }`, `writes` drawn from `INSERT`, `UPDATE`, `DELETE`. A table with no
+  declaration is still held to `SELECT`-only; a declared write must be held (else a stale declaration), on a table with
+  RLS enabled, admitted by some permissive policy, and every permissive policy admitting it (its command's or `ALL`)
+  must read the tenant setting in each expression that command evaluates (an absent one admits every row). The
+  pinned list carries the declared writes (`public.organizations (DELETE, INSERT, UPDATE)`), so a new declaration is
+  a two-file edit with `SECURITY.md`, as a new exemption already was. Rejected: **a declaration that only silences the
+  `SELECT`-only failure**, which would let a later `FOR ALL USING (true)` policy, or a disabled RLS, open every
+  tenant's teams with the gate green. A declared write also fails when `app_user` holds the owner's privileges (a
+  member of the owning role), which skip every policy that is not forced (round-1 review). The policy text is read as
+  the tenant tables' is (it mentions the setting), with the same limit: a policy that mentions it and filters nothing
+  passes; the behavioural proofs are what show 0018 isolates, and `safeinsights/sssb#212` would read the predicate.
+- **The composite uniqueness constraint is taken**: `organizations_tenant_id_id_unique` over `(tenant_id, id)`, so an
+  app table can declare `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)` and Postgres refuses
+  a row whose team is another tenant's. It costs one index on a small table and rejects nothing the primary key
+  accepts. SSSB's own tables keep their plain `org_id` references, so another tenant can still hold a team's id and
+  block its deletion; moving them is `safeinsights/sssb#213`.
+- **A `DELETE` succeeds only for a team nothing references**: every framework table that names an org holds a plain
+  foreign key with no cascade, and the audit trail is append-only, so a request cannot delete a team with history.
+  That is the intended posture, not a gap: an app that retires teams records that in a table of its own.
+
+## The upload target's PUT form (2026-11-27, `feat/storage-put-upload`, `safeinsights/sssb#134`)
+
+`UploadTarget` becomes `PostUploadTarget | PutUploadTarget`, `STORAGE_UPLOAD_TARGET` gains `put`, and the showcase
+takes a PUT end to end (mint, browser, the fake's endpoint, confirm). What was decided, and what was rejected:
+
+- **A union with `method` optional on the POST form.** A POST target keeps its shape exactly (`{ url, fields }`, and the
+  real adapter now also says `method: 'POST'`), so a browser written to it, an app's own storage adapter and a target
+  stored as JSON keep working; `method: 'PUT'` is the discriminant and a PUT has `headers`, not `fields`. The cost is
+  a compile break for server code that reads `.fields`: filed as Action `required` (a `minor`) in the changeset.
+  Rejected: **a second method** (`createPutTarget`), which makes the caller guess the store's form, when the
+  deployment's setting is what knows it; and **`fields` kept on the PUT form** (empty), which a browser that ignores
+  `method` would then POST without error.
+- **The size is signed into the URL, and the app's `head` check is the backstop.** The issue's two candidates: signing
+  the exact `Content-Length`, or staging under another key, `head` and `copy`. R2 could not be measured (no live store,
+  and nothing in CI calls one), so the choice does not rest on R2 honouring a signed length. What was verified is the
+  SDK's side, locally: the presigner signs `content-length;content-type;host` once told to (`signableHeaders`; by default
+  it signs `content-length;host` and not the content type), and it must not carry the checksum the SDK's default settings add (`x-amz-checksum-crc32=AAAAAA==`, the
+  checksum of an empty body, which no real upload matches). So `UploadConstraints.sizeBytes` is the client's exact size,
+  the port says plainly that a PUT's ceiling is held by the store only where it honours a signed length, and the
+  showcase's confirm route reads `head` and deletes an object over the ceiling (it read the whole object with `get`
+  before). Rejected: **staging plus `copy` as the port's mechanism**, which moves a two-step flow into every app whether
+  or not its store honours a signed length, and stores the bytes first; it remains the app's answer on a store that
+  ignores the length, and the cutover row asks which R2 is.
+- **`sizeBytes` is optional on the type, refused by a PUT mint when absent.** Optional so a POST store's callers and an
+  app's own adapter compile unchanged; an adapter that mints a PUT throws a plain `Error` naming it, never mints a URL
+  that signs no length. The showcase's mint route now requires `sizeBytes` (400 `invalid-size`), since its client
+  always sent it.
+- **The setting picks the form, and the default client changes for `put` only.** `createS3Storage({ uploadTarget: 'put' })`
+  defaults `requestChecksumCalculation` to `WHEN_REQUIRED` on a client it builds; a client the caller built is used as
+  it is, and a signed URL that carries a checksum makes `createUploadTarget` throw, naming the setting, instead of
+  minting a URL every upload would fail on. Rejected: **a presign-only client cloned from the given one's config**
+  (the SDK's resolved config does not survive being passed to a new client: it failed in a probe), and **stripping the
+  checksum with a middleware** (the presigner added it after, in a probe).
+- **The fake serves both forms, chosen by `createFakeStorage({ uploadTarget })`.** `fakeStorage` stays POST, so no app's
+  simulated mode changes; the PUT form is signed in the URL's query, with a `PUT` marker and the size in the signed
+  string so a POST signature never verifies as a PUT or back. The showcase's `/api/storage-upload` gained a `PUT` that
+  answers as S3 would, approximately: 403 for a changed key, size, type or signature, 411 with no length, 400 for a
+  body that is not as long as it declared. Not done: **a Simulator switch to run the showcase on the PUT form**; the
+  browser's PUT branch is unit-tested (`send-to-upload-target.test.ts`) but no e2e runs it.
+- **The `head` check is a moment, not a seal (round-1 review).** On a store that ignores a signed length, a second PUT to
+  the same URL inside its 15 minutes can replace the object after confirm. The showcase does not close that (it would
+  stage under another key and `copy` with `ifMatch` at confirm, so the URL never addresses the live object); the port's
+  comment says so and names the staging answer, and it is filed as an issue to do once R2's behaviour is measured.
+  Confirm of a row that is already `ready` now returns idempotently before reading storage, because it would otherwise
+  reach the delete and remove a good object (a later, lower ceiling does the same).
+
+## The webhook secret's variable, and a Standard Webhooks verifier (2026-11-27, `feat/webhook-verifier`)
+
+Issues `safeinsights/sssb#121` and `safeinsights/sssb#122`, built as one change: both come from the same migrated
+future task (service-auth flexibility), touch the same module family, the same lint exemption list and the same
+adopter-reference section. Rejected: **two PRs**, which would have raced each other on those files for no review gain.
+
+- **`withWebhookSecret(handler, { secretEnv })`, a name, not a value.** An app may not read `process.env` outside
+  `adapters/real/` (the guide), so a value would have to come from somewhere the app cannot reach; the name is what the
+  issue asked for. It defaults to `WEBHOOK_SECRET`, which stays in `REQUIRED_ENV` and the required-environment snapshot
+  (the cron route and the jobs webhook use it), so the snapshot is unchanged and the changeset is a `patch`. A custom
+  name is not added to `assertRealEnv`: the framework cannot see which names an app's routes pass, so the adopter
+  reference says it is the app's own cutover row. **The name is checked** (`[A-Z_][A-Z0-9_]*`, never `NEXT_PUBLIC_*`,
+  which Next inlines into the browser bundle) when the wrapper is built, so a typo fails as the route module loads, not
+  as a 401 in production. Rejected: **accepting any string**, which turns `'partner-secret'` into a route that refuses
+  everything with no error.
+- **The Standard Webhooks verifier ships in the kit.** It is not vendor code: Standard Webhooks is an open
+  specification, verified with `node:crypto` and no SDK, so the vendor-code tests in `docs/development-approach.md` do
+  not govern it. It is a member of a class SSSB already teaches (the verified machine caller), and the default auth
+  vendor's own webhooks are Svix-signed (`@clerk/backend` 3.29's `webhooks` module verifies `svix-id`,
+  `svix-timestamp` and `svix-signature`), so the first product that syncs users from Clerk needs it. Rejected: **a recipe**, which every such app would hand-roll, and hand-rolled HMAC checks are where the
+  constant-time compare and the replay window get dropped.
+- **`node:crypto`, not the pure-TS HMAC in `@sssb/kit/core/webhook-hmac`.** That one exists for the static demo, which
+  never receives a webhook, and keys the HMAC with a string's UTF-8 bytes, while a Standard Webhooks key is the
+  base64-decoded bytes of the `whsec_` secret. The verifier is server-only, as `webhook.ts` already is.
+- **The replay store keys on the sender, the id AND the timestamp.** A replay is the same signed message sent again,
+  and that carries the same timestamp. A sender's retry is re-signed with a new timestamp (its schedule runs for hours,
+  past any window), so it passes and reaches the handler, which the adopter reference tells to dedupe by `webhook.id`,
+  the idempotency key the specification names. Rejected: **keying on the id alone**, which answers a legitimate retry
+  401 (after a 2xx that the sender never saw, say) and leaves the sender retrying until it disables the endpoint. The
+  sender (the sorted `secretEnv` names) is in the key so that two senders' ids never collide, and one sender cannot
+  claim keys another will use (round-2 review). A claim lasts until the signature stops verifying
+  (`max(now, timestamp) + tolerance`, as Mailgun's guard) plus a minute, because a shared store judges expiry by its
+  own clock, after its own latency (round-2 review). The freshness check and the in-process claim use one clock reading
+  taken after the body has arrived, and the headers are judged before the body is read (round-1 review: a body sent
+  slowly let a replay past a claim pruned by a later clock). A claim is released when the handler throws or answers
+  5xx, so the sender's resend of that message is processed; the cost is that a captured copy of a failing message can
+  run the handler again inside the window, which handler idempotency covers.
+- **The default store is per process; a shared one is a follow-up.** `SssbApp` runs the server on Lambda, where every
+  concurrent execution environment has its own memory, so in a deployment the default guard holds per environment and
+  handler idempotency is the defence across them. `replayStore` (two functions) lets an app pass a shared store, and
+  `safeinsights/sssb#205` is the kit shipping one over a framework table, for Mailgun's guard too. Rejected: **only
+  documenting the limit**, as Mailgun's guard does, when an interface of two functions lets an app close it now; and
+  **building the table here**, a framework migration with its own RLS and contract-suite proofs, outside these issues.
+- **`secretEnv` has no default here.** Each sender has its own secret, and two routes falling back to one default name
+  would silently share it. It takes one name or several, and each value may hold several whitespace-separated
+  secrets, so a rotation is "add the new one beside the old". A secret that is not base64 (after an optional `whsec_`)
+  matches nothing, and neither does a key under 16 bytes (round-1 review: `changeme` is valid base64 for a six-byte
+  key). The specification recommends 24 to 64 bytes; 16 is the floor below which a value is guessable, and every
+  sender following the specification is above it. Rejected: **no minimum**, the first cut. `toleranceMs` must be
+  positive and finite, checked when the wrapper is built (round 1: `NaN` turned the freshness check off).
+- **Svix's `svix-*` headers are read when no `webhook-*` header is present**, as Svix's own libraries do. One header of
+  a family selects it, so the two are never mixed.
+- **An id may contain a dot.** `{id}.{timestamp}.{body}` lets digits move across a dot, and the same signature then
+  covers another (id, timestamp, body). The moved timestamp must be fresh, so it takes a body that begins with a current
+  Unix time and a dot (which a Standard Webhooks payload, a JSON object, never does) or an id that ends with a dot and a
+  current Unix time (and the re-parsed body is then not JSON). Rejected: **refusing dotted ids**, which the
+  specification allows and which would lock out such a sender with no workaround, for a forgery that needs a sender's
+  ids to end in a timestamp and yields a body no JSON handler accepts.
+- **The wrapper is the kit's, as `withWebhookSecret` is**, not app-side as the showcase's Mailgun wrapper is, and the
+  `webhooks/` exemption names it beside the other two (`packages/kit/test-fixture/api/webhooks/wharf-signals/route.ts`
+  demonstrates the gate).
+
+## The Simulator host serves Events, Messages, inbound mail, Hooks and Errors (2026-11-27, `feat/simulator-host-subsystem-tabs`)
+
+`safeinsights/sssb#128`: `simulatorApi` serves `events`, `audit`, `messages`, `inbound`, `inbound/compose`, `webhooks`,
+`webhooks/fail`, `webhooks/run-due` and `error-scenario`, and `SimulatorHost` wires the tabs, so a generated app's
+`pnpm dev` has every framework tab but the ones `safeinsights/sssb#152` owns (an app's own tabs, the dev ticker).
+Decisions the issue left open:
+
+- **`events` carries no feature flags**; the Snapshots tab reads them from `flags`, as the stage before this decided.
+  Rejected: **the reference app's payload**, `{ events, flags }`, which made the Snapshots tab fetch the Events tab's
+  route; its glue moves onto the host with `safeinsights/sssb#129`.
+- **`inbound/compose` takes mail in through `intakeInboundEmail`**, the function the real inbound webhook calls (the
+  reference app's `api/webhooks/email` route), addressed with `formatInboundRecipient` on the demo domain. So it
+  reaches the app's handlers through `@sssb/kit/inbound-email/handlers` and no other way, and a handler the app does
+  not register is intake's to judge (kept as `unmatched`), never an error of the route's. Rejected: **calling the
+  handler from the registry directly**, a second way in that would skip intake's filing, status and fault isolation.
+- **The Mail tab shows inbound mail only when the app registers an inbound handler.** An empty registration is the
+  off switch for a capability; with no handler, nothing the form sends can reach the app. Rejected: **always showing
+  the compose form**, whose every message a starter would file as `unmatched` under a handler name it never had (the
+  form's default, `note`, is no app's: the reference app registers `support` and `feedback`).
+- **A failed Errors scenario leaves the tab as it was**: `ErrorsApp` now catches the promise it is handed. The
+  reference app's glue rejects it too when its server has stopped, and nothing caught that either.
+
+## The showcase runs on the kit's Simulator host (2026-11-27, `feat/simulator-host-showcase`)
+
+`safeinsights/sssb#129`: the showcase mounts `api/simulator/[...path]/route.ts` and renders SSSB's `SimulatorHost` from
+its locale layout, and its 873-line `simulator-glue.tsx`, 17 of its 21 `api/simulator/` route directories and two
+helper modules are gone. The issue asked for this once `safeinsights/sssb#127`, `#128` and `#152` served every path the
+glue called; `#152` (the dev ticker and an app's own tabs) is undecided and unowned, so this lands without it, by the
+manager's call, and leaves `#152`'s question open:
+
+- **What stays the showcase's**: the server half of the dev ticker (`api/simulator/ticker`, whose policy builds on
+  `@sssb/tools`, which the kit may not import), the routes the Actors tab's drivers call (`actors/*`,
+  `service-token`, `webhook-secret`), the actor pages, and a short glue that hands the host the Actors tab and keeps the
+  panel out of the actor frames. Next routes each static segment before the catch-all, so those route files win.
+- **The ticker's client control moved into the host**, shown only where the app's own `ticker` route answers (the
+  catch-all answers 404 there, and the host then stops asking, as the glue did). That moves no policy: the server half
+  is still the app's, so `#152`'s three options for it stand. Rejected: **keeping the control in the showcase's glue**,
+  which would have to own the Jobs tab, and with it the whole panel again.
+- **`SimulatorHost` takes `extraTabs`** (the panel's own `SimulatorExtraTab[]`), and an app's tab content reads the
+  world's jobs with `useSimulatorWorld()`, from the same subpath. Both are provisional public surface until `#152`
+  decides how an app's tabs reach the host, and say so where they are declared. They are named exports of subpaths
+  already published (`@sssb/kit/components/simulator/simulator-host` and `.../simulator-panel`), so the `exports` map
+  does not change. Rejected: **a render-function prop** handed the host's state, which cannot call hooks (the Actors tab
+  needs translations), and **a hook passed as a prop**, which breaks the rules of hooks the React Compiler checks.
+- **The mail-link check moved into the kit** (`packages/kit/src/components/simulator/mail-link.ts`, not published), with
+  its tests, and the host's link handler uses it; the showcase's copy and its `server-redirect` helper (`sameOriginPath`
+  on a body's `redirectTo`, which the host does inline) are deleted.
+- **The route tests that only asserted the real-mode 404** are covered by the kit host's dispatch tests; the ones with
+  more (jobs held, run-pending, mail seen for a person and an invite, the viewpoint's remembered path) have kit
+  equivalents in `packages/kit/src/server-lib/simulator-api.test.ts`.
+- **jscpd, re-measured as the issue asked** (2026-11-27, `pnpm jscpd` with the repository's `.jscpd.json`): 41 clones,
+  654 duplicated lines (1.40%) on this branch, against 50 clones and 758 lines (1.57%) on `int-platform` before it.
+  Nine fewer clones in all, which counts the showcase-and-starter pairs `safeinsights/sssb#114` tracks among them.
+
+## Main (0.9.1) into int-fixes: where the job retries' Simulator call went (2026-11-28, `merge/main-into-int-fixes`)
+
+Main moved the Simulator's clock and run-due routes out of the showcase into the kit's host (`simulator-api.ts`, served by
+each app's `api/simulator/[...path]` route, safeinsights/sssb#129) while int-fixes added due job retries to those routes
+(safeinsights/sssb#135; the entry above, "Job retries with backoff, a new row per attempt", names them). The merge takes the deletion: both
+routes are gone, and the host's `runDueAtWorldNow`, which its `clock` and `schedules/run-due` handlers share, runs due
+schedules, then due retries, then due deliveries, as the two routes did. `simulator-api.test.ts` proves it through the
+host: run-due alone leaves a retry that is not yet due, and moving the clock past its backoff starts it (red with the call
+taken out). The static twin's clock runs its own retry drain, which main did not touch.
+
+The other conflicts: the migrations registry and the family fence list main's `0018_organizations_write` (unchanged)
+with int-fixes' 0019 to 0021; the attachment confirm route authorizes before its lookup (int-fixes, safeinsights/sssb#137)
+and then takes main's pending check, `head` and size ceiling; the export count is 148 (145 at the merge base, one added
+by int-fixes, two by main), and the internal-module count 99, as `public-surface.test.ts` computes it.
+
+**A database that ran int-fixes' 0019 to 0021 before 0018 cannot take 0018.** The migrator runs the two sequences
+(framework, app) unordered against each other, but in order within each (`packages/kit/src/db/migrate.ts`, "migrations
+out of order within their sequence"), so 0018 after 0019 is refused, loudly, at the first query. Every released database
+is fine: 0.9.1's has 0018 and takes 0019 to 0021 after it, and an older one takes all four in order. What is refused is a
+world, local or deployed, built from int-fixes before this merge: this checkout's own e2e world failed exactly so until
+it was wiped (CLAUDE.md's rule after a migration change). Nothing in the code changes: 0019 to 0021 already come after 0018, which is right for every released database.
+Such a world is wiped; whether a deployment runs int-fixes, and so must be kept, is for its owner to say.
+
+## A CodeBuild job marked from its first write, and a bounded sweep (2026-11-28, `fix/codebuild-starting-and-sweep-bound`)
+
+The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
+
+- **safeinsights/sssb#251: the `starting` mark goes in the row's own write.** The CodeBuild runner used to write
+  `jobs.runner_ref = 'starting'` as a statement of its own, just before StartBuild. If that statement failed after
+  `submitJob`'s transaction committed, `start` threw before anything reached CodeBuild. The job then stayed queued
+  with no ref, which the sweep never judges (so that jobs from before migration 0020 are left alone).
+    - The jobs port now declares what a job's row starts as: `JobsPort.startingRef`, optional, `starting` for the
+      CodeBuild runner. Every writer of a row the runner will start writes it in the same statement: `submitJob`'s
+      insert, a schedule spawn's insert, and the retry drain's claim (the update that readies a waiting retry). `start`
+      itself writes nothing before StartBuild.
+    - A start that throws, for whatever reason, therefore leaves a job the sweep judges: `refused` after five minutes
+      when CodeBuild said so, `starting` after the hour otherwise.
+    - Rejected: **judging a NULL-ref queued job created after some cutoff**, which needs a cutoff the sweep can know
+      (the migration's apply time is not recorded anywhere it can read). Also rejected: **catching the write and
+      calling StartBuild anyway**, which leaves the same hole when the second write (the build id) fails too.
+- **safeinsights/sssb#252: the sweep takes a budget from the tick.** `JobsPort.sweep(now, budget?)`, where `budget`
+  is the drains' shape (`SweepBudget`, restated in the port so it imports nothing). The tick gives it a window of its
+  own, its first two seconds (`SWEEP_WINDOW_MS`), and at most 100 jobs failed (`maxSweep`, `sweepWindowMs` on the tick's
+  budget).
+    - Both runners' sweeps take tenants in a fresh random order (the drains' `shuffled`) and stop once the budget is
+      spent, checked before each tenant, each BatchGetBuilds call and each failure. What a sweep leaves, the next tick's
+      sweep finds; nothing it skips is lost, since a lost job stays lost.
+    - **The CodeBuild sweep fails each loss as soon as it knows it.** First the losses that need no CodeBuild call
+      (`refused`, and `starting` past the hour), then each BatchGetBuilds answer's before the next call; a tenant's build
+      ids are shuffled too. Round 1 of review found the first version, which read every batch before failing any, could
+      spend the whole window reading and throw away what it had found, every tick, for a tenant with many open builds.
+    - **The tick checks the sweep's budget as it checks the drains'** (`resolveDrainBudget`), before the sweep runs: a
+      `maxSweep` or `sweepWindowMs` of `NaN` would have left the sweep unbounded (every comparison with `NaN` is false),
+      and a `maxSweep` of 0 would have stopped it for good. Both throw now. Found in round 2.
+    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the
+      schedules about four seconds of theirs. A judgment, or a BatchGetBuilds call, already under way at the deadline
+      runs to its end; the SDK sets no timeout on that call, so one that stalls can outlast the window
+      (safeinsights/sssb#267, filed from round 2).
+    - `lazyJobs` passes the budget through. A sweep called with no budget judges everything, as before.
+    - Not changed: the sweep still lists every tenant once a tick within its window (the drains' due hints,
+      safeinsights/sssb#263, do not extend to it).
+- **Proofs.**
+    - `adapters/real/jobs.test.ts`:
+        - the starting ref written by `submitJob`, a schedule spawn and a retry claim;
+        - a job whose start threw before writing anything, failed by the sweep after the hour;
+        - a bounded sweep failing at most its count, nothing after its deadline, and the rest next time;
+        - the tenants, and one tenant's builds, taken in the order the random gives;
+        - the losses needing no CodeBuild call failed even when a read spends the window, and one read's losses failed
+          before a later read is cut off.
+    - `adapters/real/jobs-in-process.test.ts`: the in-process sweep, bounded the same way, its tenants shuffled.
+    - `server-lib/scheduled-tick.test.ts`: the tick hands the sweep its budget, and refuses a malformed one.
+    - `adapters/lazy-jobs.test.ts`: the budget passes through.
+    - Removing any of these turns them red: the ref from each of the three writers, either runner's bound, either
+      runner's tenant shuffle, the build-id shuffle, failing as found (free losses first, each batch's before the next),
+      the tick's deadline, its budget check, or the pass-through.
+- **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
+  the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
+  and #267. Then a claims pass over the prose.
+
+## Common page shapes pass, and a reads-only name is pinned to its module (2026-11-27, `fix/review-page-shapes`)
+
+The whole-branch review of the authorization changes before 0.10.0 (findings Z1, Z2, Z4, and the doc drift of Z8 and
+Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its module"; the calls it did not settle:
+
+- **Seen failing first.** The reviewer's scratch app with four everyday pages failed four times at `cfe96f2`: a sync
+  page's `use(params)` ("it names `use`"), a page calling `getLocale()` and `headers()`, a page handing
+  `<Form action={saveItem} />` an imported Server Action, and a module-level `const LINKS = [...]`. After: the sync page
+  and the action pass, `getLocale` passes, and `headers()` and the `const` still fail by decision, each with its way
+  through (an entry pinning `headers` to `next/headers`; the value inline or in a module).
+- **The page allow-list, two more entries** (pages only; routes keep INERT_IMPORTS), each named in PAGE_IMPORTS with
+  its reason:
+    - `use` (`react`): next-intl's documented sync page, `const { locale } = use(params)`. `use` only unwraps the
+      promise or context it is handed; what it is handed is the page's own parameter or another name, judged where the
+      page writes it.
+    - `getLocale` (`next-intl/server`): the request's locale. The pages entry above left it out because neither app
+      needed it; an adopter's page does.
+    - **Not `headers` or `cookies`** (`next/headers`). The first draft allowed `headers`; review dropped it:
+      `headers()` returns the Cookie and Authorization headers, the session's credential, so a page could render the
+      token into its HTML with a green scan. No page of either app needs either; a page that does names it in its entry,
+      `names: { headers: 'next/headers' }`, with a reason.
+- **A Server Action handed on by reference.** Only as the whole value of a JSX attribute (`action={saveItem}`,
+  `formAction={…}`, any attribute), by a named or default import, when the module that declares it (followed through
+  re-exports, the client-component walk reused as `declaringBinding`) is a file under the app's `src`, not through a
+  `node_modules` (the tree the Server Action walk judges), and its prologue is `'use server'` or the exported function's
+  own body opens with `'use server'`. Counted, as before: a call, `saveItem.bind(null, id)` (a member read: a later
+  allowance could take `.bind` with judged arguments, not taken here), a parenthesized or spread value, an action
+  outside `src` or in a package, a `'use server'` file's re-export of a plain module's function (followed to the plain
+  module, which is no action), and any non-action import handed on as a prop (`load={load}` may run in the render).
+- **The module-level `const` stays refused.** Code of the file can change an object or array there, as four rounds of
+  the reads review showed. Its message now says: write the value inline where the page uses it, render it as a
+  component of the file, or move it into a module and list the import (a primitive `const` is already inert).
+- **Z4: reads-nothing before a required gate.** `judge` asked `service/`'s `withServiceCaller` gate before the
+  reads-nothing pass, so an inline-headers preflight there had no way through. Moved, for route handlers only:
+  `judgePage` keeps its order, since a page cannot be the wrapper's call and the pages changeset refuses an unwrapped
+  page under `service/` as before.
+- **Z2: the pin, and its format.** `names` changes from `['corsHeaders']` to `{ corsHeaders: 'src/lib/cors.ts' }`, before
+  0.10.0 ships, so no released app wrote the list. Decided:
+    - **What a pin matches** (`pinsOf`, computed when the facts are, so `gateHolds` stays a pure check): the import's
+      specifier when it is not relative and resolves from the app's directory to the same file (packages and aliases;
+      a nearer `node_modules` cannot swap the module); and the app-relative path of the file it resolves to and of the
+      file that declares the export. Both the resolved and the declaring file are accepted: a barrel is a module the
+      reason can name, as a package is, and the declaring file is where the value is written.
+    - **A path carries its extension.** `'src/lib/cors.ts'`, never `'src/lib/cors'` or `'src/seed'` for an `index.ts`:
+      a pin names one file, and the failure prints the exact path to copy. Rejected: matching an extensionless path,
+      which would be a second resolution with its own corner cases (`cors.ts` beside `cors/index.ts`).
+    - **Never a pin:** a relative specifier (another module from each file), a path with `.` or `..`, a leading `/` or
+      `./`, a file through a `node_modules` or outside the app (named by its specifier instead). `isGate` refuses the
+      malformed ones with an entry problem that shows the format.
+    - **Both sides fail.** A read importing a listed name from another module fails, and the entry gets a problem
+      naming both modules; the old "more than one module among governed reads" check is gone, since the pin is stricter.
+    - The apps' entries: the starter pins its seed reads to `src/seed/index.ts` and `listAllPeople` to
+      `@sssb/kit/adapters/fake/auth`; the showcase pins `@app/seed`, `@sssb/kit/theme`, the fake auth adapter and
+      `src/app-config/actors.ts`.
+- **Docs.** The pages changeset now shows both entries an app from an earlier generator needs (its layouts' seed reads
+  and its sign-in page, pinned), checked by scanning the reviewer's 0.9.1-generated app with them (0 failures,
+  0 problems), and repeats the may-reach limit beside its self-only advice (Z8). The reads changeset names
+  `withStandardWebhookSignature` (Z9); `/sssb:pre-pr` looks for a read, page or Server Action without `authorize`;
+  `judgeServerAction`'s message names the always-rethrow exception the guide has.
+- **Proofs.** `route-scan.test.ts` ("the page shapes the authorization review found failing") and
+  `app-exemptions.test.ts` (the pin's matching rules, a nearer `node_modules`, the malformed formats, a page handing on
+  an unauthorized action that still fails as an action). Each new guard was mutated and seen red: each of the two
+  allow-list entries, and putting `headers` and `cookies` back; the attribute-value test and its attribute parent; the
+  `src`, `node_modules`, prologue, body and missing-export checks of the action test, and the raw-text directive match;
+  the reads-nothing order (and narrowing it to reads); the pin check (ignored, `some` for `every`, an unplaced source
+  passing, an inherited key, in the gate and in the entry's problem); each source of a pin (the specifier resolved from
+  the app and from the file, an unresolved one, one spelled as an app file's path, a `node_modules` path, the resolved
+  file, and the declaring file under the listed name); each of `isGate`'s and `isPin`'s refusals; and the entry's pin
+  and unused-name problems. Five checks that turned out equivalent were dropped rather than kept untested, each
+  because another check already refuses what it would: `isGate`'s refusal of an array of names (an array's keys are
+  never identifiers), `isPin`'s refusals of an empty pin and of a leading `/` (each has an empty segment), and
+  `pinsOf`'s refusals of a relative and of an absolute specifier as a specifier pin (no pin with a `.`, `..` or empty
+  segment can be written to match one).
+- **Review round (an Opus round and a Fable pass, no realistic bypass), fixed here:**
+    - The declaring-file pin ignored which export it was: a barrel's `export { secretRows as corsHeaders } from './cors'`
+      (or the import-then-export form) passed `names: { corsHeaders: 'src/lib/cors.ts' }`. `declaringBinding` now
+      returns the name at the end of the re-export chain, and the declaring file answers only when it is the name
+      listed; a plain re-export and the file's own local rename still hold.
+    - An escaped directive, `'use\x20server'`, counted for the by-reference check (the AST's value) while the Server
+      Action walk's text pre-filter skipped the file, so a page could hand on an action nobody judged. Directives are now
+      matched by their raw source text everywhere (`'use client'` too), as ECMAScript matches `'use strict'`, and the
+      pre-filter agrees.
+    - Specifier and path pins shared one namespace: with `paths: { "src/*": ["./evil/*"] }`, the specifier
+      `'src/lib/cors.ts'` answered to the path pin of the real file. A string that is the path of a file in the app is
+      now a path pin only.
+    - An unresolved bare specifier answered to its own text (`undefined === undefined`); a specifier pin now requires it
+      to resolve.
+    - Two mutants had survived: the under-`src` check (its tests' apps had no `src`, so a missing directory refused the
+      action) and the attribute-parent check (no JSX-child case). Both have cases now.
+- **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
+  gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
+  filed separately.
+
+## The keyless guard refuses what Clerk leaves open, and no more (2026-11-27, `fix/review-keyless-guard`)
+
+Finding A3 of the whole-branch review of `int-fixes`, against safeinsights/sssb#193's fix (the entry "The Clerk adapter:
+one read per render, the keyless fallback closed, a client sign-out"). That cut refused the adapter in every process that
+was not a production Next build, before every session read and every Backend API call, so a plain `node` process (an
+adopter's CodeBuild job program, an ops script, the auth contract suite) threw "...wherever real mode runs under next
+dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMembers`, would have failed on upgrade.
+
+- **The rule is now Clerk's own two conditions, re-read in @clerk/nextjs 7.10** (`decryptClerkRequestData`,
+  `canUseKeyless`, `createAuthOptions`): the keyless key is Clerk's FIRST key only when neither `CLERK_ENCRYPTION_KEY` nor
+  `CLERK_SECRET_KEY` is set (the dummy key when `NODE_ENV` is not `production`, an empty passphrase in a production
+  build, which a forger has just as well); it is the FALLBACK, after the real key fails, only when
+  `NODE_ENV` is `development`, it is not CI, and the disable flag is unset. And a forged token is checked against
+  `CLERK_SECRET_KEY`, empty when unset, in every `NODE_ENV`. So the guard refuses when `CLERK_SECRET_KEY` is unset, and when
+  `NODE_ENV` is `development` and the flag is not `1` or `true`; a process with the secret key set and `NODE_ENV` unset,
+  `test` or `production` is let through, and the real-Clerk test shows Clerk itself refuses a forgery there (it fails to
+  decrypt). Stricter than Clerk in one place on purpose, as before: it ignores the CI exemption.
+- **A missing secret key is refused in production too**, which the review's wording left out ("outside production").
+  A production process with no key checks a forged token against an empty key (shown against real Clerk in the same
+  test), `assertRealEnv` already refuses to boot without the key, and no process that calls Clerk can work without it, so
+  nothing legitimate loses. Rejected: refusing only outside production, which would leave that one case to boot alone.
+- **`check-real-env` reports it two ways.** `assertRealEnv` now throws the guard's problem as a cutover item on `auth-dev`
+  (so `createRealPorts` stops at boot too, instead of failing every request), which sees the process's own `NODE_ENV`; and
+  `realEnvNotices` prints what `next dev` would do with the environment when this process is not `next dev` (the preflight
+  of `dev:real` runs before it, with no `NODE_ENV=development`), computed by the guard itself with `NODE_ENV`
+  `development`, so the two cannot disagree. A notice, not a failure: an adopter who sets the flag only on `next dev` is
+  right, if less helped. The showcase's `dev:real` now exports the flag first, so the notice stays quiet there. Rejected:
+  forcing `NODE_ENV=development` in the preflight, which would fail every script that follows the earlier changeset's
+  advice to set the flag on `next dev` alone.
+- **Considered in review, and not done.** (1) Refusing when the RUNTIME `NODE_ENV` says `development` as well as the
+  inlined one, against the case where an adopter puts `@clerk/nextjs` in `serverExternalPackages` (so Clerk reads the
+  runtime value) and runs a production build with `NODE_ENV=development` preset. It needs two unusual choices at once, and
+  would refuse every request of a production build merely started with a preset `NODE_ENV=development` (Clerk's bundled
+  copy is inlined as `production` there and safe): the outage class finding A3 was about, for the opposite combination.
+  The literal reads, which agree with the bundled Clerk, are pinned by a source assertion because no run can tell them
+  from the whole-environment read. (2) Validating the secret key's shape (`sk_live_…`): it would refuse only a deployment
+  already broken (every Backend API call and sign-in fails), and a format check can refuse a legitimate key. (3) A notice
+  from a preflight run with `NODE_ENV=production` that is then followed by `next dev`: it fails closed on the first
+  request, and a production-looking preflight is not the `dev:real` this notice speaks for.
+
+## A drain lists for half its window; a retry that may have started is left to the sweep (2026-11-28, `fix/review-drains-and-retry-start`)
+
+Two findings of the whole-branch review of `int-fixes` before 0.10.0, both where #217's bounded drains, #238's retries
+and #248/#268's CodeBuild sweep meet.
+
+- **J1 (HIGH): past a tenant count, a drain started nothing, every tick.** `drainFairly` listed every tenant (one
+  `withTenant` each, even a tenant with nothing due) before it ran any row, and both phases shared one deadline. Once
+  listing every tenant took longer than what was left of the window, the drain listed until the deadline and started
+  nothing, every tick, with `stoppedBy: 'time'` the only sign. The reviewer's case: 1,000 tenants at 5 ms a listing, the
+  schedules' drain starting 2 s into its 6 s window, listed 800 and ran 0. 0.9.1's unbounded drains made progress for
+  the same deployment.
+    - **The fix, for this release:** under a deadline the drain works in passes over one shuffled order. Each pass
+      lists for at most `LISTING_SHARE` (half) of what is left of the window, then runs what it listed; a pass that
+      finishes its rows with time to spare lists on from where the last stopped. `maxItems` counts across the passes.
+      The tenants are still shuffled afresh each tick, so the ones a tick does not reach are a different random set each
+      time: every tenant with due work is reached in time, though at a large enough count not every tick.
+    - **The full fix is next release's:** the due hints of safeinsights/sssb#202 (PR #263, held for after 0.10.0) list
+      only the tenants with work due, which removes the per-tenant listing cost instead of rationing it.
+    - Rejected: interleaving listing and running (list a tenant, run its first row, and so on), which is the larger
+      change to the fairness argument #217 rests on (one shuffled order for listing and turns), too late for this
+      release; and a fixed number of tenants listed per tick, which needs a per-transport cost the drain cannot know.
+    - **Why passes:** review found that the first version, one listing share and no second pass, made a mid-sized
+      drain worse: one that finished its listed rows early left the window unused and the rest of its tenants unlisted,
+      which the old code would have reached (the reviewer's probe: 100 tenants at 10 ms, 75 listed, 675 ms unused).
+    - Accepted: a pass's turns go round only the tenants it listed, so a tenant reached by a later pass takes its turns
+      after the earlier pass's tenants; the shuffle decides which pass a tenant falls in, so no tenant is favoured across
+      ticks.
+- **J3 (MEDIUM): a retry whose StartBuild may have started a build was failed at once.** `startRetry`'s catch failed
+  the attempt on any error from `start`, which armed the next attempt. The CodeBuild adapter treats a non-client fault
+  (a timeout, a server fault) as one that may have started a build and leaves the row `starting` for the sweep;
+  `submitJob` and a schedule's spawn honour that (neither catches), a retry did not. A build that had started then ran
+  beside the next attempt, its `completed` webhook met a failed row (409) and its result was dropped, and on the last
+  attempt the job was notified failed though it had succeeded.
+    - **The fix:** `start`'s error says so. The CodeBuild adapter marks a non-client fault `mayHaveStarted: true`
+      (`markMayHaveStarted`), and `startRetry`, on such an error from a port with a `startingRef` and a `sweep`, leaves
+      the claimed
+      row as the claim wrote it (queued, `starting`, no `run_after`) and notifies nothing; the sweep fails it after the
+      hour (`CODEBUILD_STARTING_LOST_AFTER_MS`), which arms the next attempt then. The helper `mayHaveStarted` is in
+      `ports/jobs.ts`, and `JobsPort.start`'s doc states the contract.
+    - The `startingRef` and `sweep` condition: a port without both has nothing that judges a row left as it is (a
+      CodeBuild port built by the public `createRealPorts` without its `failLostJob` hook, has no sweep), so its marked error
+      still fails the attempt, rather than leave a row nothing will ever look at. Review found the first version checked
+      only `startingRef`.
+    - Rejected: reading the row's `runner_ref` after the failure (`refused` versus still `starting`) to tell the two
+      apart, which works for CodeBuild only by its storage convention and takes a `refused` whose own write failed for
+      an unsure start.
+    - The drain still counts such a retry in `failed` (it did not start, as far as anyone knows).
+- **Proofs.**
+    - `db/drain-budget.test.ts`: the review's shape (1,000 tenants at 5 ms, the drain 2 s into a 6 s window, 50 ms a
+      row) lists 400 and runs 40; the reviewer's probe (100 tenants at 10 ms) lists and runs all 100; `maxItems` counts
+      across passes; listing stops at its share and the rest runs; a drain begun past its deadline lists nothing.
+    - `db/job-retries.test.ts`: a marked error from a port with a starting ref leaves the retry `starting`, unfailed and
+      unnotified; from a port with no starting ref, or with no sweep, it fails the attempt and arms the next.
+    - `adapters/real/jobs.test.ts`, against the fake CodeBuild: a server fault on a retry's StartBuild leaves it
+      `starting` with no next attempt, the sweep leaves it alone at 30 minutes and fails it after the hour, arming
+      attempt 3; a client fault fails it at once.
+    - Removing the listing share, the second pass, the count across passes, the leave-it branch, its `startingRef` or
+      its `sweep` condition, or the adapter's mark each turns the named tests red.
+- **Review.** One Opus round: the MEDIUM (passes) and the LOW (the `sweep` condition) above, both fixed. Then a claims
+  pass. The release-notes findings J8 (the schedules' window stated as 8 s) and J2 (a paused cluster's first tick) are
+  fixed in `bounded-tick-drains.md` and `job-retries.md` on the same branch.
+
+## The due hints beside 0.10.0's listing share (2026-11-28, `fix/tick-listing` onto `int-followups`)
+
+`fix/tick-listing` (safeinsights/sssb#202, PR #263) was held for after 0.10.0, and is now merged onto `int-followups`,
+cut from the release. 0.10.0 brought three things it meets: the drains' listing share and passes (#287's J1 fix, "A
+drain lists for half its window" above), the sweep's own window (#268), and migrations 0019 to 0021.
+
+- **The hints sit beside the listing share; `LISTING_SHARE` stays.** The two answer different costs. The hints decide
+  which tenants a tick's drain lists: only those whose hint has come, so an idle tenant costs nothing. The share decides
+  how long a drain may spend listing the ones it does list: at most half of what is left of its window per pass, so the
+  drain always runs something. The share is still needed in two cases the hints do not cover: the first tick after
+  migration 0022, which has no hints and lists every tenant once; and a tick where many tenants really do have work due,
+  each still a listing of its own. `drainFairly` keeps #287's passes, and hands a tenant listed with nothing due to
+  `listedNothing` (the hint's raise) in whichever pass lists it.
+    - Rejected: dropping the share now that the hints exist, which would bring back J1's cliff on those two kinds of
+      tick.
+- **The sweep is unchanged by the hints.** It runs first, in its own 2 s window (#268), and lists tenants with no
+  hints, as the decision above said ("The sweep is unchanged (#252)", now bounded by #252's fix). The hints are the
+  drains' only.
+- **Migrations.** 0.10.0 ships 0019 to 0021; `0022_due_hints` follows them unchanged, and `migrations/index.ts`
+  registers it last. Its jobs trigger already watched `run_after`, which 0019 added.
+- **J3's retry left `starting`** (#287) does not lower a hint: the retry claim clears `run_after`, which makes the row
+  less due, not more, so the trigger does not fire.
+- **Merge mechanics.** `drain-budget.ts` (the passes and the hints' `listOne` shape, `{ rows, nextDue }`), `jobs.ts`
+  (both imports) and the module count in `adopting-reference.md` (99 on `int-followups`, plus `due-hints.ts` and the `0022` migration: 101)
+  conflicted. #287's drain tests now return `{ rows }`.

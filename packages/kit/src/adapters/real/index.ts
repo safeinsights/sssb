@@ -13,7 +13,9 @@ import { authRequiredEnv, authSettings, fixedOrgProblem } from '../auth-tenancy'
 import { configuredAuth } from '../configured-auth'
 import { orgNameForSlugs } from '../../db/org-lookup'
 import { clerkIdentitySource, realAuth } from './auth'
+import { assertEdgeSettings } from '../edge-headers'
 import { clerkAuthorizedParties } from './clerk-authorized-parties'
+import { clerkKeylessProblem, currentClerkKeylessProblem } from './clerk-keyless'
 import {
     DATABASE_ENV,
     databaseResumeBudgetMs,
@@ -115,6 +117,17 @@ export function assertRealEnv(): void {
     } catch (error) {
         throw new CutoverPendingError(['auth-dev'], (error as Error).message)
     }
+    // What the Clerk adapter itself refuses (./clerk-keyless.ts: no secret key, or NODE_ENV=development without
+    // NEXT_PUBLIC_CLERK_KEYLESS_DISABLED), so that it is said here, before the server starts, and not on every request.
+    const keyless = currentClerkKeylessProblem()
+    if (keyless) throw new CutoverPendingError(['auth-dev'], keyless)
+    // The app's public origin and the edge switch, both optional (../edge-headers.ts): `publicOrigin` refuses a
+    // malformed one when first called, which would be the first link a visitor needs; this refuses it at boot.
+    try {
+        assertEdgeSettings(process.env)
+    } catch (error) {
+        throw new CutoverPendingError(['domains-and-certs'], (error as Error).message)
+    }
 }
 
 /**
@@ -126,6 +139,10 @@ export function assertRealEnv(): void {
  *   read from the environment this command runs in, so it speaks for the server only when that is the server's.
  * - A variable spelled like it and not it (`CLERK_AUTHORISED_PARTIES`): it does nothing, though a value looks set (on
  *   Windows, where the environment ignores case, the same name in another case is the variable itself, so not this).
+ * - What `next dev` would do with this environment, when this process is not it: `next dev` sets NODE_ENV=development,
+ *   and the Clerk adapter then refuses every request unless NEXT_PUBLIC_CLERK_KEYLESS_DISABLED is set on that process
+ *   (./clerk-keyless.ts). The preflight of `dev:real` runs before `next dev` does, with no NODE_ENV of its own, so
+ *   `assertRealEnv` cannot see it (safeinsights/sssb#222's review, A3).
  *
  * safeinsights/sssb#192. The environment is a parameter for the test's sake.
  */
@@ -137,6 +154,14 @@ export function realEnvNotices(env: Readonly<Record<string, string | undefined>>
             `${NAME} is unset: this server accepts a Clerk session token minted for any origin, not only its own ` +
                 '(cutover row auth-dev). Set it on the server to the origins it is served from.',
         )
+    }
+    if (env['NODE_ENV'] !== 'production' && env['NODE_ENV'] !== 'development') {
+        const underDev = clerkKeylessProblem({ ...env, NODE_ENV: 'development' })
+        if (underDev) {
+            notices.push(
+                `under next dev (which sets NODE_ENV=development) the Clerk adapter would refuse every request: ${underDev}.`,
+            )
+        }
     }
     // `CLERK_AUTHORISED_PARTIES` and its like: every variable that starts the way the name does and is not it.
     for (const name of Object.keys(env).sort()) {

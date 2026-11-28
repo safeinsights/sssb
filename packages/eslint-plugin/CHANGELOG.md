@@ -1,5 +1,88 @@
 # @sssb/eslint-plugin
 
+## 0.10.0
+
+### Patch Changes
+
+- 71cafa0: ### A reused pid no longer keeps a stale dev-ticker marker alive, and the vendor ban reads its list one way
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The dev ticker's marker (`dev-ticker.json`) now carries a token for the start of the process that wrote it, and is stale, ignored and cleared, when the process now at its pid has another one (a wrapper killed with SIGKILL leaves the marker, and the OS may give its pid to an unrelated process, which made the e2e configs refuse to load until the file was deleted by hand); the token is the kernel's record of the start, not a date, so a wall clock stepped later does not make a live ticker's marker stale, and a marker that cannot be judged (no token, Windows, no `ps`) stays live as before. `@sssb/tools/ticker-marker` also exports `processStartToken`. In `@sssb/eslint-plugin`, the vendor ban's two halves (`sssb/no-vendor-import` and `sssb/no-dynamic-vendor-import`) now read one list through one matcher, with its bare names anchored: a local `./pg` or `some/dir/pg` is no longer a vendor SDK to either half (it was to the declaration half), and a vendor specifier is matched without regard to case in both (`@CLERK/nextjs` was a vendor to the declaration half only). An app's own bare `sssb.vendors` entries are anchored the same way.
+
+    **Now deletable.** A hand-deleted `dev-ticker.json` after a killed ticker, and an `eslint-disable` for the vendor ban on a local file named like a vendor SDK.
+
+## 0.9.1
+
+No changes in this release.
+
+## 0.9.0
+
+### Minor Changes
+
+- 7fdb607: ### `publicOrigin` and `clientAddress`, and a lint rule against reading the raw request
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** A new subpath, `@sssb/kit/adapters/edge-headers`, gives an app the visitor's origin
+    (`publicOrigin(request)`) and address (`clientAddress(request)`). Behind `SssbApp`, `request.url` and `nextUrl` name the
+    server's own bind address and port (3000), never the visitor's host, and the first `X-Forwarded-For` entry is whatever the visitor
+    wrote. A new rule in the app preset, `sssb/no-raw-request-origin`, fails a module under `src/` (tests aside) that:
+
+    - reads a forwarded header by name from a request's headers (`request.headers.get('x-forwarded-for')`, `X-Real-IP`,
+      `CF-Connecting-IP`, `Forwarded`, `Host`, the other `X-Forwarded-*`);
+    - takes the `origin`, `host`, `hostname` or `href` of `new URL(request.url)` or of `request.nextUrl`, by member or
+      destructuring;
+    - builds `new URL(path, request.url)` (or on `request.nextUrl`), a redirect included, except in the app's own
+      `src/proxy.ts` (or `src/middleware.ts`), where Next relativizes a same-origin redirect or rewrite and nowhere else: a
+      route handler's `NextResponse.redirect(new URL('/en/dashboard', request.url))` sends the visitor to the server's bind
+      address;
+    - passes `baseUrl: request.url`.
+
+    "The request" is an object named `req`, `request` or `nextRequest` (with or without a leading `_`), or a `.req` or
+    `.request` member (`ctx.request`): the `url` of a webhook, a row or a form field is someone else's, and reading its
+    origin is correct code. The rule reads names, not types, so a request held under another name gets past it, as does
+    the request's URL stored in a variable and used later, or a `request.nextUrl.clone()` handed to a redirect
+    (safeinsights/sssb#242).
+
+    **To adopt.** Run `pnpm lint` after upgrading. For each finding:
+
+    ```ts
+    import { clientAddress, publicOrigin } from '@sssb/kit/adapters/edge-headers'
+
+    // A link a visitor follows: an email, a URL you store.
+    const link = new URL(`/${locale}/accept-invite`, publicOrigin(request)).toString()
+
+    // A rate limit, a lockout, an audit record's "from". undefined means unknown: never a free pass.
+    const from = clientAddress(request)
+    ```
+
+    A redirect needs neither: `redirect('/path')` (from `next/navigation`) and a relative `Location` are right as they are; in
+    a route handler, write `NextResponse.redirect(new URL('/en/dashboard', publicOrigin(request)))`. Reading `pathname` or
+    `searchParams` from the request's URL is still allowed. Outside a request (a job), `publicOrigin()` needs the server's
+    `PUBLIC_ORIGIN` (the operator entry of this release). In `pnpm dev`, `publicOrigin` is the dev server's own origin and
+    `clientAddress` is `undefined`.
+
+    **Now deletable.** A helper that builds the app's origin from `x-forwarded-host` and `x-forwarded-proto`, or from
+    `request.url`; one that takes the client's address from `X-Forwarded-For`, `X-Real-IP` or `CF-Connecting-IP`; and a
+    `baseUrl: request.url` passed to `sendOrgInvite` or `applyDemoPreset` (pass `publicOrigin(request)`).
+
+### Patch Changes
+
+- 0b7bafd: ### `sssb/no-raw-request-origin` counts only the request's own URL
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The rule new in this release no longer reads every `.url` or `.nextUrl` as the request's: in its URL
+    forms the object must be named like the request (`req`, `request`, `nextRequest`, or a `.req` or `.request` member), so
+    `new URL(body.url).hostname`, `new URL(path, upstream.url)` and `baseUrl: config.url` pass, as the correct code they are.
+
 ## 0.8.0
 
 No changes in this release.

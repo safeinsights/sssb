@@ -30,8 +30,8 @@ as one HTML file you can open without cloning.
 
 `pnpm dev` starts your app seeded and offline, with no accounts. It serves on port 3700, its own port slot (`ACME_PORT`
 overrides it). Sign in as any seeded person from the picker. In development the app carries SSSB's Simulator panel:
-People (become anyone), Mail (every email the app sent) and Jobs (background work, and a world clock you can move
-forward). `pnpm build:demo-static` builds the same app as one HTML file, `apps/<app>/dist-demo/index.html`, that runs
+People (become anyone), Mail (every email the app sent), Jobs (background work, and a world clock you can move
+forward), Messages, Events, Hooks, Errors and Snapshots (reset the world, save and restore it, flip a feature flag). `pnpm build:demo-static` builds the same app as one HTML file, `apps/<app>/dist-demo/index.html`, that runs
 from disk with no server.
 
 Then create the repository on GitHub (the `--repo` you named), add it as `origin` and push. Make the settings only you

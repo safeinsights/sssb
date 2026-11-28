@@ -1,5 +1,980 @@
 # @sssb/kit
 
+## 0.10.0
+
+### Minor Changes
+
+- 7a05f2d: ### A reads-only gate for public and inert reads
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** An app's `authz-exemptions.mjs` takes a new gate kind,
+    `{ kind: 'reads-only', names: { <exported name>: '<module>' } }`, for a read (GET, HEAD or OPTIONS) that names nothing
+    from outside itself but inert values and the listed imports, each by its exported name and from the module the entry
+    pins it to; a value of the route's own file cannot be listed (import it from a module instead). The pin is the
+    module: the specifier the import writes when it is not relative (`'next/headers'`, `'@acme/ui'`,
+    `'@sssb/kit/adapters/fake/auth'`, or an alias such as `'@/lib/cors'`) and resolves, from the app's directory and from
+    the importing file to the same file; or the path from the app's directory, with its extension, of the file the import
+    resolves to or of the file that declares the name under that name (`'src/lib/cors.ts'`; a barrel's
+    `export { rows as corsHeaders }` makes it the barrel's). A pin that is the path of a file in the app is only a path,
+    never matched as a specifier. A read that imports a listed name from any other module fails, and so does
+    the entry, naming both modules: a reason written for one module does not cover another's export of the same name. Such an entry applies to
+    reads only: a mutation at its path keeps the gate it had. It is the one kind an app may put outside `src/app/api`,
+    under a new key `outsideApi: { files, prefixes }` with keys relative to `src/app` (a public feed, a sitemap route), or
+    name one file under SSSB's `webhooks/` prefix (a provider's verification handshake GET, whose POST stays behind the
+    webhook guard). It is stale where its path has no read handler, or where it lists a name no read there uses. An
+    exemption key may now name a dynamic segment (`[locale]`) literally.
+
+    **Also changed: the path is the URL.** The check matches a route by the URL Next serves it at, so a route group's
+    `(name)` and a parallel route's `@slot` segment are dropped from the path exemptions and required gates are matched
+    against, and from an exemption key. Before, `src/app/api/(internal)/service/x/route.ts`, served at `/api/service/x`,
+    escaped the `service/` gate, and a route under `src/app/(app)/api/` read as one outside `src/app/api`. A route under an
+    intercepting segment (`(.)x`, `(..)x`, `(...)x`) now fails outright, since Next also serves it at the URL it intercepts.
+    An app with such a route may now fail where it passed, and so may an exemption keyed by its written path: a key is
+    matched by URL too, so `'(public)/'` (only a group) is refused, and `'(g)/webhooks/partner/route.ts'` now overlaps the
+    framework's `webhooks/` entry. In the other direction, a framework exemption and an app key now reach a route in a
+    group or slot at the same URL, and a key may name a dynamic segment (`items/[id]/route.ts`) for every gate kind. A
+    listed name is an import by its exported name: a default import cannot be listed, and every read one entry covers
+    imports each listed name from the module it pins.
+
+    **To adopt.** Run the conformance suite (`pnpm test:unit`): a route in a route group or slot under `src/app/api` that
+    it now names is judged as its URL is (a `service/` route must be wrapped by `withServiceCaller`, as at any other path
+    there), and an exemption key written with a group is matched without it (name the URL path).
+    For a read that the check refuses and that reads no org-scoped data, name what it reads:
+
+    ```js
+    export default {
+        files: {
+            'cors/route.ts': {
+                reason: 'CORS preflight: answers with the constant headers object from src/lib/cors.ts, nothing else',
+                mustMatch: { kind: 'reads-only', names: { corsHeaders: 'src/lib/cors.ts' } },
+            },
+        },
+        outsideApi: {
+            files: {
+                'feed.xml/route.ts': {
+                    reason: 'the public feed: published posts only, readable by anyone',
+                    mustMatch: { kind: 'reads-only', names: { publicPosts: 'src/domain/public-posts.ts' } },
+                },
+            },
+        },
+    }
+    ```
+
+    **Now deletable.** A helper invented only to hang a `calls` gate on a read that reads nothing org-scoped.
+
+- 8b90b12: ### The authorization check judges pages, layouts and metadata routes as reads
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** The conformance suite's `authz-mutations` check (its id unchanged; its title and its second test now
+    name pages) reads every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `global-not-found`,
+    `forbidden` and `unauthorized` file under `src/app`, and every metadata route (`sitemap`, `robots`, `manifest`,
+    `opengraph-image`, `twitter-image`, `icon`, `apple-icon`), with the route extensions. Each one's `default`,
+    `generateMetadata`, `generateImageMetadata`, `generateSitemaps` and `generateViewport` export is judged as a read
+    route handler is: it reaches `authorize(...)`, reads nothing, or passes an app entry's `reads-only` gate. A page that
+    reads org-scoped data without authorizing now fails, as a route already did: a page that called `auth.listMembers`
+    with no `authorize` showed a person with the role `none` the team's member names.
+
+    What the check newly **accepts**, in a page only (a route is judged as before):
+
+    - the session through `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()` and
+      `auth.listMyOrgs()` (`@sssb/kit/adapters/index`), each called;
+    - `setRequestLocale`, `getTranslations`, `getMessages` and `getLocale` (`next-intl/server`), `hasLocale` and
+      `useTranslations` (`next-intl`), `use` (`react`: next-intl's sync page, `const { locale } = use(params)`; `use` only
+      unwraps what it is handed, and that value's names are judged), `routing.locales` (`@sssb/kit/i18n/routing`),
+      `canInActiveOrg` (`@sssb/kit/authz/authorize`), `isDemoMode` (`@sssb/kit/adapters/index`), `sameOriginPath`
+      (`@sssb/kit/core/same-origin-path`), `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`),
+      each a named import under its exported name;
+    - a default import of a static asset (a `.css`, `.module.css` or `.scss` stylesheet, a `.png`, `.jpg`, `.jpeg`, `.gif`,
+      `.svg`, `.webp`, `.avif` or `.ico` image) used as a value, only by a relative specifier (`./`, `../`) or a tsconfig
+      `paths` alias, with no `?` or `#`, whose literal file exists with one of those extensions, and which TypeScript's
+      resolution does not land on code or on a declaration other than the asset's own sibling `.d.<ext>.ts`
+      (`allowArbitraryExtensions`);
+    - an imported component used only as a JSX tag (by a named, default or namespace import) declared in a client module
+      (the module that declares it, followed through a barrel's re-exports, opens with `'use client'`), in an installed
+      package (its file's real path runs through a `node_modules` whose parent is the app's directory or an ancestor of it,
+      and through no pnpm `file:` or `link:` dependency) or in `@sssb/kit` (its real package directory, as the app resolves
+      it, unless the app is inside it);
+    - an imported Server Action handed on by reference, the whole value of a JSX attribute (`<form action={saveItem}>`,
+      `<Form action={saveItem} />`, `formAction={…}`), by a named or default import, when the module that declares it
+      (followed through a barrel's re-exports) is a file under `src` whose prologue is `'use server'`, or the exported
+      function's own body opens with `'use server'` (written as such: an escaped `'use\x20server'`, which is no directive,
+      is neither an action nor accepted here). A component it is handed to may call it, even during the render; that is safe
+      because the check judges the action itself, as the POST it is, which must reach `authorize` on its own path (any
+      reachable `authorize` counts, the limit below). Called from the page, used any other way (`saveItem.bind(…)`, inside
+      an array or a spread), or declared outside `src` or in a package, it is counted; so is any other import handed on as a
+      prop;
+    - a component of the page's own file used only as a JSX tag (a function declared once and never reassigned, or a
+      `const` bound to a function), whose code is read as part of the page;
+    - `const { Form } = await import('…')`, alone or as one element of an awaited global `Promise.all([...])` destructured
+      the same way, when every name it binds is used only as a JSX tag and the component is a client one or a package's (the
+      guide's shape for a real adapter's component);
+    - a `reads-only` entry under `outsideApi.files` keyed by a page, layout or metadata route file (`[locale]/signin/page.tsx`),
+      not only a `route.*`; and an existing `outsideApi.prefixes` entry now covers the pages under it as well as the routes;
+    - a `'use client'` component file, or a page re-exporting a client component, which is skipped (a metadata route is
+      judged whatever its prologue);
+    - a page under an intercepting segment (`(.)x`, Next's modal pattern) that authorizes or reads nothing;
+    - **for routes too:** a route or page in a private folder (a segment starting with `_`, which Next does not route) is no
+      longer read or judged, so a `route.ts` under `src/app/_lib/` that failed before now passes unread (Next never serves
+      it). A Server Action there is still judged.
+
+    What it newly **refuses**:
+
+    - a page's export that names anything else and does not reach `authorize(...)`: the seed, the simulated world, a port, a
+      data helper, `db`, `analytics`, `next/og`'s `ImageResponse`, `headers` and `cookies` (`next/headers`: the request's
+      headers carry its Cookie and Authorization, the session's credential, which a page could render into its HTML; a page
+      that reads them names them in its entry, `names: { headers: 'next/headers' }`, with a reason), a value of the page's
+      own file (a module-level `const LINKS = [...]` included: code of the file can change it, so no entry can list it;
+      write it inline where the page uses it, or move it into a module and list the import in the page's entry, and a
+      `const` bound to a primitive literal is already inert), a component passed as a value or called, and a server
+      component of your own (a module without `'use client'`, in the app or in a workspace package, linked into
+      `node_modules` or reached by a path or an alias, which may load its own data) rendered as a tag or loaded with
+      `import()`: its name is counted, so the page authorizes or an entry lists it; and a default import whose specifier
+      only looks like an asset (`'./members.css'` beside a `members.css.ts`, `'./x.css?inline'`, a file that does not exist)
+      or is bare (`'some-ui/styles.css'`, a `baseUrl` path, a package's self-reference or `imports`, a bundler alias): none
+      is an asset here, so each is refused as any default import is; and a component in a `node_modules` folder below the
+      app's root (under its `src`) or in a pnpm `file:` or `link:` dependency, which is the adopter's own code, unless it is
+      a client one;
+    - `auth` (and `routing`) used any other way, whatever an entry lists: another member (`auth.listMembers`,
+      `auth.getMember`, `routing.defaultLocale`), the object passed along, aliased, spread, destructured, read by a
+      computed key, rendered as a tag (`<auth.listMembers />`) or reached through a namespace or `import()`, a listed method
+      that is not called, and an `auth` or `routing` imported from any other module (an app's re-export included);
+    - any other `import()` (a module object, a renamed, defaulted or rest binding, a non-literal specifier, a second
+      argument, a `let`, a `Promise.all` that is not the global, not awaited or given more than one argument) and a loaded
+      name used other than as a JSX tag;
+    - any exemption for a page under an intercepting segment: it authorizes or reads nothing;
+    - an app entry of any gate kind but `reads-only` for a page, even under `src/app/api`; and a page under
+      `src/app/api/service/` that is not wrapped by `withServiceCaller`;
+    - a `pages` or `src/pages` directory (the Pages Router), where before only `pages/api` failed, and a file named for a
+      page, layout or metadata route with one extension the check does not read (`page.mts`, `page.cts`, `layout.cjs`,
+      `page.mdx`, `default.md`); a file with a middle segment (`page.css.ts`, `layout.styles.ts`) is a module of its own;
+    - a `next.config.*` that sets `pageExtensions` at all (read with the TypeScript parser: a comment does not count), since
+      the check reads no custom extension: leave it at Next's default.
+
+    Pages are matched by URL as routes are, so a route group's layout and its parent layout share one key
+    (`[locale]/layout.tsx`): one entry covers both, each judged on its own. The generated app ships an
+    `authz-exemptions.mjs` naming its two layouts' seed reads (`tenants`, `findTenant`) and its sign-in page's
+    simulated-mode picker (`listAllPeople`, `findTenant`), each pinned to the module it comes from.
+
+    **To adopt.** Run the conformance suite (`pnpm test:unit`). For each page it names:
+
+    - if the page reads org-scoped data, authorize the read in the page before it, as a route does:
+      `authorize(user, user.orgSlug, 'read', { type: 'Membership', orgId: user.orgSlug })` before `auth.listMembers`, or
+      your own subject before your own query; a read of the caller's own records authorizes its self-only subject
+      (`{ type: 'AgreementAcceptance', ownerId: user.id }`). The check proves the page can reach an `authorize`, not that
+      it is the right one: any reachable `authorize` satisfies it, so authorize the subject the page reads, and a
+      self-only `authorize` does not cover an org read that follows it;
+    - if it names a server component of your own, mark it `'use client'` if it is one, or, since it may load its own data,
+      load in the page instead, authorize there, and pass the rows: the check cannot see into a component;
+    - if it reads nothing org-scoped (the seed, a public list), name it in `authz-exemptions.mjs` beside your
+      `package.json`:
+
+    ```js
+    export default {
+        outsideApi: {
+            files: {
+                // The locale layout and the (protected) group's layout share this URL, so one entry covers both.
+                '[locale]/layout.tsx': {
+                    reason:
+                        "the seed's tenants, the instance's own list, not an org's data: the locale layout's theme " +
+                        "fallback (tenants) and the signed-in header's tenant name (findTenant)",
+                    mustMatch: {
+                        kind: 'reads-only',
+                        names: { findTenant: 'src/seed/index.ts', tenants: 'src/seed/index.ts' },
+                    },
+                },
+                '[locale]/signin/page.tsx': {
+                    reason: "signed out by definition: the simulated-mode picker lists the simulated world's people",
+                    mustMatch: {
+                        kind: 'reads-only',
+                        names: { findTenant: 'src/seed/index.ts', listAllPeople: '@sssb/kit/adapters/fake/auth' },
+                    },
+                },
+            },
+        },
+    }
+    ```
+
+    If your app came from an earlier generator, these two entries are what its layouts and sign-in page need (the same
+    as the generated app's `authz-exemptions.mjs` in SSSB's `apps/starter` at this release); if you moved the seed, pin
+    the file you moved it to. Two keys for one URL (`[locale]/layout.tsx` and `[locale]/(protected)/layout.tsx`) are both
+    refused: write the one.
+
+    An app that cannot fix every page at once may leave the check out while it does, by its id with a reason, in its
+    suite file (`src/sssb.conformance.test.ts`):
+
+    ```ts
+    conformanceSuite({
+        appDir: path.resolve(import.meta.dirname, '..'),
+        optOut: { 'authz-mutations': 'pages being brought to the 0.10 authorization rule; tracked in <your issue>' },
+    })
+    ```
+
+    This turns off the whole check, routes and Server Actions included, not only pages: it is a stopgap. Take the opt-out
+    out again as soon as the pages pass.
+
+    **Now deletable.** A comment on a page saying it is kept to the authorization rule by hand.
+
+- b1aaea2: ### The authorization check judges read handlers too
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** The conformance suite's `authz-mutations` check now judges every exported route handler, GET, HEAD
+    and OPTIONS as well as POST, PUT, PATCH and DELETE, by the same rules: it reaches `authorize(...)` on its own path, or
+    its route has an exemption whose gate it passes. A read handler may also pass by reading nothing: it names nothing from
+    outside itself but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (a
+    string, number, boolean or `null`; not an object or array), `NextResponse` (`next/server`), `redirect`,
+    `permanentRedirect` and `notFound` (`next/navigation`), and `appMode` and `isSimulated`, as a liveness probe does, or a
+    CORS preflight whose headers are written inline; one that names `fetch`, `process.env` or any other import authorizes
+    or names an exemption. Such a read passes under `src/app/api/service/` too, without `withServiceCaller`: it reads no
+    data, so the wrapper that builds the caller's actor has nothing to add (any other read there, and every mutation, is
+    still wrapped by it). Before, a GET that
+    read org-scoped data without `authorize` passed, and showed a signed-in person with no standing (the role `none`) their
+    org's rows. The check keeps its id, so an `optOut` naming it still applies; its title and its test's name changed. The
+    framework exempts one more route, `storage/[...key]/route.ts`, the simulated-mode download twin of
+    `storage-upload/route.ts`, when it opens with the simulated-mode 404. The SSSB plugin's `/sssb:new-slice` and
+    `/sssb:new-entity` say so, and `/sssb:pre-pr`'s review checklist looks for a read, a page or a Server Action without
+    `authorize(...)`, not only a mutating route.
+
+    **To adopt.** Run the conformance suite (`pnpm test:unit`). For each read handler it names, authorize the read where the
+    org is known, as the generated app's `src/app/api/items/route.ts` GET does:
+
+    ```ts
+    authorize(user, orgId, 'read', { type: 'Item', orgId })
+    ```
+
+    A read of the caller's own things authorizes its self-only subject, `authorize(user, user.orgSlug, 'read', { type:
+'Notification', ownerId: user.id })` (or `NotificationPref`), and a service route its machine actor,
+    `authorize(ctx.actor, 'read', { type: 'Job', orgId: ctx.identity.orgId })`. A read that is genuinely not org-scoped (a
+    public one) names an entry in the app's `authz-exemptions.mjs`, with its reason and a `mustMatch` gate it passes; an
+    existing entry now also covers a GET at the path it names, which passes its gate, authorizes, or reads nothing.
+
+    A GET under `src/app/api/webhooks/` that neither authorizes nor reads nothing passes only when it is wrapped by the
+    webhook guard (`withWebhookSecret`, `withMailgunSignature` or `withStandardWebhookSignature`), the gate of SSSB's
+    `webhooks/` exemption. An app's own
+    entry cannot replace that gate, but for one: a provider's verification handshake (a GET that checks a token and
+    echoes a challenge) that is not wrapped can have a `reads-only` entry for its own file, mapping each import it reads to its module
+    (see the reads-only gate's entry in these notes). A public read outside `src/app/api` (a feed, a sitemap route) can
+    have one too, under the exemptions file's `outsideApi` key.
+
+- aa98b12: ### Real mode under `next dev` needs Clerk's keyless mode disabled
+
+    **Kind.** operator
+
+    **Action.** required
+
+    **What changed.** Under `next dev` (which sets `NODE_ENV=development`), Clerk's keyless fallback let a request on a path
+    the proxy matcher skips carry forged `x-clerk-auth-*` headers that Clerk's `auth()` accepted as anyone. SSSB's Clerk
+    adapter now refuses to read a session or call Clerk's Backend API in exactly the two cases Clerk's own code leaves that
+    open: `NODE_ENV` is `development` and `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` is not `1` (or `true`), or `CLERK_SECRET_KEY` is
+    unset (in any `NODE_ENV`: Clerk would then check a token against an empty key). Its error names the variable. Nothing
+    else is refused: a production build (`next build`, then `next start`), and any other process with the secret key set and
+    no `NODE_ENV=development`, such as a CodeBuild job program, an ops script or a test run, needs nothing. The same
+    refusals now stop `createRealPorts` at boot and fail `sssb check-real-env` when that process has `NODE_ENV=development`,
+    as a cutover item on `auth-dev`; and when it has neither that nor `NODE_ENV=production` (the preflight of `dev:real`
+    runs before `next dev` does, with no `NODE_ENV` of its own), `check-real-env` prints a `notice:` saying what `next dev`
+    would do with the environment it was given.
+
+    **To adopt.** Wherever you run real mode under `next dev` (a `dev:real` script, say), set the variable for the whole
+    script, so the preflight sees it too:
+
+    ```sh
+    export NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1 && APP_MODE=real sssb check-real-env && APP_MODE=real next dev
+    ```
+
+    A deployment built for production, and a process that is not `next dev`, needs nothing.
+
+- 59fa027: ### The contract run catches a backslash literal the Data API refuses
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** On the RDS Data API transport, a query with a plain string literal that ends in a backslash and a
+    parameter after it (`ESCAPE '\'`, as seen live) failed on a real cluster with `syntax error at or near ":"`: the Data
+    API's own parameter scanner evidently does not see the literal close. The Data API emulator that `pnpm test:contract` runs now reads
+    parameters the same way, so such a query fails the contract run with the same error instead of passing it. Nothing changes
+    on the `pg` transport, and the dialect's own behaviour on a real cluster is unchanged. SSSB's Data API runbook (in SSSB's
+    repository, `docs/runbooks/data-api.md`, step 2) has the live check. A contract run that passed before can fail now; when
+    it does, the same query was already failing on a real cluster over the Data API (it runs for every app, `pg` ones included,
+    unless the app opts out of `contract-data-api`).
+
+    **To adopt.** If your contract run now fails with that error, write the one backslash in a form both scanners read
+    alike. The simplest is `chr(92)`, which has no backslash in its text at all:
+
+    ```ts
+    sql<boolean>`${sql.ref('name')} LIKE ${pattern} ESCAPE chr(92)`
+    ```
+
+    Or an escape-string literal, which in SQL text is `E'\\'` (an `E` string, inside which two backslashes are one). Mind the
+    TypeScript source: a `sql` template reads its text with JavaScript's own escapes applied, so in source that SQL is written
+    with four backslashes, `` sql`... ESCAPE E'\\\\'` ``; written with two, the database receives `E'\'`, an unterminated string.
+    Do not write a plain `'\\'` in source either: JavaScript makes it `'\'`, the very literal that fails.
+
+- 3eddf36: ### Framework migration 0019: a job's attempt, its first attempt, and when a retry may run
+
+    **Kind.** migration
+
+    **Action.** none
+
+    **What changed.** Framework migration `0019_job_attempts` adds three columns to `jobs`: `attempt` (from 1; every
+    existing row is attempt 1), `retry_of` (the first attempt's id on a retry, a foreign key to `jobs`), and `run_after` (set
+    only on a retry waiting out its delay). It also adds two partial indexes. The migrator applies it on its next run, after
+    any app migrations a database has already run, which the order-independence rule allows. It is numbered 0019, after
+    `0018_organizations_write`, which 0.9.0 added.
+
+- 3eddf36: ### A job kind can opt in to retries with backoff
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** A job used to be tried once: a failure, or a job the in-process runner lost, ended it `failed` for
+    good. A kind may now say, in the seam's optional `jobRetry` export (`@sssb/app-config/jobs`, beside `jobNotify`), how
+    many attempts it allows (at most 10) and the delays between them (each at most 30 days; an entry past either limit is
+    ignored and the kind runs once). Each attempt is a job row of its own: the failed one
+    stays `failed`, and the next is queued until its delay has passed. The scheduled tick then starts it, so the tick's
+    period is the floor under every delay. A handler is told `ctx.attempt` and `ctx.firstJobId`, a key that stays the same
+    across attempts. Only the last attempt's outcome notifies, and a failure after several attempts says how many. A kind
+    that says nothing runs once, as before. The tick gains a third drain, between schedules and deliveries: it starts at
+    most 100 due retries, none after the tick's first 10 seconds (schedules start none after 6, deliveries none after 16),
+    and the cron route's JSON gains a `retries` part. `runScheduledTick`'s budget
+    takes `maxRetries` and `retriesWindowMs`. The job views carry `attempt` and `retryOf`, and a service caller's job list
+    (`listServiceJobs`) leaves out a retry still waiting. `pnpm tick` reports retries.
+
+    **To adopt.** For a kind whose handler is idempotent, add to `src/app-config/jobs.ts`:
+    `export const jobRetry: Partial<Record<AppJobKind, JobRetry>> = { 'sweep-items': { attempts: 3, delaysMs: [60_000, 600_000] } }`,
+    with `JobRetry` from `@sssb/kit/core/jobs`. Key the handler's side effects on `ctx.firstJobId`. If the static demo
+    starts the kind, pass the same map as `useDemoWorld`'s `jobRetry`.
+
+    **Now deletable.** A kind's own resume-at-the-next-scheduled-run discipline, kept only so that a failed or cut-off run
+    was picked up an hour later.
+
+- 7fb8a2c: ### A dropped connection to the model provider is `LlmUnavailableError('connection-lost')`
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** A connection to the provider that drops while an answer is being read, or that `fetch` cannot make, ended as the SDK's own error (a plain `AnthropicError('terminated')`, undici's bare `TypeError('terminated')`, or an `APIConnectionError`), neither repeated nor mapped. The real adapter now repeats such a call once, inside its deadline (a stream only if it had delivered no text), and then throws `LlmUnavailableError` from `@sssb/kit/ports/errors` (new in this release; its own entry says what it is) with the reason `connection-lost`. A `withPortErrors` that maps `LlmUnavailableError` (this release's `@sssb/create` entry for it says how to add one) answers it with a 503. `connection-lost` is one of the four reasons of `LlmUnavailableReason`, beside `rate-limited`, `overloaded` and `timed-out`; a fixture entry's `failure` may name it. The static demo's `replayAssistant` now replays a default fixture entry's `conversation` with its tools, as the fake adapter does, where it answered the entry's `response` alone.
+
+    **To adopt.** Nothing breaks at runtime. Code you write that switches exhaustively on an `LlmUnavailableError`'s `reason` covers all four reasons; TypeScript reports one left out. Code that matched the SDK's connection errors around an LLM call must match `LlmUnavailableError` instead.
+
+    **Now deletable.** A hand-written retry or catch that rebuilds the provider's `terminated` or connection errors into an error of the app's own.
+
+- 148ce42: ### LLM calls have a deadline, and a provider's rate limit is `LlmUnavailableError`
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** `createRealLlm` built the Anthropic client with the SDK's defaults: ten minutes per attempt, two retries that sleep a provider's whole `Retry-After`, and a vendor 429 or 529 surfacing as the SDK's own error. Every LLM port call (`complete`, `stream`, `runToolLoop`) now ends within 25 s, retries and a tool loop's `execute` calls included, by default (the server function has 30 s). A rate limit (429), an overloaded provider (529) and a call past its deadline throw `LlmUnavailableError` from `@sssb/kit/ports/errors`, with `reason` `rate-limited`, `overloaded` or `timed-out`, the vendor SDK's error as `cause` and a `retryAfterSeconds`. `LlmRequest` and `LlmToolLoopRequest` gain an optional `timeoutMs`, and `createRealLlm(key, { timeoutMs, maxRetries })` takes defaults for an app that builds it. The adapter, not the SDK, retries each request to the provider once, and only when twice the wait is less than what is left of the deadline. The fake adapter rejects a `timeoutMs` that is not a positive number of at most 2^31 - 1 milliseconds with a `RangeError`, as the real one does. The app guide gains a rule on it.
+
+    **To adopt.** One call on a request path (a route, or a job the in-process runner runs inside the server function) needs nothing: 25 s is inside that function's 30 s limit. The deadline is per call, so a route that makes two (a tool loop and then a stream, say) or that first waits for a resuming Data API cluster (up to 18 s) can still outrun the function: pass each call a `timeoutMs` that keeps their sum under it. But an LLM call that takes longer than 25 s now fails where it used to succeed, so an app whose job runs on a runner without the server's limit (the CodeBuild runner) breaks if it does nothing: that job's handler passes a longer `timeoutMs` on the request, to `complete`, `stream` or `runToolLoop`:
+
+    ```ts
+    await ctx.llm.complete({ purpose: 'summarize-bundle', messages, timeoutMs: 120_000 })
+    ```
+
+    Then let `LlmUnavailableError` propagate from a route into `withPortErrors` (the starter's changeset for `@sssb/create` adds the 503), and from a job handler, which fails the job. Code that matched the SDK's `RateLimitError` or `InternalServerError` around an LLM call must match `LlmUnavailableError` instead; an app's own adapter is not affected.
+
+    **Now deletable.** A hand-written timeout or `Promise.race` around an LLM call, and a catch that rebuilds the provider's 429 or 529 into an error of the app's own.
+
+- 18ee316: ### A stream that fails after text is visible, and a fixture can fail the same way
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** The conformance suite gains a check, `llm-stream-failure`, which every app runs from its own `src/sssb.conformance.test.ts` with no change: a stream that fails after some of its text ends in a thrown `LlmUnavailableError` and not in an end that reads as a complete answer, in the real adapter, the fake adapter and the static demo's replay alike. A fixture entry (`fixtures/llm/<purpose>.json`) may now carry `"failure": { "reason": "overloaded" }` (or `rate-limited`, `timed-out`): the fake adapter's `complete` throws, its `stream` yields the entry's `response` and then throws, its `runToolLoop` runs the recorded tool calls and then throws; the static demo's `replayAssistant` takes the same entry. `@sssb/kit/adapters/fake/llm` exports `createFakeLlm({ fixturesDir, catchRequests })` beside `fakeLlm`. The port's docs and the app guide say what `stream` can throw.
+
+    **To adopt.** Nothing breaks. An app with a route or a screen that consumes `llm.stream` can test its failure path with a fixture entry that has a `failure`, and should say the failure in the response's body once the response has begun (SSSB's reference app, the showcase, does so in its assistant route, whose NDJSON answer ends with an `{ "error": ... }` line). An app that leaves the check out names it in `optOut` with a reason.
+
+    **Now deletable.** A hand-written fixture or mock that throws partway through a stream to test a consumer's failure path.
+
+- 548dce0: ### The CodeBuild runner notices a lost build
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** A CodeBuild job whose build ended without posting the jobs webhook used to stay queued for ever, and
+    a kind that retries never retried it. The runner now records each job's build id, and the scheduled tick's sweep asks
+    CodeBuild (`BatchGetBuilds`) about each job still open and quiet for five minutes. It fails as lost a job whose build
+    ended that long ago, a job whose build CodeBuild no longer knows, a job whose StartBuild CodeBuild refused, and, after an hour, a job
+    whose start never recorded a build. A
+    failure arms the next attempt of a kind whose `jobRetry` allows one, and notifies as the jobs webhook does. A build
+    still in progress is left alone. Jobs written before this release, which have no recorded build, are never judged.
+
+    **To adopt.** Allow the server's role `codebuild:BatchGetBuilds` on the job project's builds, beside the
+    `codebuild:StartBuild` it already has. Without it each tick logs that the sweep could not read builds, and judges
+    none.
+
+- 7794ad6: ### The pg transport connects over verified TLS
+
+    **Kind.** operator
+
+    **Action.** required
+
+    **What changed.** On the `pg` transport the server and the Migrator now connect to Postgres over TLS that checks the
+    server's certificate chains to a trusted root and names the host it connects to (libpq's `verify-full`). Before, TLS
+    was only what `DATABASE_URL` asked for, which on `SssbApp` was nothing, and the URL the Migrator builds from the
+    secret carried none. Two optional variables set it: `DATABASE_SSL_MODE` (`verify-full`, the default when unset or empty, or `disable`) and
+    `DATABASE_SSL_ROOT_CERT` (the absolute path of a PEM file whose certificates are then the only roots trusted). `SssbApp`
+    sets both on the server and the Migrator, trusting the Amazon CA bundle in the Lambda Node.js runtime
+    (`/var/runtime/ca-cert.pem`). A `DATABASE_URL` that sets `sslmode`, or any other `ssl*` parameter or `uselibpqcompat`,
+    is refused at boot, because `pg` would let it override the mode. The Data API transport is unchanged.
+
+    **To adopt.** On `SssbApp`, upgrade `@sssb/kit` and `@sssb/cdk` together, then **deploy the upgraded stack
+    (`cdk deploy`) before you ship the server's new code.** The stack sets the two variables on the server and the Migrator;
+    the server's code is what your pipeline ships (`aws lambda update-function-code`). The order matters one way only: the
+    new code under the old stack's environment has no root file, so it verifies against Node's own roots, which do not hold
+    Amazon RDS's, and every database connection fails; the old code ignores the new variables, so a stack deployed first
+    changes nothing until the code follows. Then run the Migrator, the first thing to connect with the new settings, and
+    ship the code once it succeeds.
+
+    If the Migrator cannot connect over TLS, the way back while you find out why is `DATABASE_SSL_MODE=disable` on both
+    functions, which connects as the previous release did, with `DATABASE_SSL_ROOT_CERT` taken off them too: the stack sets
+    it, and a root file beside `disable` is refused at boot. In your stack, assign the `SssbApp` it creates and deploy:
+
+    ```ts
+    const sssbApp = new SssbApp(stack, 'Default', { ... })
+    for (const fn of [sssbApp.server, sssbApp.migrator]) {
+        fn.addEnvironment('DATABASE_SSL_MODE', 'disable')
+        ;(fn.node.defaultChild as cdk.CfnResource).addPropertyDeletionOverride('Environment.Variables.DATABASE_SSL_ROOT_CERT')
+    }
+    ```
+
+    This is the one time `disable` belongs on a deployed database, and only until the cause is fixed: take it out then. Then prove TLS on the deployed
+    cluster: `pnpm exec sssb doctor` reports a framework cutover row named `db-tls` that your workspace's
+    `docs/cutover-checklist.md` does not mention (the file was written when the workspace was generated, before the row
+    existed). Add it beside the others, in their shape:
+
+    ```md
+    - [ ] `db-tls`: On `pg`, the server and the Migrator reach the database over TLS that verifies its certificate (`DATABASE_SSL_MODE`: `verify-full` when unset, never `disable` deployed; `DATABASE_SSL_ROOT_CERT`: the roots)
+    ```
+
+    and close it once the deployed cluster proves it: with `rds.force_ssl` set to 1 in its parameter group the Migrator
+    still returns `{ ok: true }` and the app still serves; `pg_stat_ssl` (joined to `pg_stat_activity`, run as the master user)
+    shows TLS on every connection the app holds; and both Lambdas show `DATABASE_SSL_MODE` as `verify-full` or unset, since
+    `pg_stat_ssl` shows encryption, not that the certificate was checked. (SSSB's own checklist, in SSSB's repository, has
+    the full row.) A deployment of your own (another Postgres host) sets `DATABASE_SSL_ROOT_CERT`
+    to its host's root bundle unless its certificate chains to a root Node trusts, and removes `sslmode` and the other
+    `ssl*` parameters from `DATABASE_URL`. A real-mode run against a local Postgres with no TLS sets
+    `DATABASE_SSL_MODE=disable`; never set it on a deployed database but as the stopgap above. A Lambda deployed from a container image may not have
+    `/var/runtime/ca-cert.pem`: put the RDS bundle in the image and point `DATABASE_SSL_ROOT_CERT` at it.
+
+    Two more settings are refused: `NODE_PG_FORCE_NATIVE` at boot (pg's native client ignores `DATABASE_SSL_MODE`), and a
+    `CONTRACT_DATABASE_URL` that sets `sslmode` or another `ssl*` parameter, when the contract run opens its first
+    connection, for the reason a `DATABASE_URL` that sets one is. The contract run connects without TLS, so a server that
+    accepts only TLS connections cannot serve it.
+
+    **Now deletable.** An `?sslmode=...` query string appended to `DATABASE_URL` by hand, and a `NODE_EXTRA_CA_CERTS`
+    setting added only so the database's certificate would verify.
+
+- 548dce0: ### Framework migrations 0020 and 0021: a job's build, and a schedule's failures
+
+    **Kind.** migration
+
+    **Action.** none
+
+    **What changed.** Framework migration `0020_job_runner_ref` adds a nullable `runner_ref` to `jobs`, where the CodeBuild
+    runner records each job's build. `0021_schedule_failures` adds `failure_count` (default 0) and a nullable `last_error`
+    to `job_schedules`. The migrator applies both on its next run, after any app migrations a database has already run,
+    which the order-independence rule allows.
+
+### Patch Changes
+
+- b026b89: ### A scheduled tick is bounded, and fair across tenants
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `runScheduledTick` (`@sssb/kit/server-lib/scheduled-tick`) used to drain every due schedule and
+    every due webhook delivery of every tenant, one tenant's backlog after another's, so a long backlog or a slow endpoint
+    could run the cron route past the server's limit and leave later tenants waiting. A tick now spawns at most 100 due
+    schedules, none after its first 6 seconds (of which the first 2 are the lost-job sweep's), and attempts at most 100 due deliveries, none after 16, taking each
+    tenant's due rows in turn, the tenants in a fresh random order every tick. What a tick leaves stays due for the next one,
+    untouched. The route's JSON gains `deferred` and `stoppedBy`, for schedules and inside `deliveries`; `runDueSchedules`
+    and `runDueDeliveries` take an optional budget as a last argument (called without one they still drain every due
+    row), and `runScheduledTick` takes optional `{ budget }` for a server whose limit differs. `pnpm tick` and the dev
+    ticker say when a tick stopped on its bound and what it left.
+
+    A drain lists tenants for at most half of what is left of its window, then runs what it listed, and lists on if it
+    finishes with time to spare. With more
+    tenants than that half can list (each a transaction of its own: about four calls on the RDS
+    Data API), each tick serves a fresh random set of them, and the others wait for a later tick.
+
+    On an RDS Data API stack whose Aurora cluster can pause (minimum capacity 0, `SssbApp`'s default outside production),
+    the tick that wakes the cluster first waits for it to resume, 12 to 14 seconds when measured. Every window runs from
+    the tick's start, so that tick may judge no lost jobs, spawn no schedules and start no retries; the next tick, on a running cluster, does.
+
+- aa98b12: ### The Clerk adapter reads the signed-in person once per server render
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** In real mode every `getCurrentUser()`, `listMyOrgs()`, `requireUser()` and `requireRole()` called
+    Clerk's Backend API again, twice for `getCurrentUser()`. Within one server render (a layout, its page and their
+    components) the person's account and their memberships are now read once each and shared, so reading the signed-in
+    person costs a page render at most two Backend API calls (one more per 100 orgs a person belongs to). Other calls (a
+    team's members, another person's account, an invitation) are not shared. Nothing is kept past the request, so
+    a role change, a removal from an org or a ban shows on the next one. A route handler is not a render, and reads on
+    each call as before.
+
+- 9694e30: ### A real-mode user menu that signs out in the browser
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** A new published subpath, `@sssb/kit/adapters/real/user-menu`, exports `RealUserMenu`: the user menu for
+    real mode, which signs out through Clerk's client (this session only, then to the page you name), falling back to the
+    sign-out route until Clerk has loaded, so the browser does not keep a short-lived session token after the server has
+    revoked the session. The conformance check `real-auth-provider` counts it as a real auth form, so a layout that loads it
+    must sit under one that mounts `RealAuthProviders`, as the protected layouts already do.
+
+    **To adopt.** Load it only in real mode, with `import()`, as any of SSSB's real adapters; the `@sssb/create` entry
+    "The header's sign-out ends the session in the browser too, in real mode" shows where the starter does.
+
+- 67d3f79: ### A CodeBuild job is marked from its first write, and the tick's sweep is bounded
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** Two fixes to what the CodeBuild runner's lost-build sweep left open.
+
+    - **A CodeBuild job carries its `starting` mark from its first write.** It used to be written just before StartBuild,
+      as a write of its own. If that write failed, the job stayed queued with no mark, and the sweep never judged it. The
+      jobs port now says what a job's row starts as (`JobsPort.startingRef`, optional), and the row is written with it:
+      `submitJob`, a schedule's spawn and a retry's claim all do.
+    - **The tick's sweep for lost jobs has a bound of its own.** It is given a budget, a window of the tick's first two
+      seconds and at most 100 jobs failed (`JobsPort.sweep(now, budget)`, the budget optional). Both runners' sweeps take
+      tenants in a fresh random order and stop when the budget is spent, so a sweep that finds many lost jobs leaves the
+      drains their windows. The CodeBuild runner's sweep fails each lost job as soon as it finds it, so time spent asking
+      CodeBuild never throws away what it found. `runScheduledTick`'s budget takes `maxSweep` and `sweepWindowMs`, both
+      optional, and throws a `RangeError` for one that is not a usable bound (`NaN`, or a `maxSweep` below 1), as it does
+      for the drains' fields.
+    - **A retry whose StartBuild may have started a build is left to the sweep.** A timeout or a server fault from
+      StartBuild may still have started the build. A first attempt already stayed `starting` then, for the sweep to judge
+      after the hour; a retry was failed at once, which armed the next attempt beside a build that might be running and
+      dropped that build's result. It now stays `starting` too. A client fault (CodeBuild refused) still fails the attempt
+      at once. A runner of your own can say the same: `start` throws an error with `mayHaveStarted: true`, and the port
+      has a `startingRef` and a `sweep` (`mayHaveStarted`, `@sssb/kit/ports/jobs`).
+
+- 7e64f05: ### The Data API's resume probes that do not answer are aborted
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** While a paused cluster resumes, the Data API transport probes it with `SELECT 1` and, when a probe has
+    not answered in two seconds, leaves it behind and sends the next one after the usual pause. A probe that never answered held a socket of
+    the AWS SDK's client for as long as it lived, and one was added about every three seconds, so a long wait could fill the
+    client's socket pool and queue the app's own calls behind them. A probe is now aborted six seconds after it was sent (a
+    late answer inside that still ends the wait), and every probe still out is aborted when the wait ends or its last
+    caller gives up, so at most three are in flight. The transport passes the SDK's own `{ abortSignal }` request option, which
+    `RDSDataClient.send` already accepts; the contract suite's emulator, which always answers, ignores it.
+
+- 548dce0: ### A schedule that keeps failing backs off, and one that cannot parse turns off
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** A schedule whose spawn failed inside its transaction stayed due and failed again on every tick,
+    taking one of its tenant's turns each time. Now one whose spec no longer parses is disabled at its first such failure,
+    with a `schedule.disabled` audit event saying why. Any other such failure backs the schedule off on the webhook
+    deliveries' backoff (one minute, then five, thirty, two hours, then six hours), and the next spawn that commits clears
+    it. The schedule keeps the count and the latest error (`failureCount`, `lastError` in the Simulator's schedule view).
+
+- 43242ac: ### One answer for a missing id and a refused one
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** The app guide (`@sssb/kit/guide.md`) has a new rule in its Authorization section: a person who may
+    not act gets the same answer, status and body, whether or not a thing the request names exists (a row by its id, an
+    org by a slug in the body), so nothing can be probed. Authorize before the lookup when the session alone can decide;
+    when the decision needs the row (a two-sided subject), throw `NotFoundError` for a missing row and rethrow a
+    `ForbiddenError` as `NotFoundError` in a `catch` that always rethrows. The conformance check cannot see the order of a
+    lookup and an `authorize`, so no gate keeps the rule and nothing fails on upgrade: it is kept by hand. The guide's
+    earlier "call it before any `try`" now excepts that `try`.
+
+    **To adopt.** Read the guide's rule "A person who may not act gets the same answer, status and body, whether or not a
+    thing the request names exists", then review your own routes that look something up by request input: an `[id]` in
+    the path, a slug or id in the body. A route that answers 404 for a missing row before it authorizes tells a person who
+    may not act which ids exist; move `authorize` before the lookup, or, when it needs the row, use the guide's rethrow.
+    Pin each such route with a route test that sends an existing id and a missing one as a person who may not act, and
+    expects the same status and body for both.
+
+- 71f299e: ### The dev-ticker marker is written whole and cleared without a gap, and a failing default fixture entry always fails typed
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `@sssb/tools`: the dev ticker's marker is written to a name beside it and renamed onto it, so a Playwright config loading at that instant never reads half of it and passes over a ticking dev server; and a stale marker is moved aside and judged from the copy before it is deleted, so a marker another wrapper writes at the same moment is not removed with it. `@sssb/kit`: a default fixture entry with a `failure` and no answer to replay (`response: null`, no `conversation`) now throws `LlmUnavailableError` from the fake adapter's `complete`, `stream` and `runToolLoop`, as the static demo's replay already did; it threw a plain "no default entry" error.
+
+    **Now deletable.** An `response: ""` written only so that a failing default entry would fail typed.
+
+- cc6d105: ### A feature-flag read waits for PostHog one second at most
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The protected layout awaits a feature-flag read on every authenticated render, and the PostHog
+    adapter had no bound of its own on it: the client's was three seconds with one retry after a delay, so a slow PostHog
+    could hold every page for six seconds or more. A flag read now waits `FLAG_TIMEOUT_MS` (one second), with no retry, and answers the
+    default the caller passed when PostHog fails or outruns it, as it already did on a failure. Capturing events is
+    unchanged (two seconds).
+
+- cc6d105: ### `sssb check-real-env` says when `CLERK_AUTHORIZED_PARTIES` is unset
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** `CLERK_AUTHORIZED_PARTIES` is optional, and unset it leaves a deployment accepting a Clerk session
+    token minted for any origin its instance signed. Nothing told an operator the check was off. After a passing
+    `sssb check-real-env` prints `real-mode env complete`, it now prints a `notice:` line when the variable is unset, and one
+    for any variable spelled like it and not it (`CLERK_AUTHORISED_PARTIES`), which does nothing though a value looks set. The exit code is unchanged: unset is a supported setting, so a notice is advice, never a failure. The lines come
+    from `realEnvNotices()` in `@sssb/kit/adapters/real/index`, which `check-real-env` calls if the framework has it. It
+    reads the environment the command runs in, so it speaks for your server only when run with the server's.
+
+    **To adopt.** Nothing is required. Read the notice, and set `CLERK_AUTHORIZED_PARTIES` on the server to the origins it is
+    served from if you meant to (SSSB's adopting reference, `docs/adopting-reference.md` in SSSB's repository, "Name the origins whose session tokens your app accepts").
+
+- 4cbff8b: ### Real sign-in waits for Clerk to load, and lets a person end a session a failed sign-in left
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The real sign-in form (`@sssb/kit/adapters/real/sign-in-form`) no longer submits a password before
+    Clerk's browser SDK has loaded: its button shows it is busy until then. Before, a password sent that early could act on
+    an attempt the browser already held, sending its account a code or finishing it. And once Clerk has created a session
+    for the attempt (the password alone, or an accepted second-step code) but finishing the sign-in fails, the form now
+    signs that session out (that session only) when the person goes back from the second step, or offers a "Sign out"
+    button on the password form, and then shows the form ready to sign in again, with no error left on it. Before, the session stayed on the browser
+    while the form showed the password again, so the next page load could come up signed in.
+
+- 7e64f05: ### A failed rollback no longer replaces the error that made the transaction roll back
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** When the work inside `db.withTenant()` (or the Data API transport's migrations) throws, Kysely rolls the transaction back, and a rollback that
+    fails in turn used to replace the work's error with its own: a handler that threw `ForbiddenError` reached the route as
+    a `DatabaseUnavailableError` (a 503, not a 403) when the Data API throttled or timed out the rollback. `withTenant` now
+    throws the work's own error, with the rollback's failure kept on it as a non-enumerable `rollbackError` property (where
+    the error is an object that takes one) and logged as a warning. `pg` runs the same code (`withTenant` is one for both transports), though only the Data API transport is tested with a failing rollback. A rollback you
+    make yourself, through a controlled transaction (`startTransaction()`, then `rollback()`), still fails as it did, and a
+    transaction opened on the raw handle (`getDb().transaction()`) keeps Kysely's own behaviour. A failed commit is thrown
+    as it was.
+
+## 0.9.1
+
+### Patch Changes
+
+- f50b8d9: ### 0.9.1 is 0.9.0's release
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** Nothing an adopter runs. v0.9.0's release commit failed one of SSSB's own tests, a test that named
+    0.9.0 as "some other version", so its tag was never published. 0.9.1 publishes the same changes, and the test now
+    derives that other version from the generator's own.
+
+    **To adopt.** Nothing beyond 0.9.0's notes (`docs/releases/v0.9.0.md`), which list every change in this release.
+
+    **Now deletable.** Nothing.
+
+## 0.9.0
+
+### Minor Changes
+
+- 7fdb607: ### `publicOrigin` and `clientAddress`, and a lint rule against reading the raw request
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** A new subpath, `@sssb/kit/adapters/edge-headers`, gives an app the visitor's origin
+    (`publicOrigin(request)`) and address (`clientAddress(request)`). Behind `SssbApp`, `request.url` and `nextUrl` name the
+    server's own bind address and port (3000), never the visitor's host, and the first `X-Forwarded-For` entry is whatever the visitor
+    wrote. A new rule in the app preset, `sssb/no-raw-request-origin`, fails a module under `src/` (tests aside) that:
+
+    - reads a forwarded header by name from a request's headers (`request.headers.get('x-forwarded-for')`, `X-Real-IP`,
+      `CF-Connecting-IP`, `Forwarded`, `Host`, the other `X-Forwarded-*`);
+    - takes the `origin`, `host`, `hostname` or `href` of `new URL(request.url)` or of `request.nextUrl`, by member or
+      destructuring;
+    - builds `new URL(path, request.url)` (or on `request.nextUrl`), a redirect included, except in the app's own
+      `src/proxy.ts` (or `src/middleware.ts`), where Next relativizes a same-origin redirect or rewrite and nowhere else: a
+      route handler's `NextResponse.redirect(new URL('/en/dashboard', request.url))` sends the visitor to the server's bind
+      address;
+    - passes `baseUrl: request.url`.
+
+    "The request" is an object named `req`, `request` or `nextRequest` (with or without a leading `_`), or a `.req` or
+    `.request` member (`ctx.request`): the `url` of a webhook, a row or a form field is someone else's, and reading its
+    origin is correct code. The rule reads names, not types, so a request held under another name gets past it, as does
+    the request's URL stored in a variable and used later, or a `request.nextUrl.clone()` handed to a redirect
+    (safeinsights/sssb#242).
+
+    **To adopt.** Run `pnpm lint` after upgrading. For each finding:
+
+    ```ts
+    import { clientAddress, publicOrigin } from '@sssb/kit/adapters/edge-headers'
+
+    // A link a visitor follows: an email, a URL you store.
+    const link = new URL(`/${locale}/accept-invite`, publicOrigin(request)).toString()
+
+    // A rate limit, a lockout, an audit record's "from". undefined means unknown: never a free pass.
+    const from = clientAddress(request)
+    ```
+
+    A redirect needs neither: `redirect('/path')` (from `next/navigation`) and a relative `Location` are right as they are; in
+    a route handler, write `NextResponse.redirect(new URL('/en/dashboard', publicOrigin(request)))`. Reading `pathname` or
+    `searchParams` from the request's URL is still allowed. Outside a request (a job), `publicOrigin()` needs the server's
+    `PUBLIC_ORIGIN` (the operator entry of this release). In `pnpm dev`, `publicOrigin` is the dev server's own origin and
+    `clientAddress` is `undefined`.
+
+    **Now deletable.** A helper that builds the app's origin from `x-forwarded-host` and `x-forwarded-proto`, or from
+    `request.url`; one that takes the client's address from `X-Forwarded-For`, `X-Real-IP` or `CF-Connecting-IP`; and a
+    `baseUrl: request.url` passed to `sendOrgInvite` or `applyDemoPreset` (pass `publicOrigin(request)`).
+
+- 266f4dd: ### A request can create, rename and delete teams in its own tenant
+
+    **Kind.** migration
+
+    **Action.** optional
+
+    **What changed.** Framework migration `0018_organizations_write` grants `app_user` `INSERT` (of a team's tenant, slug
+    and name), `UPDATE` (of its name) and `DELETE` on `organizations`, behind row-level security that confines each write
+    to the request's tenant: reads stay open across tenants, as before, a new team may not take a slug another tenant's
+    team holds, and `TRUNCATE` is not granted. It also adds a
+    unique constraint over `(tenant_id, id)`, so an app table can pin its team to its own tenant with a composite foreign
+    key. Before this, a route that wrote a team inside `withTenant` failed with `permission denied`.
+
+    **To adopt.** Nothing to do for the migration: it runs with the others. A route that creates, renames or deletes a
+    team writes it inside `db.withTenant(tenantId, ...)`, after `authorize(...)` on its own subject. A team's slug and id
+    are not a request's to change: the slug names the team to the auth provider and in its inbound mail address. To keep a table's team
+    in its own tenant, declare `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)` in a new
+    migration of yours. If a database role other than the table owner writes `organizations` outside `withTenant` (a sync
+    through a raw handle on a separate application role you granted writes yourself), that write is now held to the tenant
+    policies: run it inside `withTenant` for the team's tenant, or as the owner.
+
+    **Now deletable.** A raw-client exception (an entry in `lint-exceptions.mjs`) that exists only so a route can write
+    `organizations` as the table owner.
+
+- 7fdb607: ### `PUBLIC_ORIGIN`, and the visitor's address from `SssbApp`'s edge
+
+    **Kind.** operator
+
+    **Action.** required
+
+    **What changed.** `SssbApp`'s viewer-request CloudFront Function now also writes `x-sssb-viewer-address`, the address
+    CloudFront took from the visitor's connection, over any a visitor sent, and the construct sets `SSSB_EDGE=cloudfront` on
+    the server, which tells `@sssb/kit`'s `publicOrigin` and `clientAddress` to believe that header and `x-forwarded-host`.
+    Without `SSSB_EDGE` (in `pnpm dev`, or on a host of your own) neither reads a forwarded header, and the server refuses
+    `SSSB_EDGE` off Lambda. A new optional server setting, `PUBLIC_ORIGIN`, is the origin `publicOrigin` returns wherever
+    it is set, in a request and outside one. A malformed `PUBLIC_ORIGIN`, or an `SSSB_EDGE` other than `cloudfront` or off
+    Lambda, fails `sssb check-real-env` and the server's boot, naming cutover row `domains-and-certs`. `cdk synth` now
+    fails a behavior that reaches the server without `sssbApp.forwardedHost` on `viewer-request`, on any distribution in
+    the construct's stack, an origin group's included.
+
+    **To adopt.** Redeploy with this `@sssb/cdk`. Once the deployment has a custom domain, set the server's `PUBLIC_ORIGIN`
+    to its origin, a bare origin with no trailing slash (`PUBLIC_ORIGIN=https://app.example.org`), so every link names it
+    rather than the host a visitor came in on; set it too wherever a job, or the cron route the scheduled tick calls, builds
+    a link. If synth now fails naming a behavior, give that behavior the function:
+    `functionAssociations: [{ function: sssbApp.forwardedHost, eventType: FunctionEventType.VIEWER_REQUEST }]`. Without it,
+    a visitor writes the host and address the server believes. Never set `SSSB_EDGE` yourself.
+
+- 394e053: ### `STORAGE_UPLOAD_TARGET=put` for a store that takes a presigned PUT
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** `STORAGE_UPLOAD_TARGET` (read with `STORAGE_PROVIDER=s3-compatible`) accepts `put` beside `post` and
+    `none`: `createUploadTarget` then mints a presigned PUT, which Cloudflare R2 accepts and a presigned POST it does not.
+    It is not a new required variable, so the required-environment snapshot is unchanged. `createS3Storage` takes the same
+    choice as `uploadTarget: 'put'`; the client it builds then defaults `requestChecksumCalculation` to `WHEN_REQUIRED`,
+    and a client you pass in must already be set so (the SDK's default signs the checksum of an empty body into the URL,
+    and `createUploadTarget` throws, naming the setting, when it sees one).
+
+    **To adopt.** On R2, set `STORAGE_UPLOAD_TARGET=put`, pass `sizeBytes` when you mint (see the `UploadTarget` change),
+    and give the bucket a CORS rule that lets your app's origin `PUT` with the `Content-Type` header. Check on a real
+    bucket that an upload lands at the key, that a body of another length or type is refused, and whether R2 holds the
+    signed length or your `head` check does; cutover row `storage-compatible-store` says how.
+
+    **Now deletable.** A route that receives the file and calls `put` only because the store had no presigned POST.
+
+- 394e053: ### `UploadTarget` has a PUT form, for stores without presigned POST
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** `StoragePort.createUploadTarget` returns an `UploadTarget` that is now one of two shapes: a
+    `PostUploadTarget` (`{ url, fields }`, with an optional `method: 'POST'`, unchanged for a store that has presigned
+    POST) or a `PutUploadTarget` (`{ method: 'PUT', url, headers }`: the browser PUTs the file as the body). Code that
+    reads `target.fields` no longer typechecks until it narrows. An app that stays on `s3` or a POST store gets the same
+    value at run time, plus `method: 'POST'` (a test that compares the whole target must expect it). `UploadConstraints` gains an optional `sizeBytes`, the exact size of the file the browser
+    will send. A PUT has no size policy, so its URL signs that size, and an adapter minting a PUT refuses a call without
+    it. `createFakeStorage({ uploadTarget: 'put' })` (`@sssb/kit/adapters/fake/storage`) is the fake's PUT form, and its
+    `/api/storage-upload` twin in the showcase serves it.
+
+    **To adopt.** Where your server passes `createUploadTarget`'s result through as JSON, change nothing but its type
+    (`UploadTarget`). Where it reads `.fields`, narrow first: `if (target.method === 'PUT') { … }` (a target whose
+    `method` is absent is a POST). In the browser, switch the same way: a POST appends `fields` and then the file to a
+    `FormData`; a PUT is `fetch(target.url, { method: 'PUT', headers: target.headers, body: file })`. If your mint route
+    has the client's file size, pass it as `sizeBytes` beside `maxBytes` (and refuse one over `maxBytes` first); a POST
+    store ignores it. A route that must hold the ceiling on a PUT store should `head` the object when the upload is
+    confirmed and `delete` one over `maxBytes`: the store holds a signed length only if it honours one. Your own storage
+    adapter (`@sssb/kit/ports/storage`) may keep returning the POST shape as it is.
+
+### Patch Changes
+
+- 2046326: ### The Simulator host takes an app's own tabs, and shows the dev ticker where the app serves it
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** `SimulatorHost` (`@sssb/kit/components/simulator/simulator-host`) takes `extraTabs`, the panel's own
+    `SimulatorExtraTab[]`, and exports `useSimulatorWorld()`, which an app's tab content calls to read the world's jobs
+    (polled while that tab is open). Both are provisional until safeinsights/sssb#152 decides how an app's tabs reach the
+    host, and may change shape then. The Jobs tab's dev ticker control now shows on the host wherever the app's own
+    `src/app/api/simulator/ticker/route.ts` answers; where it answers 404, as SSSB's catch-all does, there is no ticker,
+    as before.
+
+    **To adopt.** Nothing, unless your app registers its own Simulator tab (`@sssb/app-config/simulator` `tabs`) and kept
+    a glue of its own to show it: you can now pass the tab to `SimulatorHost` as `extraTabs` from your locale layout
+    instead, as SSSB's reference app does (in SSSB's repository at this release:
+    `apps/showcase/src/app/[locale]/simulator-glue.tsx`).
+
+    **Now deletable.** A Simulator glue that re-implements the panel's fetching, polling and notices only to add an app's
+    own tab or the dev ticker control, with every `api/simulator/<path>/route.ts` it called that SSSB's catch-all now
+    serves; keep the routes your own tab's pages call and the ticker route.
+
+- 27d0a99: ### Corrections from the release review
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** SSSB's plugin commands `/sssb:new-actor` and `/sssb:a11y-review` now describe the `pnpm dev`
+    Simulator panel as this release builds it: `SimulatorHost` takes an app's own tabs (`extraTabs`), and a generated
+    app's panel has every framework tab but Actors, and Tours until the app registers one. The starter's Simulator route
+    comment names Tours. A comment in `@sssb/cdk`'s viewer-request function no longer says `clientAddress` reads
+    `X-Forwarded-For`. Two client races in the Simulator host that this release added, never released, are fixed: a poll
+    of the dev ticker no longer overwrites a start or stop, and the Snapshots tab's refreshes no longer land out of order.
+
+- 07e44c6: ### The Simulator's Snapshots tab, demo presets and tours on an app's own `pnpm dev`
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `simulatorApi` (`@sssb/kit/server-lib/simulator-api`) now also serves the world's knobs: `reset`,
+    `snapshots` (GET a list, POST `{ name }` to save), `snapshots/restore` and `snapshots/delete` (`{ name }`), `flags`
+    (GET every known flag, POST `{ flag, enabled }`), `agreements` and `agreements/bump` (`{ agreementId }`), and `presets`
+    (`{ name, locale }`, answering `{ redirectTo }`). Each keeps the host's rules: simulated mode only (404 in a real
+    build), JSON-only POSTs (415 otherwise), no role gate. `SimulatorHost` wires them into a Snapshots tab (reset, save,
+    restore and delete snapshots, flip a feature flag, bump an agreement, load a demo preset) and, when the app registers
+    any tours, a Tours tab, whose tours start their world through the same reset, preset and restore calls. A reset, a
+    restore or a preset load reloads the page and says what it did in the panel; a flag reloads it too. An app that mounts
+    the catch-all route and `SimulatorHost` gets all of it with nothing to change.
+
+- f4d90ee: ### The Simulator's Events, Messages, inbound mail, Hooks and Errors tabs on an app's own `pnpm dev`
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `simulatorApi` (`@sssb/kit/server-lib/simulator-api`) now also serves `events` and `audit` (the
+    Events tab, the audit trail beneath it), `messages` (every caught SMS), `inbound` and `inbound/compose` (inbound mail
+    beside the Mail tab, taken in through the same intake as the real inbound webhook), `webhooks`, `webhooks/fail` and
+    `webhooks/run-due` (the Hooks tab), and `error-scenario` (the Errors tab's server event, before and after scrubbing).
+    Each keeps the host's rules: simulated mode only (404 in a real build), JSON-only POSTs (415 otherwise), no role gate.
+    `SimulatorHost` wires the tabs, so an app that mounts the catch-all route and `SimulatorHost` has every framework tab
+    but the Actors tab and the Jobs tab's dev ticker. The Mail tab's inbound section appears only when the app registers
+    an inbound handler. `events` answers `{ events }` alone; the flags are on `flags`.
+
+- bfe9fd6: ### A verifier for Standard Webhooks senders
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** A new subpath, `@sssb/kit/service-auth/standard-webhooks`, verifies a sender that signs Standard
+    Webhooks (the scheme Svix signs with): the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers, or Svix's
+    `svix-*` names, over the exact body. `withStandardWebhookSignature(handler, { secretEnv })` refuses a timestamp more
+    than five minutes from the server's clock either way, a signature that does not match one of the configured `whsec_…`
+    secrets (keys of at least 16 bytes) in constant time, and the same signed message a second time, with the same opaque 401 the other webhook
+    wrappers answer. Several secrets, in one variable or several, verify side by side for a rotation. The `webhooks/`
+    exemption of the authorization scan accepts a handler that is this call, as it accepts `withWebhookSecret(…)`. It adds
+    nothing to the required environment.
+
+    **To adopt.** Put the sender's secret in a server variable of your choosing and wrap the route under
+    `src/app/api/webhooks/`; the handler gets the verified message and should treat its id as the idempotency key, since a
+    sender's retry is re-signed and reaches it again:
+
+    ```ts
+    import { withStandardWebhookSignature } from '@sssb/kit/service-auth/standard-webhooks'
+
+    export const POST = withStandardWebhookSignature(
+        async ({ webhook }) => {
+            // webhook.id, webhook.timestamp, webhook.body (the raw text)
+            return Response.json({ ok: true })
+        },
+        { secretEnv: 'PARTNER_WEBHOOK_SECRET' },
+    )
+    ```
+
+    Make the handler idempotent on `webhook.id` even so: the guard against a replayed message is in memory, and a deployment
+    runs on Lambda, where each concurrent execution environment keeps its own. Pass `replayStore` (`claim` and `release`
+    over a shared table) to make the guard hold across them.
+
+    **Now deletable.** A hand-rolled Standard Webhooks or Svix signature check (an HMAC over `id.timestamp.body`), and the
+    `svix` package where it was only used to verify.
+
+- bfe9fd6: ### A webhook route can read its shared secret from a variable of its own
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** `withWebhookSecret` and `verifyWebhookCaller` (`@sssb/kit/service-auth/webhook`) take an optional
+    `{ secretEnv }`, the environment variable real mode reads the shared secret from. It defaults to `WEBHOOK_SECRET`, so
+    every existing route behaves as before, and simulated mode still uses the per-checkout dev secret. A name that is not
+    a server-only variable (lower case, a dash, or `NEXT_PUBLIC_*`) throws a `TypeError`: from `withWebhookSecret` when
+    the route module loads, from `verifyWebhookCaller` on each call.
+
+    **To adopt.** For a sender whose secret is already deployed under another name, pass that name and set it on the
+    server; SSSB's real-environment checks know only `WEBHOOK_SECRET`, so add the variable to your own cutover checklist:
+
+    ```ts
+    export const POST = withWebhookSecret(handler, { secretEnv: 'PARTNER_HOOK_SECRET' })
+    ```
+
+    **Now deletable.** A copy of the constant-time shared-secret check kept only to read a differently named variable.
+
 ## 0.8.0
 
 ### Minor Changes

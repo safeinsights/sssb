@@ -5,6 +5,7 @@ import { openSimulatorPanel } from '../support/simulator'
 import { pickOrg } from '../support/org-switcher'
 import { untilNewDocument } from '../support/new-document'
 import { reachDashboard } from '../support/people'
+import { worldPath } from '../support/worlds'
 
 /**
  * Notifications, end to end against real routes + RLS on pglite. Destructive because it writes
@@ -16,7 +17,7 @@ import { reachDashboard } from '../support/people'
  */
 test.describe.configure({ mode: 'serial' })
 
-const dataRoot = path.resolve(__dirname, '../../../.data')
+const dataRoot = worldPath()
 const residue = [path.join(dataRoot, 'sms'), path.join(dataRoot, 'emails'), path.join(dataRoot, 'simulator')]
 
 function clearResidue() {

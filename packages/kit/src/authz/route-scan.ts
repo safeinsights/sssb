@@ -1,4 +1,5 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import ts from 'typescript'
 
@@ -17,6 +18,21 @@ import ts from 'typescript'
  * passes, as a mutation does (safeinsights/sssb#103). Server Actions (`scanServerActions`) are
  * judged by the same rules as a POST, each export of a `'use server'` file and each function whose body opens with
  * `'use server'`; no exemption applies to one. The walks follow a symbolic link to a directory, as Next does.
+ *
+ * PAGES (`scanPages`, safeinsights/sssb#221). What Next renders on the server for a request outside a route handler is
+ * judged as a READ: every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `global-not-found`,
+ * `forbidden` and `unauthorized` file, and every metadata route (`sitemap`, `robots`, `manifest`, `opengraph-image`,
+ * `twitter-image`, `icon`, `apple-icon`), with the route extensions. Its `default` export and its `generateMetadata`,
+ * `generateImageMetadata`, `generateSitemaps` and `generateViewport` exports (PAGE_EXPORTS) are each a handler, labelled
+ * by export name, and pass as a read does: by reaching `authorize`, by reading nothing, or by an app's `reads-only`
+ * exemption whose gate holds (no other gate kind applies to a page, and none at all to a page under an intercepting
+ * segment). What a page may name and still read nothing is wider than for a route, and only for a page: the page
+ * allow-list (PAGE_IMPORTS, PAGE_MEMBERS: the session, the catalog, the locale, a UI ability check), a component it only
+ * renders as a JSX tag from a client module or a package (out of sight, as an imported helper is), a component of its
+ * own file it only renders (read, as part of the page), a client module or package it loads with `import()` only to
+ * render what it exports, and an imported Server Action it only hands on as a JSX attribute's value, which is judged on
+ * its own (`outsideNamesOf`). A component file whose prologue is `'use client'` is not judged: it runs in
+ * the browser, and reaches data only through routes, which are. A metadata route always is.
  *
  * WHAT "REACHES" MEANS. A call counts for a handler when it sits on that handler's own path:
  *
@@ -114,13 +130,59 @@ const READ_VERBS: readonly string[] = ['GET', 'HEAD', 'OPTIONS']
 /** Every verb Next routes to an exported handler: each one the module exports is judged. */
 const JUDGED_VERBS: readonly string[] = [...MUTATING_VERBS, ...READ_VERBS]
 
-/** Whether `verb` reads (GET, HEAD, OPTIONS) rather than mutates. */
+/**
+ * The exports of a page, layout or metadata route that Next calls on the server per request, each judged as a READ
+ * handler labelled by its name: the component (`default`), and the functions that compute its metadata or its
+ * metadata routes' list, and `generateViewport`. `generateStaticParams` runs at build time, and `metadata`, `viewport`
+ * and the route segment options are values, so none of them is a handler.
+ */
+const PAGE_EXPORTS: readonly string[] = [
+    'default',
+    'generateMetadata',
+    'generateImageMetadata',
+    'generateSitemaps',
+    'generateViewport',
+]
+
+/** Whether `verb` reads (GET, HEAD, OPTIONS, or a page's export: PAGE_EXPORTS) rather than mutates. */
 export function isReadVerb(verb: string): boolean {
-    return READ_VERBS.includes(verb)
+    return READ_VERBS.includes(verb) || PAGE_EXPORTS.includes(verb)
 }
 
 // Next.js routes route.ts/tsx/js/jsx/mjs. All of them, or the scan is bypassable by filename.
 const ROUTE_FILE = /^route\.(?:mjs|[jt]sx?)$/
+
+/**
+ * The files Next renders on the server for a page's URL, with the route extensions: the page and what wraps or stands
+ * in for it (`layout`, `template`, `default`, `loading`, `not-found`, `global-not-found`, `forbidden`,
+ * `unauthorized`), and the metadata routes Next serves at their own URL without a `route.ts` (METADATA_FILE; an image one
+ * may carry a one-digit suffix, `icon1.tsx`, as Next's own matcher allows). `error` and `global-error` are not here:
+ * Next requires both to be client components.
+ */
+const PAGE_FILE =
+    /^(?:page|layout|template|default|loading|not-found|global-not-found|forbidden|unauthorized|sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\.(?:mjs|[jt]sx?)$/
+
+/** The metadata routes among PAGE_FILE: they run on the server whatever their prologue says, so none is skipped as a client file. */
+const METADATA_FILE = /^(?:sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\./
+
+/** A file named for a page, layout or metadata route with one extension of code the scan does not read (`unreadPageFiles`). */
+const UNREAD_PAGE_FILE =
+    /^(?:page|layout|template|default|loading|not-found|global-not-found|forbidden|unauthorized|sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\.(?:mts|cts|cjs|mdx|md)$/
+
+/**
+ * Whether Next routes what is under a directory: not a private folder, `_name` (Next's own convention: a folder whose
+ * name starts with `_` and everything in it is left out of routing; `%5Fname` is how a URL segment starting with `_` is
+ * written). The route, page and unread-file walks skip one; the Server Action walk does not, since an action is served
+ * wherever it is declared.
+ */
+function isRoutedDirectory(name: string): boolean {
+    return !name.startsWith('_')
+}
+
+/** Whether `name` (a file's base name) is one of the files `scanPages` judges. */
+export function isPageFileName(name: string): boolean {
+    return PAGE_FILE.test(name)
+}
 
 /** The extensions one extensionless module specifier can land on, in TypeScript's resolution or the bundler's. */
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
@@ -145,13 +207,22 @@ export interface ScanRoot {
     label: string
     /** Where the walk starts. */
     dir: string
-    /** Where exemption paths are measured from. A file outside it gets a `../` path no exemption can match. */
+    /**
+     * Where exemption paths are measured from. A file outside it gets a `../` path, which only an app's `outsideApi`
+     * entry (a `reads-only` one, for reads) can match.
+     */
     exemptDir: string
     /**
      * The tsconfig whose module resolution (its `paths`, its `moduleResolution`) re-exports and imported
      * handlers are followed with. Without one, relative specifiers and packages resolve, aliases do not.
      */
     tsconfig?: string | undefined
+    /**
+     * The app's own directory: where `@sssb/kit` is resolved from (its real package directory is out of a page's sight,
+     * unless the app sits inside it), where a tsconfig's `paths` are measured from without a `baseUrl` or tsconfig, and
+     * what an installed package's `node_modules` must sit at or above (`isInstalled`). Default: `dir`.
+     */
+    appDir?: string | undefined
 }
 
 /**
@@ -167,11 +238,44 @@ export interface ScanRoot {
  *   `@sssb/kit/ports/errors`, or a global `…Error`), no parameter runs code before it (a default), and the file
  *   assigns to none of the globals that branch builds (`Response`, `JSON`, an `…Error`), so the real-mode path
  *   does nothing.
+ * - `reads-only`: a READ handler (GET, HEAD, OPTIONS) that reads nothing (`readsNothing`) but the `names` listed, a
+ *   map of each named import's exported name to the module it must come from (`{ corsHeaders: 'src/lib/cors.ts' }`):
+ *   the PIN (`ImportSource.pins` says what one matches), so a same-named export of another module is not covered by a
+ *   reason written for the pinned one (safeinsights/sssb#220, the authorization review's Z2). No
+ *   value of the route's own file can be listed, since code of the file can change it. Every other name it refers to from outside itself is an
+ *   inert value, and it names no global off the inert list (`fetch`, `process`). It never holds for a mutation, and an
+ *   entry whose gate it is applies to reads only, so a mutation at its path is judged by the exemption it would have
+ *   had without the entry. It is the one gate an app may put outside `src/app/api` or under one of the framework's
+ *   exempt prefixes (./app-exemptions.ts). What it proves: the read touches nothing but its request, inert values and
+ *   those names, so the entry's reason has to cover exactly those names (safeinsights/sssb#220).
  */
 export type Gate =
     | { kind: 'wrapped-by'; callees: readonly string[] }
     | { kind: 'calls'; callees: readonly string[] }
     | { kind: 'opens-with-simulated-404' }
+    | { kind: 'reads-only'; names: Readonly<Record<string, string>> }
+
+/**
+ * Where one name a handler reads comes from (`HandlerFacts.outsideSources`): the import's specifier, whether it
+ * resolves, and the pins a `reads-only` gate may give the name and hold for this import (`RootScanner.pinsOf`):
+ *
+ * - the specifier itself (a package's `next/headers`, `@sssb/kit/adapters/fake/auth`, or an alias's `@/seed`), when it
+ *   resolves, and from the app's directory to the file it resolves to here (so a `node_modules` nearer the importing
+ *   file cannot swap the module under the pin, and an uninstalled package answers to nothing), and it is not the path
+ *   of a file in the app (that string is a path pin only, below, so a tsconfig `paths` entry spelled like one cannot
+ *   answer to it). A relative or absolute specifier may land here too, but no pin can be written to match it: a pin
+ *   has no `.`, `..` or empty segment (`isPin` in ./route-policy.ts);
+ * - the app-relative path, `/`-separated and with its extension, of the file the import resolves to, and of the file
+ *   that declares the export (followed through re-exports) when it declares it under the name imported (a barrel's
+ *   `export { rows as corsHeaders }` leaves `corsHeaders` the barrel's): `src/seed/index.ts`, `src/lib/cors.ts`. Only a
+ *   file inside the app's directory and not through a `node_modules` has one.
+ */
+export interface ImportSource {
+    specifier: string
+    /** The specifier resolves from the importing file. */
+    resolves: boolean
+    pins: readonly string[]
+}
 
 /** What the analyser found on one handler's path. */
 export interface HandlerFacts {
@@ -183,6 +287,15 @@ export interface HandlerFacts {
     calls: ReadonlySet<string>
     /** The handler opens with the inert `if (!isSimulated)` gate and no parameter runs code (`opensWithSimulated404`). */
     opensWithSimulated404: boolean
+    /**
+     * Names from outside the handler that it refers to and that are not inert (`outsideNamesOf`), or null when it
+     * does something no name can excuse. Empty exactly when `readsNothing` holds. What a `reads-only` gate reads.
+     */
+    outsideNames: ReadonlySet<string> | null
+    /** Why `outsideNames` is null (the first thing no name can excuse), or null when it is not. */
+    outsideRefusal: string | null
+    /** Where each of `outsideNames` is imported from (one source per import that names it), or null with them. */
+    outsideSources: ReadonlyMap<string, readonly ImportSource[]> | null
     /**
      * The handler is a function (not a wrapper's result) whose code, read lexically, names nothing from outside it
      * but inert globals, a few named imports and literal constants (`readsNothing`), so the only data in its reach is
@@ -197,11 +310,23 @@ export type Handler =
 
 export interface ScannedRoute {
     root: string
-    /** Path relative to the root's `exemptDir`, `/`-separated. */
+    /** Path relative to the root's `exemptDir`, `/`-separated, with route groups' and slots' segments dropped (`exemptRel`). */
     rel: string
+    /** The path as written, relative to `exemptDir`, when it differs from `rel` (a route group or slot in it). */
+    written?: string
     file: string
-    /** One entry per exported verb Next routes (`JUDGED_VERBS`). Empty for a file that exports none. */
+    /**
+     * One entry per exported verb Next routes (`JUDGED_VERBS`), or for a page, per export Next calls (`PAGE_EXPORTS`).
+     * Empty for a file that exports none, and for a `'use client'` page.
+     */
     handlers: Handler[]
+    /** The file is a page, layout or metadata route (`scanPages`), whose handlers are reads judged by `judge`'s page rules. */
+    page?: true
+    /**
+     * The page is under an intercepting segment (`(.)x`): judged like any page, but no exemption applies to it, since Next
+     * also serves it at the URL it intercepts and a path-keyed entry cannot tell which.
+     */
+    intercepting?: true
 }
 
 export interface ScanOptions {
@@ -211,42 +336,110 @@ export interface ScanOptions {
 
 /** Every route file under every root, each with its exported handlers analysed. */
 export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}): ScannedRoute[] {
+    return scanFiles(roots, options, false)
+}
+
+/**
+ * Every page, layout and metadata route under every root (PAGE_FILE), each with its exports Next calls (PAGE_EXPORTS)
+ * analysed as reads; a `'use client'` COMPONENT file has none (a metadata route is judged whatever its prologue).
+ * Matched by URL as a route is (`exemptRel`). A page under an intercepting segment is judged, marked `intercepting` so
+ * that no exemption applies to it, where a route there is refused outright (safeinsights/sssb#221).
+ */
+export function scanPages(roots: readonly ScanRoot[], options: ScanOptions = {}): ScannedRoute[] {
+    return scanFiles(roots, options, true)
+}
+
+function scanFiles(roots: readonly ScanRoot[], options: ScanOptions, page: boolean): ScannedRoute[] {
     const authorizeModules = options.authorizeModules ?? ['@sssb/kit/authz/authorize']
+    const what = page ? 'page' : 'route'
     return roots.flatMap((root) => {
         const scanner = new RootScanner(root, authorizeModules)
         const unreadable = new Map<string, string>()
-        const routes: ScannedRoute[] = routeFiles(root.dir, unreadable).map((file) => ({
-            root: root.label,
-            rel: path.relative(root.exemptDir, file).split(path.sep).join('/'),
-            file,
-            handlers: scanner.handlers(file),
-        }))
+        const accept = page ? PAGE_FILE : ROUTE_FILE
+        const files = walkFiles(
+            root.dir,
+            (name) => accept.test(name),
+            isRoutedDirectory,
+            new Set(),
+            new Map(),
+            unreadable,
+        )
+        const routes: ScannedRoute[] = files.map((file) => {
+            const written = path.relative(root.exemptDir, file).split(path.sep).join('/')
+            const rel = exemptRel(root, file)
+            const intercepting = path
+                .relative(root.dir, file)
+                .split(path.sep)
+                .some((s) => INTERCEPTING_SEGMENT.test(s))
+            return {
+                root: root.label,
+                rel,
+                ...(written === rel ? {} : { written }),
+                file,
+                handlers:
+                    intercepting && !page
+                        ? [
+                              {
+                                  verb: '*',
+                                  refusal:
+                                      `the ${what} is under an intercepting segment (\`(.)x\`, \`(..)x\`, \`(...)x\`), which ` +
+                                      'Next also serves at the URL it intercepts, so the scan cannot tell which rules apply; ' +
+                                      `serve it from a ${what} that is not intercepting`,
+                              },
+                          ]
+                        : page
+                          ? scanner.pageHandlers(file)
+                          : scanner.handlers(file),
+                ...(page ? { page: true as const } : {}),
+                ...(page && intercepting ? { intercepting: true as const } : {}),
+            }
+        })
         for (const [dir, code] of unreadable) {
             routes.push({
                 root: root.label,
-                rel: path.relative(root.exemptDir, dir).split(path.sep).join('/'),
+                rel: exemptRel(root, dir),
                 file: dir,
                 handlers: [{ verb: '*', refusal: unreadableRefusal(code) }],
+                ...(page ? { page: true as const } : {}),
             })
         }
         return routes
     })
 }
 
-function routeFiles(dir: string, unreadable: Map<string, string>): string[] {
-    return walkFiles(
-        dir,
-        (name) => ROUTE_FILE.test(name),
-        () => true,
-        new Set(),
-        new Map(),
-        unreadable,
-    )
+/**
+ * A route's path relative to the root's `exemptDir`, as Next serves it: a route group's `(name)` segment is not part of
+ * the URL, so it is dropped before the path is matched against an exemption or a required gate. Without that,
+ * `api/(internal)/service/x/route.ts`, served at `/api/service/x`, escaped the `service/` gate, and
+ * `(app)/api/x/route.ts` read as a route outside `api/`. Measured from the directory above `exemptDir`, so a group
+ * above it (`src/app/(app)/api/…`) is dropped too.
+ */
+export function exemptRel(root: Pick<ScanRoot, 'exemptDir'>, file: string): string {
+    const base = path.basename(root.exemptDir)
+    const segments = path
+        .relative(path.dirname(root.exemptDir), file)
+        .split(path.sep)
+        .filter((segment) => !isUnroutedSegment(segment))
+    return segments[0] === base ? segments.slice(1).join('/') : ['..', ...segments].join('/')
 }
 
-/** The refusal for a directory the walk could not read: a failure, since a route or an action may be in it. */
+/**
+ * A segment that is not part of the URL Next serves a route at: a route group `(name)` and a parallel route's slot
+ * `@name` (Next's own `normalizeAppPath` drops both).
+ */
+export function isUnroutedSegment(segment: string): boolean {
+    return /^\(.*\)$/.test(segment) || segment.startsWith('@')
+}
+
+/**
+ * An intercepting route's segment, `(.)x`, `(..)x`, `(...)x` or `(..)(..)x`: Next serves what is under it at the URL it
+ * intercepts too, on a header the client sends, so a path-keyed rule cannot tell which URL it answers.
+ */
+const INTERCEPTING_SEGMENT = /^(?:\(\.{1,3}\))+/
+
+/** The refusal for a directory the walk could not read: a failure, since a route, a page or an action may be in it. */
 function unreadableRefusal(code: string): string {
-    return `the directory could not be read (${code}), so a route or Server Action in it would go unchecked`
+    return `the directory could not be read (${code}), so a route, page or Server Action in it would go unchecked`
 }
 
 /**
@@ -263,7 +456,20 @@ export function unreadRouteFiles(dir: string): string[] {
         !/^route\.(?:[\w-]+\.)*(?:test|spec|stories|bench|test-d)\.[cm]?[jt]sx?$/.test(name) &&
         !/\.d\.[cm]?ts$/.test(name) &&
         !name.endsWith('.snap')
-    return walkFiles(dir, named, () => true)
+    return walkFiles(dir, named, isRoutedDirectory)
+}
+
+/**
+ * Files under `dir` named for a page, layout or metadata route with one extension of code the scan does not read
+ * (`.mts`, `.cts`, `.cjs`, `.mdx` or `.md`: `page.mts`, `layout.cjs`, `page.mdx`, `default.md`): Next serves it for a
+ * `pageExtensions` entry, so it may be a page nobody checked. (An app whose `next.config` sets `pageExtensions` at all
+ * fails the check itself: `scanApp`.) Only `<name>.<extension>`: a file with a middle segment (`page.css.ts`,
+ * `layout.styles.ts`, `page.spec.e2e.ts`) is a module of its own, and an asset (`page.module.css`, a static `icon.png`,
+ * `manifest.json`, `robots.txt`) is not code. A private folder (`_lib`) is not walked, as Next routes nothing in it.
+ */
+export function unreadPageFiles(dir: string): string[] {
+    const named = (name: string) => UNREAD_PAGE_FILE.test(name)
+    return walkFiles(dir, named, isRoutedDirectory)
 }
 
 /**
@@ -343,11 +549,22 @@ function isSourceFile(name: string): boolean {
     return /\.(?:[cm]?[jt]sx?)$/.test(name) && !/\.d\.[cm]?ts$/.test(name)
 }
 
-/** Whether `statements` opens with a `'use server'` directive (a string-literal statement in the prologue). */
-function hasUseServer(statements: readonly ts.Statement[]): boolean {
+/** Whether `statements` (of `sf`) open with a `'use server'` directive (`hasDirective`). */
+function hasUseServer(sf: ts.SourceFile, statements: readonly ts.Statement[]): boolean {
+    return hasDirective(sf, statements, 'use server')
+}
+
+/**
+ * Whether `statements` (of `sf`) open with the directive `text`: a string-literal statement in the prologue whose RAW
+ * source text is `'text'` or `"text"`. As ECMAScript matches `'use strict'`, an escaped or continued one
+ * (`'use\x20server'`) is a prologue string but not the directive, so it is matched by its source, not its value; the
+ * text pre-filter of `declaresServerActions` then agrees with it.
+ */
+function hasDirective(sf: ts.SourceFile, statements: readonly ts.Statement[], text: string): boolean {
     for (const statement of statements) {
         if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) return false
-        if (statement.expression.text === 'use server') return true
+        const raw = sf.text.slice(statement.expression.getStart(sf), statement.expression.end)
+        if (raw === `'${text}'` || raw === `"${text}"`) return true
     }
     return false
 }
@@ -363,11 +580,11 @@ function declaresServerActions(file: string): boolean {
     }
     if (!text.includes('use server')) return false
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, false)
-    let found = hasUseServer(sf.statements)
+    let found = hasUseServer(sf, sf.statements)
     const visit = (node: ts.Node): void => {
         if (found) return
         if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
-            if (hasUseServer(node.body.statements)) found = true
+            if (hasUseServer(sf, node.body.statements)) found = true
         }
         ts.forEachChild(node, visit)
     }
@@ -483,7 +700,9 @@ export function judgeServerAction(action: ScannedAction): string | undefined {
         `does one whose denial cannot reach the action: in an async function or a callback whose promise it neither ` +
         `awaits nor returns, or in a try whose catch does not rethrow (the useActionState shape, ` +
         `\`try { authorize(...); … } catch (e) { return { error } }\`, swallows the denial). Call authorize(...) first, ` +
-        `before any try (or in a function in this file that it calls, awaiting it if it is async).`
+        `before any try but one whose catch always rethrows (\`catch (error) { throw error instanceof ForbiddenError ? ` +
+        `new NotFoundError() : error }\`, the app guide's shape for a two-sided subject), or in a function in this file ` +
+        `that it calls, awaiting it if it is async.`
     )
 }
 
@@ -508,10 +727,19 @@ export interface ScanPolicy {
     hint?: string | undefined
 }
 
-export function exemptionFor(policy: ScanPolicy, rel: string): Exemption | undefined {
+/**
+ * The exemption for `rel`: its exact entry, else the first prefix it sits under. An exact entry wins over its prefix,
+ * with one exception: given a mutating `verb`, an entry whose gate is `reads-only` applies to reads only, so the lookup
+ * goes on past it (to the prefix an exact entry sits under, whose gate then judges the mutation).
+ */
+export function exemptionFor(policy: ScanPolicy, rel: string, verb?: string): Exemption | undefined {
+    const applies = (exemption: Exemption | undefined): exemption is Exemption =>
+        exemption !== undefined && (exemption.mustMatch.kind !== 'reads-only' || verb === undefined || isReadVerb(verb))
     const exact = policy.exemptFiles[rel]
-    if (exact) return exact
-    const prefix = Object.keys(policy.exemptPrefixes).find((p) => rel.startsWith(p))
+    if (applies(exact)) return exact
+    const prefix = Object.keys(policy.exemptPrefixes).find(
+        (p) => rel.startsWith(p) && applies(policy.exemptPrefixes[p]),
+    )
     return prefix === undefined ? undefined : policy.exemptPrefixes[prefix]
 }
 
@@ -520,8 +748,16 @@ function requiredFor(policy: ScanPolicy, rel: string): Exemption | undefined {
     return prefix === undefined ? undefined : policy.requiredAlongside[prefix]
 }
 
-export function gateHolds(gate: Gate, facts: HandlerFacts): boolean {
+/** Whether `facts` pass `gate`. A `reads-only` gate holds only for a read `verb`, so it needs one. */
+export function gateHolds(gate: Gate, facts: HandlerFacts, verb?: string): boolean {
     switch (gate.kind) {
+        case 'reads-only':
+            return (
+                verb !== undefined &&
+                isReadVerb(verb) &&
+                facts.outsideNames !== null &&
+                [...facts.outsideNames].every((name) => isPinned(gate, name, facts))
+            )
         case 'wrapped-by':
             return facts.wrappedBy !== null && gate.callees.includes(facts.wrappedBy)
         case 'calls':
@@ -531,6 +767,57 @@ export function gateHolds(gate: Gate, facts: HandlerFacts): boolean {
     }
 }
 
+/** The module a `reads-only` gate pins `name` to, or undefined when it does not list the name. */
+function pinOf(gate: Extract<Gate, { kind: 'reads-only' }>, name: string): string | undefined {
+    return Object.hasOwn(gate.names, name) ? gate.names[name] : undefined
+}
+
+/** Whether a `reads-only` gate lists `name`, and every import of it the handler makes is from the module it pins. */
+function isPinned(gate: Extract<Gate, { kind: 'reads-only' }>, name: string, facts: HandlerFacts): boolean {
+    const pin = pinOf(gate, name)
+    const sources = facts.outsideSources?.get(name)
+    return (
+        pin !== undefined && sources !== undefined && sources.length > 0 && sources.every((s) => s.pins.includes(pin))
+    )
+}
+
+/**
+ * What a read named that a `reads-only` gate does not allow, for its failure: the names it does not list, and each
+ * listed name imported from another module than its pin, with the module it came from.
+ */
+function readsOnlyShortfall(gate: Extract<Gate, { kind: 'reads-only' }>, facts: HandlerFacts): string {
+    const names = [...(facts.outsideNames ?? [])]
+    const unlisted = names.filter((n) => pinOf(gate, n) === undefined)
+    const elsewhere = names.flatMap((n) => {
+        const pin = pinOf(gate, n)
+        if (pin === undefined) return []
+        const sources = facts.outsideSources?.get(n) ?? []
+        if (sources.length === 0)
+            return [`\`${n}\` from a module the scan could not place, which the gate pins to ${pin}`]
+        return sources
+            .filter((source) => !source.pins.includes(pin))
+            .map((source) => `\`${n}\` from ${describeSource(source)}, which the gate pins to ${pin}`)
+    })
+    return [
+        ...(unlisted.length > 0
+            ? [`it names ${unlisted.map((n) => `\`${n}\``).join(', ')}, which the gate does not list`]
+            : []),
+        ...(elsewhere.length > 0 ? [`it imports ${elsewhere.join('; ')}`] : []),
+    ].join('; and ')
+}
+
+/** An import's module as a failure names it: the specifier, and the file it lands on in the app, if it does. */
+export function describeSource(source: ImportSource): string {
+    if (!source.resolves) {
+        return `'${source.specifier}' (a module that does not resolve: install it, or check the specifier)`
+    }
+    const [file] = source.pins.filter((pin) => pin !== source.specifier)
+    if (file !== undefined) return `'${source.specifier}' (${file})`
+    return source.pins.includes(source.specifier)
+        ? `'${source.specifier}'`
+        : `'${source.specifier}' (a module no pin can name: outside the app, or through a node_modules nearer the file)`
+}
+
 export function describeGate(gate: Gate): string {
     const names = (callees: readonly string[]) => callees.map((c) => `${c}(…)`).join(' or ')
     switch (gate.kind) {
@@ -538,6 +825,14 @@ export function describeGate(gate: Gate): string {
             return `the handler is itself a call to an imported ${names(gate.callees)}, as in \`export const <VERB> = ${gate.callees[0]}(…)\``
         case 'calls':
             return `the handler reaches a call to an imported ${names(gate.callees)} on its own path`
+        case 'reads-only':
+            return (
+                `the handler is a read (GET, HEAD or OPTIONS, or a page's export) that names nothing from outside itself but inert values ` +
+                `and ${Object.entries(gate.names)
+                    .map(([name, module]) => `\`${name}\` from ${module}`)
+                    .join(', ')} (no other import or helper, and no global ` +
+                `off the inert list, such as fetch or process)`
+            )
         case 'opens-with-simulated-404':
             return (
                 'the handler takes no parameter that runs code (a default) and opens with ' +
@@ -552,26 +847,45 @@ export function describeGate(gate: Gate): string {
 
 /** Why `handler` fails the scan, or undefined if it passes. */
 export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy): string | undefined {
-    const where = `${route.root}: ${route.rel} ${handler.verb}`
+    const where = `${route.root}: ${route.rel}${route.written === undefined ? '' : ` (at ${route.written})`} ${handler.verb}`
     if (handler.refusal !== undefined) {
         return `${where} cannot be checked: ${handler.refusal}. The scan fails a handler it cannot follow rather than pass it.`
     }
+    if (route.page) return judgePage(route, handler.facts, handler.verb, policy, where)
     // An exemption is an alternative to authorize(...), never a ban on it: a handler under an exempted path that
     // does not pass the gate is judged like any other, so one that authorizes passes.
-    const exemption = exemptionFor(policy, route.rel)
-    if (exemption && gateHolds(exemption.mustMatch, handler.facts)) return undefined
+    const exemption = exemptionFor(policy, route.rel, handler.verb)
+    if (exemption && gateHolds(exemption.mustMatch, handler.facts, handler.verb)) return undefined
+    // A read that names nothing but inert values and its request reads no data, so it has nothing to authorize, and a
+    // gate required alongside (`service/`'s caller-verifying wrapper, which builds the actor a read would authorize)
+    // has nothing to add: it passes before that gate is asked for (an inline-headers CORS preflight under `service/`).
+    const read = isReadVerb(handler.verb)
+    if (read && handler.facts.readsNothing) return undefined
     const required = requiredFor(policy, route.rel)
-    if (required && !gateHolds(required.mustMatch, handler.facts)) {
+    if (required && !gateHolds(required.mustMatch, handler.facts, handler.verb)) {
         return `${where} must also satisfy: ${describeGate(required.mustMatch)}. ${required.reason}`
     }
-    // A read that names nothing but inert values and its request reads no data, so it has nothing to authorize.
-    const read = isReadVerb(handler.verb)
-    if (!handler.facts.reachesAuthorize && read && handler.facts.readsNothing) return undefined
     if (!handler.facts.reachesAuthorize && exemption) {
+        const gate = exemption.mustMatch
+        const facts = handler.facts
+        // What a reads-only read did that its gate does not allow, named, so the author can see which name to drop.
+        const why =
+            gate.kind !== 'reads-only'
+                ? ''
+                : facts.outsideNames === null
+                  ? ` It cannot pass one: ${facts.outsideRefusal ?? 'it does something no name can excuse'}.`
+                  : ` ${capitalize(readsOnlyShortfall(gate, facts))}.`
+        // A read the webhook guard does not cover (a provider's handshake) has one other way through.
+        const hint =
+            read && gate.kind !== 'reads-only' && route.rel.startsWith('webhooks/')
+                ? ` A read here that reads nothing org-scoped (a provider's verification handshake) can instead have a ` +
+                  `reads-only entry for its own file in the app's authz-exemptions.mjs.`
+                : ''
         return (
-            `${where} sits under an exemption that holds only when ${describeGate(exemption.mustMatch)}, and this ` +
-            `handler does not: the exemption's justification does not hold here. Add the gate to THIS handler, or call ` +
-            `authorize(...). (A string, a comment, a look-alike, or the gate on another verb does not count.)`
+            `${where} sits under an exemption that holds only when ${describeGate(gate)}, and this ` +
+            `handler does not: the exemption's justification does not hold here.${why} Add the gate to THIS handler, ` +
+            `or call authorize(...). (A string, a comment, a look-alike, or the gate on another verb does not count.)` +
+            hint
         )
     }
     if (!handler.facts.reachesAuthorize && read) {
@@ -589,9 +903,11 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
             `does one whose denial cannot reach the handler. Call authorize(...) in this handler (a self-only read ` +
             `authorizes its self-only subject), or, only if it reads nothing org-scoped, ` +
             (route.rel.startsWith('../')
-                ? `move it under src/app/api, where an exemption in the app's authz-exemptions.mjs can name it: a ` +
-                  `route outside src/app/api can match none.`
-                : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs.`) +
+                ? `name it in the app's authz-exemptions.mjs under \`outsideApi\` (keys relative to src/app), with ` +
+                  `a \`reads-only\` gate mapping each import it reads to its module, the only gate a route outside src/app/api can ` +
+                  `match.`
+                : `name a justified exemption, with the gate it passes, in the app's authz-exemptions.mjs (a ` +
+                  `\`reads-only\` gate maps each import a read may name to its module).`) +
             (policy.hint ? ` ${policy.hint}` : '')
         )
     }
@@ -608,6 +924,83 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
         )
     }
     return undefined
+}
+
+/**
+ * A page's export, judged as a read (safeinsights/sssb#221): it passes by reaching `authorize`, by reading nothing
+ * (with the page allowances, `outsideNamesOf`), or by an exemption whose gate is `reads-only` and holds. No other gate
+ * kind applies to a page: each proves a route's shape (a webhook wrapper, a port call, a simulated-mode 404), not a
+ * render's. A gate a prefix requires alongside (`service/`) is required of a page under it too.
+ */
+function judgePage(
+    route: ScannedRoute,
+    facts: HandlerFacts,
+    verb: string,
+    policy: ScanPolicy,
+    where: string,
+): string | undefined {
+    // A page under an intercepting segment is also served at the URL it intercepts, so no path-keyed entry applies to it.
+    const found = route.intercepting ? undefined : exemptionFor(policy, route.rel, verb)
+    const exemption = found?.mustMatch.kind === 'reads-only' ? found : undefined
+    if (exemption && gateHolds(exemption.mustMatch, facts, verb)) return undefined
+    const required = requiredFor(policy, route.rel)
+    if (required && !gateHolds(required.mustMatch, facts, verb)) {
+        return `${where} must also satisfy: ${describeGate(required.mustMatch)}. ${required.reason}`
+    }
+    if (facts.reachesAuthorize || facts.readsNothing) return undefined
+    const names = facts.outsideNames
+    const gate = exemption?.mustMatch.kind === 'reads-only' ? exemption.mustMatch : undefined
+    const what =
+        names === null
+            ? (facts.outsideRefusal ?? 'it does something no name can excuse')
+            : gate !== undefined
+              ? readsOnlyShortfall(gate, facts)
+              : `it names ${[...names].map((n) => `\`${n}\``).join(', ')}`
+    if (exemption) {
+        return (
+            `${where} is a page export (a read) under an exemption that holds only when ` +
+            `${describeGate(exemption.mustMatch)}, and this one does not: ${what}. List only what the page reads, if ` +
+            `it is genuinely not org-scoped, or call authorize(...) in the page.`
+        )
+    }
+    return (
+        `${where} is a page export, rendered on the server for every request, that does not reach authorize(...) on ` +
+        `its own path, and reads something: ${what}. A page is judged as a read route is: one that reads org-scoped ` +
+        `data authorizes the read, \`authorize(user, orgId, 'read', subject)\` (a read of the caller's own things ` +
+        `authorizes its self-only subject), because the session's org says where a person is placed, not that they may ` +
+        `read there (the role \`none\` is placed with no standing). Load the data in the page and authorize there: a ` +
+        `component that loads its own data is out of the scan's sight. A page reads nothing when it names nothing from ` +
+        `outside itself but the inert values a read route may name, ${describePageAllowance()}, a component it only ` +
+        `renders as a JSX tag from a 'use client' module or a package (a server component of the app's own is named), ` +
+        `a component of its own file it only renders (which is read as part of it), what it loads with ` +
+        `\`import()\` from such a module only to render it, and an imported Server Action (from a 'use server' module ` +
+        `under src, judged on its own) it only hands on as a JSX attribute's value, \`action={save}\`, never calls. ` +
+        (route.intercepting
+            ? `It is under an intercepting segment (\`(.)x\`), which Next also serves at the URL it intercepts, so no ` +
+              `exemption applies to it: authorize, or read nothing.`
+            : `Only if it reads nothing org-scoped, name it in the app's authz-exemptions.mjs under \`outsideApi\` (keys ` +
+              `relative to src/app), with a \`reads-only\` gate mapping each import it reads to its module.`)
+    )
+}
+
+function capitalize(text: string): string {
+    return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/** The page allow-list, as a failure message names it: built from PAGE_IMPORTS and PAGE_MEMBERS, so it cannot drift. */
+function describePageAllowance(): string {
+    const imports = Object.entries(PAGE_IMPORTS).map(
+        ([module, names]) => `${names.map((n) => `\`${n}\``).join(', ')} (${module})`,
+    )
+    const members = Object.entries(PAGE_MEMBERS).flatMap(([module, objects]) =>
+        Object.entries(objects).map(
+            ([name, allowed]) =>
+                `${Object.entries(allowed)
+                    .map(([member, use]) => `\`${name}.${member}${use === 'call' ? '()' : ''}\``)
+                    .join(', ')} (${module}; \`${name}\` itself, or any other member of it, is not)`,
+        ),
+    )
+    return [...imports, ...members].join(', ')
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -656,18 +1049,264 @@ class RootScanner {
     private readonly sources = new Map<string, Source | string>()
     private readonly resolution: ts.CompilerOptions
     private readonly authorizeModules: readonly string[]
+    private readonly appDir: string
+    /** The directory the tsconfig's `paths` are measured from (its `baseUrl`, else its own directory). */
+    private readonly pathsBase: string
+    /** `@sssb/kit`'s real package directory as the app resolves it, or undefined where it does not. */
+    private readonly kitDir: string | undefined
+    /** The app directory's real path, which an installed package's `node_modules` sits at or above. */
+    private readonly appReal: string
+    /** Whether a component, by importing file, specifier and exported name, is one a page may render out of sight. */
+    private readonly renderable = new Map<string, boolean>()
 
     constructor(root: ScanRoot, authorizeModules: readonly string[]) {
         this.authorizeModules = authorizeModules
         this.resolution = root.tsconfig ? readCompilerOptions(root.tsconfig) : DEFAULT_RESOLUTION
+        this.appDir = path.resolve(root.appDir ?? root.dir)
+        this.pathsBase = this.resolution.baseUrl ?? (root.tsconfig ? path.dirname(root.tsconfig) : this.appDir)
+        // An app inside the kit's own package directory (or the kit itself) is the kit's code, not an adopter of it.
+        const kit = kitPackageDir(this.appDir)
+        const app = realpathOrUndefined(this.appDir) ?? this.appDir
+        this.kitDir = kit !== undefined && (app === kit || app.startsWith(kit + path.sep)) ? undefined : kit
+        this.appReal = app
+    }
+
+    /**
+     * Whether a page may render the component exported as `name` from the module `specifier` names, imported from
+     * `from`, as reading nothing (safeinsights/sssb#221): it is declared in a client module (the module that DECLARES it,
+     * followed through re-exports, opens with `'use client'`: it runs in the browser, and reaches data only through
+     * routes), or it is an installed package's (`isInstalled`: its file's real path runs through a `node_modules` at the
+     * app's directory or above it, where a package manager installs, and not through a pnpm `file:` or `link:`
+     * dependency) or SSSB's own (`@sssb/kit`'s real package directory, as the app resolves it, so its screens stay out of
+     * sight here as for an adopter who installs it; not trusted for an app inside that directory). Anything else, in the
+     * app or out of it (a workspace package of the adopter's own, linked or reached by a path or an alias, a
+     * `node_modules` folder under the app's `src`), is out of sight only when it is a client module: a server component
+     * may load its own data, so the page counts its name. A module that does not resolve, a re-export that cannot be
+     * followed or leads back to itself, and a module that could be any of several files, are not either.
+     */
+    private isRenderable(from: Source, specifier: string, name: string | undefined, seen = new Set<string>()): boolean {
+        const key = `${from.fileName}\0${specifier}\0${name ?? '*'}`
+        const known = this.renderable.get(key)
+        if (known !== undefined) return known
+        if (seen.has(key)) return false
+        seen.add(key)
+        const resolved = ts.resolveModuleName(specifier, from.fileName, this.resolution, ts.sys).resolvedModule
+        let answer = false
+        if (resolved) {
+            const real = realpathOrUndefined(resolved.resolvedFileName)
+            const kit = this.kitDir
+            if (real !== undefined && this.isInstalled(real)) answer = true
+            else if (real !== undefined && kit !== undefined && real.startsWith(kit + path.sep)) answer = true
+            else {
+                const target = this.resolve(from, specifier)
+                if (typeof target === 'string') answer = false
+                else if (name === undefined) answer = hasDirective(target.sf, target.sf.statements, 'use client')
+                else {
+                    // Follow the export to the module that declares it: a server barrel's re-export of a client
+                    // component is the client component.
+                    const binding = this.exportNamed(target, name, new Set())
+                    if (binding?.kind === 'decl')
+                        answer = hasDirective(binding.src.sf, binding.src.sf.statements, 'use client')
+                    else if (binding?.kind === 'module') {
+                        answer = this.isRenderable(binding.src, binding.specifier, binding.name, seen)
+                    }
+                }
+            }
+        }
+        this.renderable.set(key, answer)
+        return answer
+    }
+
+    /**
+     * Whether a resolved file's real path is an installed package's: it runs through a `node_modules` segment, the
+     * directory before the first one is the app's directory or one of its ancestors (where a package manager installs:
+     * the app's own, or a workspace root's), and no segment is a pnpm `file:` or `link:` dependency
+     * (`.pnpm/<name>@file+…`, `@link+…`), which is the adopter's own code injected or linked. A `node_modules` folder
+     * anywhere below the app's directory (under its `src`, say) is the app's code.
+     */
+    private isInstalled(real: string): boolean {
+        const segments = real.split(path.sep)
+        const first = segments.indexOf('node_modules')
+        if (first < 0 || segments.some((segment) => /@(?:file|link)\+/.test(segment))) return false
+        const above = segments.slice(0, first).join(path.sep)
+        return this.appReal === above || this.appReal.startsWith(above + path.sep)
+    }
+
+    /**
+     * The declaration the export `name` of the module `specifier` names, imported from `from`, followed through
+     * re-exports to the module that declares it; undefined for a module that does not resolve, a missing export, and a
+     * re-export that cannot be followed or leads back to itself.
+     */
+    private declaringBinding(
+        from: Source,
+        specifier: string,
+        name: string,
+    ): { binding: Extract<Binding, { kind: 'decl' }>; exported: string } | undefined {
+        let binding: Binding | undefined = { kind: 'module', src: from, specifier, name }
+        /** The name the declaring module exports it under: the last link's, after every rename on the way. */
+        let exported = name
+        const seen = new Set<string>()
+        while (binding?.kind === 'module') {
+            const target = this.resolve(binding.src, binding.specifier)
+            if (typeof target === 'string') return undefined
+            const key = `${target.fileName}\0${binding.name}`
+            if (seen.has(key)) return undefined
+            seen.add(key)
+            exported = binding.name
+            binding = this.exportNamed(target, binding.name, new Set())
+        }
+        return binding?.kind === 'decl' ? { binding, exported } : undefined
+    }
+
+    /**
+     * The pins a `reads-only` gate may give the export `name` of `specifier`, imported from `from`, and hold
+     * (`ImportSource`): the specifier when it is not relative, resolves from the app's directory to the file it
+     * resolves to from `from`, and is not itself the path of a file in the app; the app-relative path of that file; and
+     * that of the file declaring the export, when it declares it under the name imported.
+     */
+    private pinsOf(from: Source, specifier: string, name: string): ImportSource {
+        const pins = new Set<string>()
+        const resolvedFrom = (file: string) =>
+            ts.resolveModuleName(specifier, file, this.resolution, ts.sys).resolvedModule?.resolvedFileName
+        const resolved = resolvedFrom(from.fileName)
+        // A specifier pin: resolving (from the app's directory as from the file, to one file), and not the path of a
+        // file in the app, which is a path pin only, so a `paths` entry spelled like a path (`"src/*": ["./evil/*"]`)
+        // cannot answer to the pin of the file it names. A relative or absolute specifier needs no test here: no pin can
+        // be written to match one (`isPin`).
+        if (
+            resolved !== undefined &&
+            resolvedFrom(path.join(this.appDir, 'package.json')) === resolved &&
+            !isFile(path.join(this.appDir, specifier))
+        ) {
+            pins.add(specifier)
+        }
+        const inApp = (file: string): string | undefined => {
+            const rel = path
+                .relative(this.appReal, realpathOrUndefined(file) ?? file)
+                .split(path.sep)
+                .join('/')
+            const segments = rel.split('/')
+            return rel === '' || path.isAbsolute(rel) || segments[0] === '..' || segments.includes('node_modules')
+                ? undefined
+                : rel
+        }
+        // The declaring file answers only for the export the pin names: a barrel's `export { rows as corsHeaders }`
+        // makes `corsHeaders` the barrel's, not the file that declares `rows`.
+        const declaring = this.declaringBinding(from, specifier, name)
+        const declared = declaring?.exported === name ? declaring.binding.src.fileName : undefined
+        for (const file of [resolved, declared]) {
+            const rel = file === undefined ? undefined : inApp(file)
+            if (rel !== undefined) pins.add(rel)
+        }
+        return { specifier, resolves: resolved !== undefined, pins: [...pins] }
+    }
+
+    /**
+     * Whether the export `name` of the module `specifier` names, imported from `from`, is a Server Action the scan
+     * judges on its own (`scanServerActions`), so a page may hand it on by reference (safeinsights/sssb#221): followed
+     * through re-exports to the module that declares it, as `isRenderable` follows a component, that module is a file
+     * under the app's `src` (the tree the Server Action walk reads, not through a `node_modules`), and either its
+     * prologue is `'use server'` (every export of it is an action) or the exported function's own body opens with
+     * `'use server'`. A module that does not resolve, a re-export that cannot be followed or leads back to itself, and
+     * anything else exported, are not one.
+     */
+    private isJudgedServerAction(from: Source, specifier: string, name: string): boolean {
+        const binding = this.declaringBinding(from, specifier, name)?.binding
+        if (binding === undefined) return false
+        const real = realpathOrUndefined(binding.src.fileName)
+        const srcDir = realpathOrUndefined(path.join(this.appDir, 'src'))
+        if (real === undefined || srcDir === undefined || !real.startsWith(srcDir + path.sep)) return false
+        if (real.split(path.sep).includes('node_modules')) return false
+        if (hasUseServer(binding.src.sf, binding.src.sf.statements)) return true
+        const decl = binding.decl
+        const fn = ts.isFunctionDeclaration(decl)
+            ? decl
+            : ts.isVariableDeclaration(decl) && isConst(decl) && decl.initializer !== undefined
+              ? unwrap(decl.initializer)
+              : undefined
+        return (
+            fn !== undefined &&
+            (ts.isFunctionDeclaration(fn) || isFunctionLiteral(fn)) &&
+            fn.body !== undefined &&
+            ts.isBlock(fn.body) &&
+            hasUseServer(binding.src.sf, fn.body.statements)
+        )
+    }
+
+    /**
+     * Whether a page's default import of `specifier` is a static asset (a stylesheet's class names, an image's URL), told
+     * by the file it names, never by its text alone: a relative specifier (`./`, `../`) or one a tsconfig `paths` entry
+     * maps, with no `?` or `#` (a loader query) and an asset extension (STATIC_ASSET), whose literal target file exists
+     * with an asset extension, and which TypeScript's resolution does not land on code (`./members.css` resolves to a
+     * `members.css.ts` beside it) or a declaration, but the asset's own sibling `.d.css.ts` of `allowArbitraryExtensions`.
+     * A bare specifier (a package, `baseUrl`, a package's self-reference or `imports`, a bundler alias) is never one: it
+     * is counted as any default import is.
+     */
+    private isStaticAsset(from: Source, specifier: string): boolean {
+        if (/[?#]/.test(specifier) || !STATIC_ASSET.test(specifier)) return false
+        const literal = this.literalFiles(from, specifier)?.filter((file) => STATIC_ASSET.test(file) && isFile(file))
+        if (literal === undefined || literal.length === 0) return false
+        const resolved = ts.resolveModuleName(specifier, from.fileName, this.resolution, ts.sys).resolvedModule
+        if (resolved === undefined) return true
+        const landed = path.resolve(resolved.resolvedFileName)
+        // The asset's own declaration: `members.d.css.ts` beside `members.css`.
+        return literal.some((file) => {
+            const ext = path.extname(file)
+            return landed === path.join(path.dirname(file), `${path.basename(file, ext)}.d${ext}.ts`)
+        })
+    }
+
+    /**
+     * The files a relative specifier (`./`, `../`), or one a `paths` entry maps, names as written (no extension added),
+     * or undefined for any other specifier.
+     */
+    private literalFiles(from: Source, specifier: string): string[] | undefined {
+        if (/^\.{1,2}\//.test(specifier)) {
+            return [path.resolve(path.dirname(from.fileName), specifier)]
+        }
+        const mapped = Object.entries(this.resolution.paths ?? {}).flatMap(([pattern, targets]) => {
+            const star = pattern.indexOf('*')
+            if (star < 0) return pattern === specifier ? targets : []
+            const [head, tail] = [pattern.slice(0, star), pattern.slice(star + 1)]
+            if (
+                !specifier.startsWith(head) ||
+                !specifier.endsWith(tail) ||
+                specifier.length < head.length + tail.length
+            ) {
+                return []
+            }
+            const captured = specifier.slice(head.length, specifier.length - tail.length)
+            return targets.map((target) => target.replace('*', captured))
+        })
+        return mapped.length === 0 ? undefined : mapped.map((target) => path.resolve(this.pathsBase, target))
     }
 
     handlers(file: string): Handler[] {
         const src = this.load(file)
         if (typeof src === 'string') return [{ verb: '*', refusal: src }]
-        return this.judgedExports(src, new Set()).map(([verb, binding]) => {
+        return this.judgedExports(src, new Set(), JUDGED_VERBS).map(([verb, binding]) => {
             const node = this.handlerOf(binding, new Set())
-            return 'reason' in node ? { verb, refusal: node.reason } : { verb, facts: this.facts(node) }
+            return 'reason' in node ? { verb, refusal: node.reason } : { verb, facts: this.facts(node, false) }
+        })
+    }
+
+    /**
+     * A page's handlers: each export Next calls (PAGE_EXPORTS), through re-exports, analysed as a read with the page
+     * allowances. None for a `'use client'` COMPONENT file, or for an export whose function is in one (re-exported from
+     * it): a client component runs in the browser, and reaches data only through routes, which are judged. A metadata
+     * route is judged whatever its prologue: it runs on the server.
+     */
+    pageHandlers(file: string): Handler[] {
+        const src = this.load(file)
+        if (typeof src === 'string') return [{ verb: '*', refusal: src }]
+        // A metadata route runs on the server whatever its prologue says, so it is never skipped as a client file.
+        const component = !METADATA_FILE.test(path.basename(file))
+        if (component && hasDirective(src.sf, src.sf.statements, 'use client')) return []
+        return this.judgedExports(src, new Set(), PAGE_EXPORTS).flatMap(([verb, binding]): Handler[] => {
+            const node = this.handlerOf(binding, new Set())
+            if ('reason' in node) return [{ verb, refusal: node.reason }]
+            if (component && hasDirective(node.src.sf, node.src.sf.statements, 'use client')) return []
+            return [{ verb, facts: this.facts(node, true) }]
         })
     }
 
@@ -676,7 +1315,7 @@ class RootScanner {
         const src = this.load(file)
         if (typeof src === 'string') return [{ name: '*', handler: { verb: 'action', refusal: src } }]
         const out: Array<{ name: string; handler: Handler }> = []
-        if (hasUseServer(src.sf.statements)) {
+        if (hasUseServer(src.sf, src.sf.statements)) {
             const { named, stars } = exportsOf(src)
             for (const [name, binding] of named) {
                 const node = this.handlerOf(binding, new Set())
@@ -685,7 +1324,7 @@ class RootScanner {
                     handler:
                         'reason' in node
                             ? { verb: 'action', refusal: node.reason }
-                            : { verb: 'action', facts: this.facts(node) },
+                            : { verb: 'action', facts: this.facts(node, false) },
                 })
             }
             for (const specifier of stars) {
@@ -695,13 +1334,13 @@ class RootScanner {
         }
         const visit = (node: ts.Node): void => {
             if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
-                if (hasUseServer(node.body.statements)) {
+                if (hasUseServer(src.sf, node.body.statements)) {
                     const fn = node as ts.FunctionLikeDeclaration
                     const line = src.sf.getLineAndCharacterOfPosition(fn.getStart(src.sf)).line + 1
                     const label = fn.name && ts.isIdentifier(fn.name) ? fn.name.text : 'inline'
                     out.push({
                         name: `${label} (line ${line})`,
-                        handler: { verb: 'action', facts: this.facts({ src, fn }) },
+                        handler: { verb: 'action', facts: this.facts({ src, fn }, false) },
                     })
                 }
             }
@@ -755,10 +1394,13 @@ class RootScanner {
         return typeof loaded === 'string' ? `'${specifier}' (${resolved.resolvedFileName}): ${loaded}` : loaded
     }
 
-    /** `[verb, binding]` for every verb the module exports (`JUDGED_VERBS`), through `export *` as well. */
-    private judgedExports(src: Source, seen: Set<string>): Array<[string, Binding]> {
+    /**
+     * `[name, binding]` for every one of `names` the module exports (`JUDGED_VERBS`, or a page's PAGE_EXPORTS), through
+     * `export *` as well. (`export *` never re-exports a `default`, as in JavaScript.)
+     */
+    private judgedExports(src: Source, seen: Set<string>, names: readonly string[]): Array<[string, Binding]> {
         const { named, stars } = exportsOf(src)
-        const out = [...named].filter(([name]) => JUDGED_VERBS.includes(name))
+        const out = [...named].filter(([name]) => names.includes(name))
         if (seen.has(src.fileName)) return out
         seen.add(src.fileName)
         for (const specifier of stars) {
@@ -768,19 +1410,19 @@ class RootScanner {
                 out.push(['*', { kind: 'refused', reason }])
                 continue
             }
-            for (const [verb, binding] of this.judgedExports(target, seen)) {
-                if (!out.some(([known]) => known === verb)) out.push([verb, binding])
+            for (const [verb, binding] of this.judgedExports(target, seen, names)) {
+                if (verb !== 'default' && !out.some(([known]) => known === verb)) out.push([verb, binding])
             }
         }
         return out
     }
 
-    /** The binding a module exports under `name`, through `export *` as well. */
+    /** The binding a module exports under `name`, through `export *` as well (never for `default`, which it skips). */
     private exportNamed(src: Source, name: string, seen: Set<string>): Binding | undefined {
         const { named, stars } = exportsOf(src)
         const direct = named.get(name)
         if (direct) return direct
-        if (seen.has(src.fileName)) return undefined
+        if (name === 'default' || seen.has(src.fileName)) return undefined
         seen.add(src.fileName)
         for (const specifier of stars) {
             const target = this.resolve(src, specifier)
@@ -854,16 +1496,45 @@ class RootScanner {
         }
     }
 
-    private facts(node: HandlerNode): HandlerFacts {
+    /** The facts on one handler; `page` reads it with the page allowances (`outsideNamesOf`). */
+    private facts(node: HandlerNode, page: boolean): HandlerFacts {
         const reach = new Reach(node.src, this.authorizeModules)
         if ('fn' in node) {
             reach.invoke(node.fn)
+            const {
+                names: outsideNames,
+                sources,
+                refusal: outsideRefusal,
+            } = outsideNamesOf(
+                node.src,
+                node.fn,
+                page
+                    ? {
+                          renderable: (specifier, name) => this.isRenderable(node.src, specifier, name),
+                          asset: (specifier) => this.isStaticAsset(node.src, specifier),
+                          serverAction: (specifier, name) => this.isJudgedServerAction(node.src, specifier, name),
+                      }
+                    : undefined,
+            )
+            // Each listed import's module, as the pins that can name it, so a reads-only gate holds a name to its module.
+            const outsideSources =
+                sources === null
+                    ? null
+                    : new Map(
+                          [...sources].map(([name, specifiers]): [string, ImportSource[]] => [
+                              name,
+                              [...specifiers].map((specifier) => this.pinsOf(node.src, specifier, name)),
+                          ]),
+                      )
             return {
                 reachesAuthorize: reach.authorize,
                 wrappedBy: null,
                 calls: reach.calls,
                 opensWithSimulated404: opensWithSimulated404(node.src, node.fn),
-                readsNothing: readsNothing(node.src, node.fn),
+                outsideNames,
+                outsideSources,
+                outsideRefusal,
+                readsNothing: outsideNames?.size === 0,
             }
         }
         reach.wrapped(node.call)
@@ -873,6 +1544,9 @@ class RootScanner {
             calls: reach.calls,
             opensWithSimulated404: false,
             // A wrapper is code the scan does not read, run on every request: what it reads is out of sight.
+            outsideNames: null,
+            outsideSources: null,
+            outsideRefusal: 'the handler is a call to a wrapper, whose code runs on every request out of sight',
             readsNothing: false,
         }
     }
@@ -1993,11 +2667,123 @@ const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
     '@sssb/kit/adapters/index': ['appMode', 'isSimulated'],
 }
 
+/**
+ * THE PAGE ALLOW-LIST (safeinsights/sssb#221): the named imports a PAGE's export may name, besides INERT_IMPORTS, and
+ * still read nothing. Pages only: a route keeps INERT_IMPORTS alone. Each is a case nearly every page of an app on SSSB
+ * has, and none carries org-scoped data. Refuse by default: an entry here is named with the case it serves, and the
+ * decision log's 2026-11-27 entries for `fix/authz-pages` and `fix/review-page-shapes` list them. Anything else a page names (the seed, the simulated
+ * world, a port, a data helper) authorizes, or is named by the app's own `reads-only` entry. A value of the page's own
+ * file, and `auth` or `routing` used any other way than PAGE_MEMBERS lists, are refused outright: no entry can excuse
+ * them.
+ */
+const PAGE_IMPORTS: Readonly<Record<string, readonly string[]>> = {
+    // The catalog and the locale: what every page reads to render its copy in the request's language (a layout's
+    // `getMessages` for NextIntlClientProvider is next-intl's own pattern). No data but the catalog and the locale.
+    // `getLocale` is the request's locale itself, the value `setRequestLocale` set or the URL's segment gave.
+    'next-intl/server': ['getLocale', 'getMessages', 'getTranslations', 'setRequestLocale'],
+    // React's `use`, as next-intl's documented sync page unwraps its params (`const { locale } = use(params)`): it only
+    // unwraps the promise or context it is handed, and that value's own names are judged where the page writes them.
+    react: ['use'],
+    // Not `headers` or `cookies` (`next/headers`): the request's headers carry its Cookie and Authorization, the
+    // session's credential, which a page could render into its HTML. A page that reads them names them in its entry.
+    // The locale layout's check that the URL's locale segment is one the app serves: a function of its two arguments.
+    // `useTranslations` is the same catalog read, in a component that is not async.
+    'next-intl': ['hasLocale', 'useTranslations'],
+    // A UI ability check of the caller's OWN abilities in their active org, which never throws and decides what a page
+    // offers, not what it reads (the routes behind each control authorize). Never a substitute for authorize(...).
+    '@sssb/kit/authz/authorize': ['canInActiveOrg'],
+    // The run mode beside `appMode` and `isSimulated`: whether the demo badge shows.
+    '@sssb/kit/adapters/index': ['isDemoMode'],
+    // The sign-in page's normaliser of the request's `returnTo`: a pure function of its argument.
+    '@sssb/kit/core/same-origin-path': ['sameOriginPath'],
+    // The locale layout's theme for the active tenant (ADR-0005): branding, not org data.
+    '@sssb/kit/theme': ['getTenantTheme'],
+    // The attributes Mantine's document shell spreads on <html>: constants.
+    '@mantine/core': ['mantineHtmlProps'],
+}
+
+/** How a page may use an allowed member: call it (`auth.getCurrentUser()`), or read it (`routing.locales`). */
+type MemberUse = 'call' | 'read'
+
+/**
+ * Named imports a PAGE may use only through the members listed, by module and exported name (safeinsights/sssb#221).
+ * The object itself (passed along, aliased, spread, read whole) and every other member are refused outright, with no
+ * name to excuse them, since what else it reaches may be org-scoped: `auth.listMembers` is a team's member list, the
+ * leak safeinsights/sssb#259 found on a page. A `call` member counts only as the callee of a call.
+ */
+const PAGE_MEMBERS: Readonly<Record<string, Readonly<Record<string, Readonly<Record<string, MemberUse>>>>>> = {
+    '@sssb/kit/adapters/index': {
+        // The session: who the caller is (`getCurrentUser`, `requireUser`), where a signed-out one goes (`signInPath`),
+        // why a signed-in one is refused (`refusal`, the sign-in page), and the orgs the caller belongs to
+        // (`listMyOrgs`, the header's org switcher): the caller's own placements, not an org's data.
+        auth: {
+            getCurrentUser: 'call',
+            listMyOrgs: 'call',
+            refusal: 'call',
+            requireUser: 'call',
+            signInPath: 'call',
+        },
+    },
+    // The locales the app serves, which the locale layout checks its segment against.
+    '@sssb/kit/i18n/routing': { routing: { locales: 'read' } },
+}
+
+/** The names PAGE_MEMBERS allows only through members: never countable on a page, from any module. */
+const MEMBER_NAMES: ReadonlySet<string> = new Set(
+    Object.values(PAGE_MEMBERS).flatMap((objects) => Object.keys(objects)),
+)
+
+/** Why a page may not use `name` (one of MEMBER_NAMES) reached through `from` (another module, a namespace, import()). */
+function memberSource(name: string, from: string): string {
+    const owners = Object.entries(PAGE_MEMBERS)
+        .filter(([, objects]) => Object.hasOwn(objects, name))
+        .map(([module]) => module)
+        .join(', ')
+    return (
+        `\`${name}\` is reached through ${from}, and a page may use \`${name}\` only as imported by name from ${owners}, ` +
+        'through its listed members, since what else it reaches may be org-scoped; no exemption can list it'
+    )
+}
+
+/** What the scanner resolves for a page's analysis: modules it may render, and default imports that are static assets. */
+interface PageResolution {
+    /** Whether the component exported as `name` (a namespace's whole module: undefined) from `specifier` renders out of sight. */
+    renderable(specifier: string, name: string | undefined): boolean
+    /** Whether a default import of `specifier` is a static asset. */
+    asset(specifier: string): boolean
+    /** Whether the export `name` of `specifier` is a Server Action the scan judges on its own (`isJudgedServerAction`). */
+    serverAction(specifier: string, name: string): boolean
+}
+
+/** Whether `file` is a file (through a link); false when it is missing or a directory. */
+function isFile(file: string): boolean {
+    try {
+        return statSync(file).isFile()
+    } catch {
+        return false
+    }
+}
+
+/** `@sssb/kit`'s real package directory, resolved from `appDir` as the app's own imports resolve it, or undefined. */
+function kitPackageDir(appDir: string): string | undefined {
+    try {
+        return realpathSync(
+            path.dirname(createRequire(path.join(appDir, 'package.json')).resolve('@sssb/kit/package.json')),
+        )
+    } catch {
+        return undefined
+    }
+}
+
+/** The extensions a page may default-import as a static asset (checked on the resolved file too: `isStaticAsset`). */
+const STATIC_ASSET = /\.(?:css|scss|png|jpe?g|gif|svg|webp|avif|ico)$/
+
 /** Member names that lead from any value to the `Function` constructor or a prototype the scan cannot see. */
 const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__'])
 
 /**
- * Whether `fn` reads nothing it could have to authorize. Its whole text is read LEXICALLY, not along a path
+ * READS NOTHING (`HandlerFacts.readsNothing`): whether a handler reads nothing it could have to authorize, computed by
+ * `outsideNamesOf` below (it reads nothing when that set is empty). Its whole text is read LEXICALLY, not along a path
  * (parameters, nested functions and dead branches included), and every name it refers to that is declared outside it
  * must be one of:
  *
@@ -2013,14 +2799,51 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  * a `.constructor` or `.__proto__` member (`Object.constructor('…')` is `Function`); a class (its heritage and members
  * run code the handler does not show) and a `using` declaration (its disposer runs).
  *
+ * A PAGE's export (`page`, safeinsights/sssb#221) may also name, and still read nothing:
+ *
+ * - an import PAGE_IMPORTS names, under its exported name (`setRequestLocale`, `canInActiveOrg`);
+ * - an import PAGE_MEMBERS names, only through a listed member (`auth.getCurrentUser()`, `routing.locales`): the import
+ *   used any other way (`auth.listMembers`, `auth` passed along) is refused outright, whatever an exemption lists;
+ * - an imported component it only RENDERS: a reference that is a JSX tag's name (`<DashboardGlue … />`, `<UI.Card>`),
+ *   by any import, named, default or namespace, when its module is a client one or a package's (`renderable`). What
+ *   it does is out of sight, as an imported helper's is; a server component of the app's own, which may load its own
+ *   data, is counted under its name, so a page loads its data itself and authorizes there;
+ * - a default import of a static asset (`styles` from `./page.module.css`, an image's URL);
+ * - an imported Server Action it only hands on, the whole value of a JSX attribute (`<form action={saveItem}>`), when
+ *   the scan judges it as one (`serverAction`: its declaring module is a `'use server'` file under the app's `src`, or
+ *   its function's body opens with `'use server'`); called, or used any other way, it is counted;
+ * - a component of its OWN file that it only renders (a function declared once and never reassigned, or a `const`
+ *   bound to a function literal): its text is read as part of the page, by these same rules, once each;
+ * - a module it loads with `import()` only to render what it takes from it, the one shape the app guide gives a real
+ *   adapter's component: `const { RealUserMenu } = await import('…')`, or one element of an awaited global
+ *   `Promise.all([...])` destructured the same way, every name a plain one kept under its exported name, each
+ *   referred to only as a JSX tag's name, from a client module or a package (from the app's own server module, the
+ *   name is counted). Any other `import()` is refused, as for a route;
+ * - never a name PAGE_MEMBERS allows through members (`auth`, `routing`) any other way, from any module, as a JSX tag
+ *   or a namespace's member included: it is refused, never counted, so no `reads-only` entry can list it.
+ *
  * What it does not see: a member read through a computed key the scan cannot evaluate (`request[key]`). Like a gate,
  * it proves the KIND of handler, one that names nothing but inert values and its request, not that no data can reach
  * it (ADR-0012).
+ *
+ * The names from outside `fn` that it refers to and that are not inert (`readsNothing`'s allow-list), or null when it
+ * does something no name can excuse: names a global off the allow-list (`fetch`, `process`), names an import under
+ * another name than its exported one or a whole namespace, or uses a class, `import()`, `import.meta`, `using` or a
+ * `constructor`/`__proto__` member, or names a value of the route's own file (other than a primitive const). An import
+ * counts by its exported name (a default import cannot). What a `reads-only` gate (`Gate`) matches against: a read that names
+ * nothing outside it but inert values and the names the gate lists.
  */
-function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
+function outsideNamesOf(
+    src: Source,
+    fn: ts.FunctionLikeDeclaration,
+    /** For a page's export: what the scanner resolves for it (`PageResolution`). */
+    pageResolution?: PageResolution,
+):
+    | { names: ReadonlySet<string>; sources: ReadonlyMap<string, ReadonlySet<string>>; refusal: null }
+    | { names: null; sources: null; refusal: string } {
     const { checker, sf } = src
-    // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
-    const inside = (decl: ts.Declaration) => decl !== fn && decl.getStart(sf) >= fn.getStart(sf) && decl.end <= fn.end
+    const page = pageResolution !== undefined
+    const within = (node: ts.Node, root: ts.Node) => node.getStart(sf) >= root.getStart(sf) && node.end <= root.end
     const assigned = new Map<string, boolean>()
     const assignedGlobal = (name: string): boolean => {
         let known = assigned.get(name)
@@ -2031,10 +2854,12 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
         const imported = valueImportOf(decl)
         if (imported !== undefined) {
             if (imported.kind !== 'named') return false
+            // A page's static asset (a stylesheet's class names, an image's URL): the bundler's output, no data.
+            if (page && ts.isImportClause(decl) && pageResolution.asset(imported.module)) return true
+            if (!ts.isImportSpecifier(decl) || decl.name.text !== imported.name) return false
             return (
-                ts.isImportSpecifier(decl) &&
-                decl.name.text === imported.name &&
-                (INERT_IMPORTS[imported.module] ?? []).includes(imported.name)
+                (INERT_IMPORTS[imported.module] ?? []).includes(imported.name) ||
+                (page && (PAGE_IMPORTS[imported.module] ?? []).includes(imported.name))
             )
         }
         return (
@@ -2044,48 +2869,339 @@ function readsNothing(src: Source, fn: ts.FunctionLikeDeclaration): boolean {
             isPrimitiveLiteral(src, decl.initializer)
         )
     }
-    const allowedReference = (id: ts.Identifier): boolean => {
-        const parent = id.parent
-        const symbol =
-            ts.isShorthandPropertyAssignment(parent) && parent.name === id
-                ? checker.getShorthandAssignmentValueSymbol(parent)
-                : checker.getSymbolAtLocation(id)
-        const decl = symbol?.declarations?.[0]
-        if (decl === undefined) {
-            return (INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)
-        }
-        return inside(decl) || allowedOutside(decl)
+    const names = new Set<string>()
+    /** The module specifiers each listed name is imported from, as the file writes them. */
+    const sources = new Map<string, Set<string>>()
+    const source = (name: string, specifier: string) =>
+        sources.set(name, (sources.get(name) ?? new Set()).add(specifier))
+    let refusal: string | null = null
+    const refuse = (why: string): false => {
+        refusal ??= why
+        return false
     }
-    let reads = false
-    const visit = (node: ts.Node): void => {
-        if (reads) return
-        // A type runs nothing, and names nothing the handler reads.
-        // An instantiation expression (`load<T>`) is an ExpressionWithTypeArguments, which is a type node holding a value.
-        if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression)
-        if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) return
-        if (
-            ts.isClassLike(node) ||
-            ts.isMetaProperty(node) ||
-            (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-            (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) ||
-            (ts.isPropertyAccessExpression(node) && ESCAPE_MEMBERS.has(node.name.text)) ||
-            (ts.isBindingElement(node) &&
-                ESCAPE_MEMBERS.has((node.propertyName ?? node.name).getText(sf).replace(/^['"]|['"]$/g, ''))) ||
-            (ts.isElementAccessExpression(node) &&
-                ts.isStringLiteralLike(node.argumentExpression) &&
-                ESCAPE_MEMBERS.has(node.argumentExpression.text))
-        ) {
-            reads = true
-            return
+    /**
+     * Counts a non-inert declaration from outside the handler under its name, or refuses it. Only an IMPORT counts: under
+     * its exported name (never a default import, which has no exported name). Nothing of the route's own file does (but the primitive
+     * consts reading nothing allows): an object, a function or any other value there can be filled or changed by code
+     * of the file the scan does not walk, the handler's own callers included, as four rounds of review showed. A shared
+     * value goes in a module, and the gate lists its import.
+     */
+    const count = (decl: ts.Declaration, id: ts.Identifier): boolean => {
+        const imported = valueImportOf(decl)
+        if (imported !== undefined) {
+            if (imported.kind === 'namespace') return refuse(`\`${id.text}\` is a namespace import, the whole module`)
+            // A default import has no exported name to hold it to, only the local one the author chose.
+            if (ts.isImportClause(decl)) return refuse(`\`${id.text}\` is a default import, which has no exported name`)
+            if (ts.isImportSpecifier(decl) && decl.name.text === imported.name) {
+                names.add(imported.name)
+                source(imported.name, imported.module)
+                return true
+            }
+            return refuse(`\`${id.text}\` is an import under another name than its exported \`${imported.name}\``)
         }
-        if (ts.isIdentifier(node) && isReference(node) && !allowedReference(node)) {
-            reads = true
-            return
+        if (ts.isImportSpecifier(decl) || ts.isImportClause(decl) || ts.isNamespaceImport(decl)) {
+            return refuse(`\`${id.text}\` is a type-only import`)
+        }
+        if (ts.isImportEqualsDeclaration(decl)) {
+            return refuse(`\`${id.text}\` is an \`import … = require(…)\`, a whole module`)
+        }
+        if (isAmbient(decl)) return refuse(`\`${id.text}\` is declared with \`declare\`, so its value is out of sight`)
+        if (page) {
+            return refuse(
+                `\`${id.text}\` is a declaration of the page's own file, which code of the file can change: write the ` +
+                    'value inline where the page uses it (a literal), render it as a component of this file (a JSX ' +
+                    "tag), or move it into a module and list the import in the page's reads-only entry (a const bound " +
+                    'to a primitive literal is already inert)',
+            )
+        }
+        return refuse(
+            `\`${id.text}\` is a declaration of the route's own file, which code of the file can change; put it in a ` +
+                'module and list the import',
+        )
+    }
+    /** The symbol an identifier refers to, through a shorthand property and an export specifier. */
+    const symbolAt = (id: ts.Identifier): ts.Symbol | undefined => {
+        const parent = id.parent
+        if (ts.isShorthandPropertyAssignment(parent) && parent.name === id) {
+            return checker.getShorthandAssignmentValueSymbol(parent)
+        }
+        if (ts.isExportSpecifier(parent)) return checker.getExportSpecifierLocalTargetSymbol(parent)
+        return checker.getSymbolAtLocation(id)
+    }
+    /**
+     * A page's use of an import PAGE_MEMBERS allows only through some members: true for a listed member used as listed,
+     * a refusal (no name can excuse it) for anything else.
+     */
+    const memberUse = (id: ts.Identifier, name: string, members: Readonly<Record<string, MemberUse>>): boolean => {
+        const allowed = Object.entries(members)
+            .map(([member, use]) => `\`${name}.${member}${use === 'call' ? '()' : ''}\``)
+            .join(', ')
+        const parent = id.parent
+        if (!ts.isPropertyAccessExpression(parent) || parent.expression !== id) {
+            return refuse(
+                `\`${name}\` is used itself (passed along, aliased, spread or read whole), and a page may use it only as ` +
+                    `${allowed}, since what else it reaches may be org-scoped`,
+            )
+        }
+        const member = parent.name.text
+        const use = Object.hasOwn(members, member) ? members[member] : undefined
+        if (use === 'read') return true
+        if (use === 'call' && ts.isCallExpression(parent.parent) && parent.parent.expression === parent) return true
+        return refuse(
+            `\`${name}.${member}\` is used${use === 'call' ? ' without being called' : ''}, and a page may use ` +
+                `\`${name}\` only as ${allowed}, since what else it reaches may be org-scoped`,
+        )
+    }
+    /** The same-file components read as part of the page so far: each is read once, and a cycle ends. */
+    const followed = new Set<ts.Node>([fn])
+    /** Reads `current` (the handler, or a same-file component it renders), counting what it names. */
+    const analyse = (current: ts.FunctionLikeDeclaration): void => {
+        // The handler itself is not inside it: a property hung on it (`GET.load = load`) would be out of sight.
+        const inside = (decl: ts.Declaration) => decl !== current && within(decl, current)
+        const dynamic = page ? renderedImports(src, current) : { calls: new Set<ts.Node>(), bindings: new Map() }
+        /** Records what `id` refers to; false when no name can excuse it. */
+        const reference = (id: ts.Identifier): boolean => {
+            const symbol = symbolAt(id)
+            const decl = symbol?.declarations?.[0]
+            if (decl === undefined) {
+                if ((INERT_GLOBALS.has(id.text) || GLOBAL_ERROR.test(id.text)) && !assignedGlobal(id.text)) return true
+                return refuse(`\`${id.text}\` is a global off the inert list`)
+            }
+            // The handler naming itself: what is hung on it (`GET.load = load`) is out of sight, whatever it is called.
+            const bound = variableOf(decl)?.initializer
+            if (decl === fn || (bound !== undefined && unwrap(bound) === fn)) {
+                return refuse('it refers to itself, and what is hung on a handler is out of sight')
+            }
+            const loaded = dynamic.bindings.get(decl)
+            if (loaded !== undefined) {
+                if (MEMBER_NAMES.has(id.text)) return refuse(memberSource(id.text, `import('${loaded}')`))
+                if (!isJsxTagName(id)) {
+                    return refuse(
+                        `\`${id.text}\` is loaded with \`import('${loaded}')\`, and a page may use what it loads ` +
+                            'with import() only to render it as a component (a JSX tag)',
+                    )
+                }
+                // Rendered out of sight only from a client module or a package; a server module of the app is counted.
+                if (pageResolution?.renderable(loaded, id.text) !== true) {
+                    names.add(id.text)
+                    source(id.text, loaded)
+                }
+                return true
+            }
+            if (inside(decl) || allowedOutside(decl)) return true
+            if (page) {
+                const imported = valueImportOf(decl)
+                // A name PAGE_MEMBERS allows only through members comes first, whatever else it is used as (a JSX tag
+                // included), and is never countable: no reads-only entry can list it, from SSSB's module or any other.
+                if (imported?.kind === 'named' && MEMBER_NAMES.has(imported.name)) {
+                    if (!ts.isImportSpecifier(decl) || decl.name.text !== imported.name) return count(decl, id)
+                    const members = PAGE_MEMBERS[imported.module]?.[imported.name]
+                    if (members === undefined) return refuse(memberSource(imported.name, `'${imported.module}'`))
+                    return memberUse(id, imported.name, members)
+                }
+                // An imported Server Action handed on by reference, a JSX attribute's whole value (`<form
+                // action={saveItem}>`, `<Form action={saveItem} />`). The page does not call it, though a component it
+                // hands it to may, even during the render; either way the scan judges it on its own as the POST it is,
+                // so it must reach authorize itself (any reachable authorize: ADR-0012's may-reach limit). Called by
+                // the page, or used any other way, it counts.
+                if (
+                    imported?.kind === 'named' &&
+                    isJsxAttributeValue(id) &&
+                    pageResolution?.serverAction(imported.module, imported.name) === true
+                ) {
+                    return true
+                }
+                if (isJsxTagName(id)) {
+                    if (imported !== undefined) {
+                        // A namespace's member that PAGE_MEMBERS names (`<kit.auth.listMembers />`) is not a component.
+                        const member = ts.isPropertyAccessExpression(id.parent) ? id.parent.name.text : undefined
+                        if (imported.kind === 'namespace' && member !== undefined && MEMBER_NAMES.has(member)) {
+                            return refuse(memberSource(member, `the namespace import \`${id.text}\``))
+                        }
+                        // An imported component the page renders, from a client module or a package: out of sight. A
+                        // server component of the app's own may load its own data, so it is counted below.
+                        const exported = imported.kind === 'namespace' ? member : imported.name
+                        if (pageResolution?.renderable(imported.module, exported) === true) return true
+                    } else {
+                        // A component of the page's own file: in sight, so read as part of the page.
+                        const component = isDirectJsxTag(id) ? sameFileComponent(src, decl) : undefined
+                        if (component !== undefined) {
+                            if (!followed.has(component)) {
+                                followed.add(component)
+                                analyse(component)
+                            }
+                            return refusal === null
+                        }
+                    }
+                }
+            }
+            return count(decl, id)
+        }
+        const visit = (node: ts.Node): void => {
+            if (refusal !== null) return
+            // A type runs nothing, and names nothing the handler reads.
+            // An instantiation expression (`load<T>`) is an ExpressionWithTypeArguments, which is a type node holding a value.
+            if (ts.isExpressionWithTypeArguments(node)) return visit(node.expression)
+            if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) return
+            if (ts.isClassLike(node)) return void refuse('it declares a class, whose members run code out of sight')
+            if (ts.isMetaProperty(node)) return void refuse('it reads `import.meta` or `new.target`')
+            if (
+                ts.isCallExpression(node) &&
+                node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+                !dynamic.calls.has(node)
+            ) {
+                return void refuse(
+                    page
+                        ? 'it loads a module with `import()` other than to render what it takes from it ' +
+                              "(`const { Form } = await import('…')`, Form only a JSX tag)"
+                        : 'it loads a module with `import()`',
+                )
+            }
+            if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0) {
+                return void refuse('it has a `using` declaration, whose disposer runs')
+            }
+            if (
+                (ts.isPropertyAccessExpression(node) && ESCAPE_MEMBERS.has(node.name.text)) ||
+                (ts.isBindingElement(node) && ESCAPE_MEMBERS.has(bindingKey(node, sf))) ||
+                (ts.isElementAccessExpression(node) &&
+                    ts.isStringLiteralLike(node.argumentExpression) &&
+                    ESCAPE_MEMBERS.has(node.argumentExpression.text))
+            ) {
+                return void refuse('it reads a `constructor` or `__proto__` member')
+            }
+            if (ts.isIdentifier(node) && isReference(node) && !reference(node)) return
+            ts.forEachChild(node, visit)
+        }
+        visit(current)
+    }
+    analyse(fn)
+    return refusal === null ? { names, sources, refusal: null } : { names: null, sources: null, refusal }
+}
+
+/** Whether `id` is a JSX tag's name, or the head of one (`<UI.Card>`): a component rendered, not a value read. */
+function isJsxTagName(id: ts.Identifier): boolean {
+    let node: ts.Node = id
+    while (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) node = node.parent
+    return isDirectJsxTag(node)
+}
+
+/** Whether `id` is the whole value of a JSX attribute (`action={saveItem}`): handed on, not called or read. */
+function isJsxAttributeValue(id: ts.Identifier): boolean {
+    const parent = id.parent
+    return ts.isJsxExpression(parent) && parent.expression === id && ts.isJsxAttribute(parent.parent)
+}
+
+/** Whether `node` is itself a JSX opening, closing or self-closing tag's name. */
+function isDirectJsxTag(node: ts.Node): boolean {
+    const parent = node.parent
+    return (
+        (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent) || ts.isJsxClosingElement(parent)) &&
+        parent.tagName === node
+    )
+}
+
+/**
+ * The function a same-file component's declaration binds, when a page may read it as part of itself: a function
+ * declared once with a body and never reassigned, or a `const` bound to a function literal; never a generator, an
+ * ambient declaration or a class.
+ */
+function sameFileComponent(src: Source, decl: ts.Declaration): ts.FunctionLikeDeclaration | undefined {
+    if (isAmbient(decl)) return undefined
+    if (ts.isFunctionDeclaration(decl)) {
+        return decl.body && !decl.asteriskToken && !isReassigned(src, decl) && !isRedeclared(decl) ? decl : undefined
+    }
+    if (ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && isConst(decl) && decl.initializer) {
+        const init = unwrap(decl.initializer)
+        if (isFunctionLiteral(init) && !init.asteriskToken) return init
+    }
+    return undefined
+}
+
+/**
+ * The `import()` calls in `fn` (lexically) that a page may make, and the names each binds: a literal specifier, the
+ * call awaited as a `const`'s initializer (`const { A } = await import('m')`), or one element of an array that is the
+ * only argument of the global `Promise.all`, awaited as a `const`'s initializer and array-destructured
+ * (`const [{ A }, t] = await Promise.all([import('m'), …])`); the object pattern's every element a plain name kept
+ * under its exported name (no rename, default, rest or nesting). A page may then use each name only as a JSX tag.
+ */
+function renderedImports(
+    src: Source,
+    fn: ts.FunctionLikeDeclaration,
+): { calls: Set<ts.Node>; bindings: Map<ts.Declaration, string> } {
+    const calls = new Set<ts.Node>()
+    const bindings = new Map<ts.Declaration, string>()
+    const constName = (initializer: ts.Node): ts.BindingName | undefined => {
+        const parent = initializer.parent
+        return ts.isVariableDeclaration(parent) && parent.initializer === initializer && isConst(parent)
+            ? parent.name
+            : undefined
+    }
+    const patternOf = (call: ts.CallExpression): ts.BindingName | undefined => {
+        const parent = call.parent
+        if (ts.isAwaitExpression(parent)) return constName(parent)
+        if (!ts.isArrayLiteralExpression(parent) || parent.elements.some(ts.isSpreadElement)) return undefined
+        const all = parent.parent
+        if (
+            !ts.isCallExpression(all) ||
+            all.arguments.length !== 1 ||
+            all.arguments[0] !== parent ||
+            !isGlobalMember(src, all.expression, 'Promise', 'all') ||
+            !ts.isAwaitExpression(all.parent)
+        ) {
+            return undefined
+        }
+        const whole = constName(all.parent)
+        if (whole === undefined || !ts.isArrayBindingPattern(whole)) return undefined
+        const element = whole.elements[parent.elements.indexOf(call)]
+        return element && ts.isBindingElement(element) && !element.dotDotDotToken && !element.initializer
+            ? element.name
+            : undefined
+    }
+    const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+            const [specifier] = node.arguments
+            const pattern = node.arguments.length === 1 ? patternOf(node) : undefined
+            const plain =
+                pattern !== undefined &&
+                ts.isObjectBindingPattern(pattern) &&
+                pattern.elements.every(
+                    (element) =>
+                        !element.dotDotDotToken &&
+                        !element.initializer &&
+                        ts.isIdentifier(element.name) &&
+                        (element.propertyName === undefined ||
+                            (ts.isIdentifier(element.propertyName) && element.propertyName.text === element.name.text)),
+                )
+            if (plain && specifier !== undefined && ts.isStringLiteralLike(specifier)) {
+                calls.add(node)
+                for (const element of pattern.elements) bindings.set(element, specifier.text)
+            }
         }
         ts.forEachChild(node, visit)
     }
     visit(fn)
-    return !reads
+    return { calls, bindings }
+}
+
+/** A binding element's key as written: its property name (a string or computed string literal key unquoted) or name. */
+function bindingKey(node: ts.BindingElement, sf: ts.SourceFile): string {
+    const key = node.propertyName ?? node.name
+    if (ts.isComputedPropertyName(key) && ts.isStringLiteralLike(key.expression)) return key.expression.text
+    return key.getText(sf).replace(/^['"]|['"]$/g, '')
+}
+
+/** Whether a declaration is ambient: `declare`d itself, or inside a `declare global` or `declare module` block. */
+function isAmbient(decl: ts.Node): boolean {
+    for (let node: ts.Node | undefined = decl; node !== undefined && !ts.isSourceFile(node); node = node.parent) {
+        if (
+            ts.canHaveModifiers(node) &&
+            (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Ambient) !== 0
+        ) {
+            return true
+        }
+        if (ts.isModuleDeclaration(node)) return true
+    }
+    return false
 }
 
 /**

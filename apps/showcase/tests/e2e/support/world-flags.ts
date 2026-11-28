@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { worldPath } from './worlds'
 
-const flagsFile = path.resolve(__dirname, '../../../.data/analytics/flags.json')
+const flagsFile = worldPath('analytics', 'flags.json')
 
 /**
  * Set a persisted Simulator world flag straight on disk (.data/analytics/flags.json) — for a spec's

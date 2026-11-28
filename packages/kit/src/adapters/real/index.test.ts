@@ -129,6 +129,8 @@ beforeEach(() => {
         AUTH_DEFAULT_ROLE: undefined,
         AUTH_TENANT_METADATA_KEY: undefined,
         CLERK_AUTHORIZED_PARTIES: undefined,
+        PUBLIC_ORIGIN: undefined,
+        SSSB_EDGE: undefined,
     })
 })
 
@@ -340,19 +342,66 @@ describe('the auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE)', () => {
         stubEnv({ CLERK_AUTHORIZED_PARTIES: undefined })
         expect(() => assertRealEnv()).not.toThrow()
     })
+
+    it('a malformed PUBLIC_ORIGIN or SSSB_EDGE fails the preflight, naming domains-and-certs; both are optional', async () => {
+        const { assertRealEnv } = await import('./index')
+        stubEnv({ ...PG, PUBLIC_ORIGIN: 'https://app.example.org/' })
+        expect(() => assertRealEnv()).toThrow(/domains-and-certs.*PUBLIC_ORIGIN .* is not a bare origin/s)
+        stubEnv({ PUBLIC_ORIGIN: 'https://app.example.org', SSSB_EDGE: 'yes' })
+        expect(() => assertRealEnv()).toThrow(/domains-and-certs.*SSSB_EDGE "yes"/s)
+        stubEnv({ SSSB_EDGE: 'cloudfront', AWS_LAMBDA_FUNCTION_NAME: undefined })
+        expect(() => assertRealEnv()).toThrow(/domains-and-certs.*SSSB_EDGE is set off Lambda/s)
+        stubEnv({ AWS_LAMBDA_FUNCTION_NAME: 'app-server' })
+        expect(() => assertRealEnv()).not.toThrow()
+        stubEnv({ PUBLIC_ORIGIN: undefined, SSSB_EDGE: undefined, AWS_LAMBDA_FUNCTION_NAME: undefined })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
 })
 
 describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsights/sssb#192)', () => {
+    // An environment the Clerk adapter would run in under next dev as well, so the notices below are about the parties.
+    const READY = { CLERK_SECRET_KEY: 'sk', NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: '1' }
+
     it('says CLERK_AUTHORIZED_PARTIES is unset, and nothing once it is set', async () => {
         const { realEnvNotices } = await import('./index')
-        expect(realEnvNotices({})).toEqual([expect.stringMatching(/CLERK_AUTHORIZED_PARTIES is unset.*any origin/)])
-        expect(realEnvNotices({ CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })).toEqual([])
+        expect(realEnvNotices(READY)).toEqual([expect.stringMatching(/CLERK_AUTHORIZED_PARTIES is unset.*any origin/)])
+        expect(realEnvNotices({ ...READY, CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })).toEqual([])
+    })
+
+    // safeinsights/sssb#222's review, A3: the preflight of `dev:real` has no NODE_ENV=development of its own.
+    it('says what next dev would do with an environment that lacks the keyless flag, unless this process is that', async () => {
+        const { realEnvNotices } = await import('./index')
+        const parties = { CLERK_SECRET_KEY: 'sk', CLERK_AUTHORIZED_PARTIES: 'https://a.example' }
+        for (const NODE_ENV of ['test', undefined]) {
+            expect(realEnvNotices({ ...parties, NODE_ENV })).toEqual([
+                expect.stringMatching(
+                    /under next dev .*NODE_ENV=development.* would refuse every request.*NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/s,
+                ),
+            ])
+            expect(realEnvNotices({ ...parties, NODE_ENV, NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: 'true' })).toEqual([])
+        }
+        // A production process is not going to be `next dev`, and a development one is judged by assertRealEnv itself.
+        expect(realEnvNotices({ ...parties, NODE_ENV: 'production' })).toEqual([])
+        expect(realEnvNotices({ ...parties, NODE_ENV: 'development' })).toEqual([])
+    })
+
+    it('has assertRealEnv refuse what the Clerk adapter would, naming the auth-dev row', async () => {
+        const { assertRealEnv } = await import('./index')
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        stubEnv({ NODE_ENV: 'development', NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: undefined })
+        expect(() => assertRealEnv()).toThrow(/auth-dev.*NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/s)
+        stubEnv({ NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: '1' })
+        expect(() => assertRealEnv()).not.toThrow()
+        // A job program or a test run, with the secret key and no flag, is not refused.
+        stubEnv({ NODE_ENV: 'test', NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: undefined })
+        expect(() => assertRealEnv()).not.toThrow()
     })
 
     it('reads the process environment unless given one, and never fails the preflight it follows', async () => {
         const { assertRealEnv, realEnvNotices } = await import('./index')
         stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
         expect(() => assertRealEnv()).not.toThrow()
+        stubEnv({ NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: '1' })
         expect(realEnvNotices()).toHaveLength(1)
         stubEnv({ CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })
         expect(realEnvNotices()).toEqual([])
@@ -361,6 +410,7 @@ describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsi
     it('flags a misspelled name, which does nothing though a value looks set', async () => {
         const { realEnvNotices } = await import('./index')
         const notices = realEnvNotices({
+            ...READY,
             CLERK_AUTHORISED_PARTIES: 'https://app.example.org',
             clerk_authorized_parties: 'https://app.example.org',
         })
@@ -372,7 +422,7 @@ describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsi
         expect(notices.slice(1).join('\n')).toMatch(/clerk_authorized_parties is set/)
         // With the real one set as well, the misspelling is still named: it does nothing, and may be a stale copy.
         expect(
-            realEnvNotices({ CLERK_AUTHORIZED_PARTIES: 'https://a.example', CLERK_AUTHORISED_PARTIES: 'x' }),
+            realEnvNotices({ ...READY, CLERK_AUTHORIZED_PARTIES: 'https://a.example', CLERK_AUTHORISED_PARTIES: 'x' }),
         ).toEqual([expect.stringMatching(/CLERK_AUTHORISED_PARTIES is set/)])
     })
 
@@ -382,10 +432,16 @@ describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsi
         try {
             Object.defineProperty(process, 'platform', { value: 'win32' })
             expect(
-                realEnvNotices({ Clerk_Authorized_Parties: 'https://a.example', CLERK_AUTHORIZED_PARTIES: 'x' }),
+                realEnvNotices({
+                    ...READY,
+                    Clerk_Authorized_Parties: 'https://a.example',
+                    CLERK_AUTHORIZED_PARTIES: 'x',
+                }),
             ).toEqual([])
             // A spelling that is not the name in another case is still a misspelling there.
-            expect(realEnvNotices({ CLERK_AUTHORISED_PARTIES: 'x', CLERK_AUTHORIZED_PARTIES: 'y' })).toHaveLength(1)
+            expect(
+                realEnvNotices({ ...READY, CLERK_AUTHORISED_PARTIES: 'x', CLERK_AUTHORIZED_PARTIES: 'y' }),
+            ).toHaveLength(1)
         } finally {
             Object.defineProperty(process, 'platform', platform)
         }
@@ -394,11 +450,7 @@ describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsi
     it('leaves other Clerk variables alone', async () => {
         const { realEnvNotices } = await import('./index')
         expect(
-            realEnvNotices({
-                CLERK_AUTHORIZED_PARTIES: 'https://a.example',
-                CLERK_SECRET_KEY: 'sk',
-                CLERK_JWT_KEY: 'key',
-            }),
+            realEnvNotices({ ...READY, CLERK_AUTHORIZED_PARTIES: 'https://a.example', CLERK_JWT_KEY: 'key' }),
         ).toEqual([])
     })
 })
@@ -532,8 +584,12 @@ describe('the optional ports follow their switches, and a port switched off is a
             const { assertRealEnv } = await import('./index')
             stubEnv(COMPATIBLE)
             expect(() => assertRealEnv()).not.toThrow()
+            for (const accepted of ['post', 'put', 'none']) {
+                stubEnv({ ...COMPATIBLE, STORAGE_UPLOAD_TARGET: accepted })
+                expect(() => assertRealEnv(), accepted).not.toThrow()
+            }
             for (const [name, value, message] of [
-                ['STORAGE_UPLOAD_TARGET', 'POST', /STORAGE_UPLOAD_TARGET must be post or none/],
+                ['STORAGE_UPLOAD_TARGET', 'POST', /STORAGE_UPLOAD_TARGET must be post, put or none/],
                 ['STORAGE_FORCE_PATH_STYLE', '1', /STORAGE_FORCE_PATH_STYLE must be true or false/],
                 ['STORAGE_ENDPOINT', 'acct.r2.example.com', /STORAGE_ENDPOINT must be an http\(s\) URL/],
             ] as const) {

@@ -14,4 +14,6 @@ tenants against the Data API emulator, that is about 4,000 calls a drain. Now a 
 tenants whose due hint has come, and raises the hint of a tenant it finds with nothing due. With nothing due anywhere,
 that is one call a drain. A tenant is still listed at least once a day, and a drain that cannot read the hints lists
 every tenant, as before. Calling `runDueSchedules`, `runDueRetries` or `runDueDeliveries` directly (the Simulator's
-controls do) lists every tenant unless the budget passes `dueHints: true`.
+controls do) lists every tenant unless the budget passes `dueHints: true`. The listing share stays: a drain still lists
+for at most half of what is left of its window before it runs what it listed, so a tick with more tenants due than
+that half can list still serves a fresh random set of them.

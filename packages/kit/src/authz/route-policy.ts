@@ -28,7 +28,7 @@ import type { Exemption, Gate, ScanPolicy } from './route-scan'
  * `auth.updateProfile(` — a port call that takes no user id and so cannot express "update someone else" — to inherit
  * the exemption.
  *
- * A gate is one of three kinds (./route-scan.ts, `Gate`), and the kind is the entry's statement of what "guarded"
+ * A framework gate is one of three kinds (./route-scan.ts, `Gate`; a fourth, `reads-only`, is for an app's entries), and the kind is the entry's statement of what "guarded"
  * means for its reason:
  *
  * - `wrapped-by`: the guard WRAPS the handler, so the handler must BE the call (`export const POST =
@@ -52,9 +52,12 @@ export const EXEMPT_PREFIXES: Readonly<Record<string, Exemption>> = {
     'webhooks/': {
         reason:
             'authenticated by a machine caller, not a user session — a shared webhook secret ' +
-            '(withWebhookSecret) or the Mailgun inbound signature (withMailgunSignature) — so no ' +
-            'per-actor ability applies',
-        mustMatch: { kind: 'wrapped-by', callees: ['withWebhookSecret', 'withMailgunSignature'] },
+            '(withWebhookSecret), the Mailgun inbound signature (withMailgunSignature) or a Standard Webhooks ' +
+            'signature (withStandardWebhookSignature) — so no per-actor ability applies',
+        mustMatch: {
+            kind: 'wrapped-by',
+            callees: ['withWebhookSecret', 'withMailgunSignature', 'withStandardWebhookSignature'],
+        },
     },
     'simulator/': {
         reason: 'simulated-world surface, simulated-mode-gated (404 in real) — never a product mutation path',
@@ -98,7 +101,7 @@ export const EXEMPT_FILES: Readonly<Record<string, Exemption>> = {
     },
     'storage-upload/route.ts': {
         reason:
-            'simulated-mode-only (404 in real) multipart upload endpoint — the local twin of an S3 presigned POST, ' +
+            'simulated-mode-only (404 in real) upload endpoint — the local twin of an S3 presigned POST (multipart) and of a presigned PUT, ' +
             'authenticated by the server-signed HMAC upload-target fields (like the webhook secret), NOT a user ' +
             'session; the upload TARGET was already authorized by the app route that minted it',
         mustMatch: SIMULATED_404,
@@ -113,8 +116,10 @@ export const EXEMPT_FILES: Readonly<Record<string, Exemption>> = {
 }
 
 /**
- * Gates a handler under a prefix, read or mutation, must pass IN ADDITION to reaching authorize(...) (or to reading
- * nothing). Authorizing an
+ * Gates a handler under a prefix, read or mutation, must pass IN ADDITION to reaching authorize(...). A route's read
+ * handler that reads nothing (./route-scan.ts `readsNothing`) passes without one: it reads no data, so it has no actor
+ * to authorize, and the wrapper that builds the actor adds nothing (an inline-headers CORS preflight). A page under the
+ * prefix still needs it (`judgePage` asks for the gate first). Authorizing an
  * actor means something only if the actor came from a verified credential: `authorize(` alone is satisfied
  * just as well by a `{ kind: 'machine', credential: { kind: 'service-key' } … }` literal built from the
  * request. So a service handler must also BE the wrapper call that verifies its caller and BUILDS that
@@ -153,6 +158,13 @@ export const FRAMEWORK_POLICY: ScanPolicy = {
 export function isGate(gate: unknown): gate is Gate {
     if (typeof gate !== 'object' || gate === null || !('kind' in gate)) return false
     if (gate.kind === 'opens-with-simulated-404') return true
+    if (gate.kind === 'reads-only') {
+        // A map of an import's exported name (not a dotted callee) to the module it is pinned to (`isPin`). The list
+        // this used to be fails too: an array's keys are its indexes, never identifiers.
+        if (!('names' in gate) || typeof gate.names !== 'object' || gate.names === null) return false
+        const entries = Object.entries(gate.names)
+        return entries.length > 0 && entries.every(([name, module]) => /^[A-Za-z_$][\w$]*$/.test(name) && isPin(module))
+    }
     if (gate.kind !== 'wrapped-by' && gate.kind !== 'calls') return false
     return (
         'callees' in gate &&
@@ -160,4 +172,16 @@ export function isGate(gate: unknown): gate is Gate {
         gate.callees.length > 0 &&
         gate.callees.every((callee) => typeof callee === 'string' && callee.length > 0)
     )
+}
+
+/**
+ * A `reads-only` gate's pin for one name (./route-scan.ts `ImportSource`): a non-empty string, either a specifier that
+ * is not relative (`next/headers`, `@acme/ui`) or an app-relative path with its extension (`src/lib/cors.ts`), with
+ * `/` separators and no `.` or `..` segment, no leading `/` or `./`, no backslash and no surrounding space. A relative
+ * specifier would mean another module from each importing file, so it is never one.
+ */
+function isPin(module: unknown): module is string {
+    if (typeof module !== 'string' || module.trim() !== module || module.includes('\\')) return false
+    // An empty segment refuses an empty pin, a leading `/` and a doubled one alike.
+    return module.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..')
 }

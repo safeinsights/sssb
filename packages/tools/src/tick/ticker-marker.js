@@ -9,7 +9,9 @@
 //
 // Imported by playwright.config.ts, which Playwright compiles to CommonJS: no `import.meta`, no top-level await, nothing
 // but `node:` imports here (the constraint @sssb/tools' ports module documents).
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { constants, copyFileSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -20,13 +22,37 @@ export function tickerMarkerPath(env = process.env, cwd = process.cwd()) {
     return path.join(env.APP_DATA_DIR ?? path.join(cwd, '.data'), 'dev-ticker.json')
 }
 
+/** A name beside `file` that no other process picks (the pid and random bytes), for a file that is moved onto or off it. */
+const beside = (/** @type {string} */ file, /** @type {string} */ kind) =>
+    `${file}.${process.pid}.${randomBytes(4).toString('hex')}.${kind}`
+
 /**
+ * Writes the marker whole or not at all (`safeinsights/sssb#258`): to a name beside it, then renamed onto it, which is
+ * atomic on one file system, so a reader (a Playwright config loading at that instant) sees the old marker or the new
+ * one, never half of it. A process killed between the two leaves a `.tmp` file beside the marker, which nothing reads.
+ *
  * @param {string} file
  * @param {number} seconds
  */
 export function writeTickerMarker(file, seconds) {
     mkdirSync(path.dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify({ pid: process.pid, seconds, startedAt: new Date().toISOString() }))
+    const temporary = beside(file, 'tmp')
+    try {
+        writeFileSync(
+            temporary,
+            JSON.stringify({
+                pid: process.pid,
+                seconds,
+                startedAt: new Date().toISOString(),
+                startToken: processStartToken(process.pid),
+            }),
+        )
+        renameSync(temporary, file)
+    } catch (error) {
+        // A write that failed (no space) or a rename that did: leave nothing beside the marker, and say so.
+        rmSync(temporary, { force: true })
+        throw error
+    }
 }
 
 /** @param {string} file */
@@ -41,13 +67,53 @@ export function removeTickerMarker(file) {
 }
 
 /**
+ * A token for WHEN the process at `pid` began, to compare for equality, never to read as a date: two reads of one process
+ * give the same token, and a process that took the pid later gives another. Taken from the kernel's own record, which
+ * the wall clock cannot move: on Linux the boot id and the process's start in ticks since boot (`/proc/<pid>/stat`,
+ * field 22), elsewhere `ps -o lstart=` (macOS keeps it fixed per process), printed in UTC so that two processes with
+ * different `TZ`s read one string. A date computed from either would move with a clock stepped after the process began (a
+ * paused guest resuming), and judge a live marker's process newer than its marker. null when it cannot be told: no
+ * `/proc` and no `ps` (Windows), a pid that is gone.
+ *
+ * @param {number} pid
+ * @returns {string | null}
+ */
+export function processStartToken(pid) {
+    try {
+        const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+        // After the command's `)`: state (field 3), then 19 more to the start time (field 22).
+        const ticks = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]
+        const boot = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
+        if (ticks && /^\d+$/.test(ticks) && boot) return `linux:${boot}:${ticks}`
+    } catch {
+        // not Linux, or the process is gone
+    }
+    try {
+        const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+            encoding: 'utf8',
+            env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' },
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 2000,
+        }).trim()
+        return out ? `ps:${out}` : null
+    } catch {
+        return null
+    }
+}
+
+/**
  * The live ticker's marker, or null. A marker whose process is gone (a wrapper that was SIGKILLed cannot clean up) is
- * stale and ignored.
+ * stale and ignored. So is one whose pid the OS has since given to another process (`safeinsights/sssb#146`): the marker
+ * carries the start token of the process that wrote it (`startToken`), and a process now at that pid with another token
+ * is not it, so the marker is cleared as well. A marker with no token, a token that cannot be read now, or tokens of
+ * different kinds (another machine's, through a shared directory), cannot be judged, and is live, as before. A process
+ * never judges its own marker.
  *
  * @param {string} file
- * @returns {{ pid: number, seconds: number, startedAt: string } | null}
+ * @param {(pid: number) => string | null} [tokenOf] the start token of the process at a pid; `processStartToken` unless a test says
+ * @returns {{ pid: number, seconds: number, startedAt: string, startToken?: string | null } | null}
  */
-export function liveTickerMarker(file) {
+export function liveTickerMarker(file, tokenOf = processStartToken) {
     let marker
     try {
         marker = JSON.parse(readFileSync(file, 'utf8'))
@@ -61,7 +127,65 @@ export function liveTickerMarker(file) {
         // ESRCH: no such process. EPERM means it exists and is someone else's: live.
         if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM')) return null
     }
+    if (marker.pid === process.pid || typeof marker.startToken !== 'string') return marker
+    const now = tokenOf(marker.pid)
+    // `linux:` or `ps:`: tokens of one kind are comparable, and only they.
+    if (now !== null && now.split(':', 1)[0] === marker.startToken.split(':', 1)[0] && now !== marker.startToken) {
+        clearStaleMarker(file, marker)
+        return null
+    }
     return marker
+}
+
+/**
+ * Removes a marker found stale, and only that one (`safeinsights/sssb#257`). Reading the file and then removing it leaves
+ * a gap in which another wrapper's new marker could be written and then removed, so the file is first MOVED aside, which
+ * is atomic and takes whatever file is there at that instant, and judged from the copy: the one that was read, it is
+ * deleted; a newer one (a wrapper wrote it between the judgment and the move), it is put back if the name is still free
+ * (`link` fails rather than overwrite, and so does the copy used where a file system has no hard links), and when a
+ * marker has been written there meanwhile that one stays and the one taken is dropped. A marker written after the move
+ * finds the name free and is never touched. What it costs, once, in a race: for the instant a newer marker is out of
+ * place, a reader sees none (before, every marker the clearing met was removed for good); and when two clearers meet
+ * a newer marker and a newer-still one, either may be the one left, whichever is put back first.
+ *
+ * @param {string} file
+ * @param {{ pid: number, startedAt: string }} stale
+ * @param {{ afterClaim?: () => void }} [hooks] for a test to interleave a writer
+ */
+export function clearStaleMarker(file, stale, hooks = {}) {
+    const claimed = beside(file, 'stale')
+    try {
+        renameSync(file, claimed)
+    } catch {
+        // already gone, or not ours to judge
+        return
+    }
+    try {
+        hooks.afterClaim?.()
+        let current
+        try {
+            current = JSON.parse(readFileSync(claimed, 'utf8'))
+        } catch {
+            current = null
+        }
+        if (current && current.pid === stale.pid && current.startedAt === stale.startedAt) return
+        // Not the one judged: a newer marker, or one that cannot be read. Put it back where it was, never over another.
+        try {
+            linkSync(claimed, file)
+        } catch (error) {
+            const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+            if (code !== 'EEXIST') {
+                // A file system without hard links: copy, which fails rather than overwrite too.
+                try {
+                    copyFileSync(claimed, file, constants.COPYFILE_EXCL)
+                } catch {
+                    // a marker is there already, or none can be put there: the one taken is dropped
+                }
+            }
+        }
+    } finally {
+        rmSync(claimed, { force: true })
+    }
 }
 
 /**

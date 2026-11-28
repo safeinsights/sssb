@@ -4,6 +4,7 @@ import {
     CodeBuildClient,
     StartBuildCommand,
 } from '@aws-sdk/client-codebuild'
+import { shuffled } from '../../db/drain-budget'
 import type { DbPort } from '../../ports/db'
 import type { JobsPort, SubmittedJob } from '../../ports/jobs'
 
@@ -22,7 +23,10 @@ export type FailLostJob = (input: { tenantId: string; jobId: string; error: stri
  */
 export const CODEBUILD_LOST_AFTER_MS = 5 * 60_000
 
-/** The `runner_ref` written before StartBuild is called, replaced by the build's id once it returns. */
+/**
+ * The `runner_ref` a CodeBuild job's row is written with (this port's `startingRef`, in the row's own insert or claim:
+ * safeinsights/sssb#251), replaced by the build's id once StartBuild returns.
+ */
 export const CODEBUILD_STARTING = 'starting'
 
 /**
@@ -60,9 +64,11 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  * CodeBuild console and in CloudTrail, so a job's payload must never carry a secret or personal data: pass an id the
  * build reads with its own access instead.
  *
- * LOST BUILDS (safeinsights/sssb#231). `start` records the build behind the job in `jobs.runner_ref`: `starting` before
- * StartBuild is called, the build's id once it returns. The scheduled tick calls `sweep`, which asks CodeBuild
- * (BatchGetBuilds, which the server's role must be allowed) about each of the runner's jobs still queued or running
+ * LOST BUILDS (safeinsights/sssb#231). The runner records the build behind the job in `jobs.runner_ref`: `starting` from
+ * the row's own first write (this port's `startingRef`, which `submitJob`, a schedule's spawn and a retry's claim write
+ * with the row, so no separate write can fail before StartBuild: safeinsights/sssb#251), then the build's id once
+ * StartBuild returns. The scheduled tick calls `sweep`, which asks CodeBuild
+ * (BatchGetBuilds, which the server's role must be allowed) about the runner's jobs still queued or running
  * and quiet for `CODEBUILD_LOST_AFTER_MS`, and fails as lost:
  *
  * - a job whose build ENDED (any status but IN_PROGRESS) at least that long ago without the job reaching an end: its
@@ -79,6 +85,13 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  * caller that builds the real ports itself) the runner has no sweep, as before. A job with no
  * `runner_ref` (written before the column existed, or held by another runner) is never judged. A sweep that cannot
  * reach CodeBuild (no permission, throttling) logs and fails nothing more; the tick carries on.
+ *
+ * THE BOUND (safeinsights/sssb#252). Given a budget, the sweep looks at the tenants, and at each tenant's builds, in a
+ * fresh random order, and starts nothing (no tenant's listing, no BatchGetBuilds call, no failure) once it has failed
+ * `maxItems` or its deadline has passed. It fails each loss as soon as it knows it: first the ones that need no
+ * CodeBuild call (`refused`, and `starting` past the hour), then each BatchGetBuilds answer's before the next call, so
+ * time spent reading never throws away a loss already found. A call already under way when the deadline passes runs to
+ * its end (safeinsights/sssb#267).
  */
 export function createRealJobs(project: string, region: string, db: DbPort, failLost?: FailLostJob): JobsPort {
     const client = new CodeBuildClient({ region })
@@ -90,15 +103,19 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
         )
 
     const port: JobsPort = {
+        // Every job row this runner starts is written `starting` by its own insert (or the retry claim that readies it),
+        // so there is no write of `start`'s own to fail before StartBuild (safeinsights/sssb#251).
+        startingRef: CODEBUILD_STARTING,
         async start(job) {
-            await setRef(job.tenantId, job.id, CODEBUILD_STARTING)
             const started = await client.send(startBuild(job)).catch(async (error: unknown) => {
                 // A client fault is CodeBuild saying no build started; anything else (a timeout, a server fault) may
-                // have started one, so the job stays `starting` and gets the longer wait.
+                // have started one, so the job stays `starting` and gets the longer wait, and the error says so, so a
+                // caller does not fail the job (and arm its next attempt) beside a build that may be running.
                 if ((error as { $fault?: unknown }).$fault === 'client') {
                     await setRef(job.tenantId, job.id, CODEBUILD_REFUSED).catch(() => undefined)
+                    throw error
                 }
-                throw error
+                throw markMayHaveStarted(error)
             })
             const buildId = started.build?.id
             if (!buildId) {
@@ -119,9 +136,13 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
     if (!failLost) return port
     return {
         ...port,
-        async sweep(now) {
+        async sweep(now, budget) {
             const quietSince = new Date(now.getTime() - CODEBUILD_LOST_AFTER_MS)
             let failed = 0
+            // Bounded by the tick's budget (safeinsights/sssb#252): no tenant looked at, no build asked about and no job
+            // failed after its deadline, and no more failed than its count.
+            const clock = budget?.clock ?? Date.now
+            const spent = () => budget !== undefined && (failed >= budget.maxItems || clock() >= budget.deadline)
             let tenants: { id: string }[]
             try {
                 tenants = await db.getDb().selectFrom('tenants').select('id').execute()
@@ -129,7 +150,9 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                 console.warn(`SSSB jobs: the CodeBuild sweep could not list tenants: ${messageOf(error)}`)
                 return 0
             }
-            for (const tenant of tenants) {
+            // In a fresh random order under a bound, so a sweep it stops short does not always leave the same tenants.
+            for (const tenant of budget ? shuffled(tenants, budget, (t) => t.id) : tenants) {
+                if (spent()) break
                 let open: { id: string; runner_ref: string | null; updated_at: unknown }[]
                 try {
                     open = await db.withTenant(tenant.id, (trx) =>
@@ -145,10 +168,24 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                     console.warn(`SSSB jobs: the CodeBuild sweep skipped tenant ${tenant.id}: ${messageOf(error)}`)
                     continue
                 }
-                const lost: { id: string; error: string }[] = open
-                    .filter((job) => job.runner_ref === CODEBUILD_REFUSED)
-                    .map((job) => ({ id: job.id, error: 'lost: CodeBuild refused to start its build' }))
-                lost.push(
+                // Each loss is failed as soon as it is known, so time a slow read phase spends never throws away work
+                // already found: first the losses that need no CodeBuild call, then each batch's as it is read.
+                const failAll = async (lost: { id: string; error: string }[]) => {
+                    for (const { id, error } of lost) {
+                        if (spent()) return
+                        try {
+                            if (await failLost({ tenantId: tenant.id, jobId: id, error, now })) failed += 1
+                        } catch (failure) {
+                            console.warn(
+                                `SSSB jobs: the CodeBuild sweep could not fail job ${id}: ${messageOf(failure)}`,
+                            )
+                        }
+                    }
+                }
+                await failAll([
+                    ...open
+                        .filter((job) => job.runner_ref === CODEBUILD_REFUSED)
+                        .map((job) => ({ id: job.id, error: 'lost: CodeBuild refused to start its build' })),
                     ...open
                         .filter(
                             (job) =>
@@ -160,7 +197,7 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                             id: job.id,
                             error: 'lost: its CodeBuild build was never recorded as started',
                         })),
-                )
+                ])
                 const byBuild = new Map<string, string>()
                 for (const job of open) {
                     if (
@@ -171,8 +208,11 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                         byBuild.set(job.runner_ref, job.id)
                     }
                 }
-                const ids = [...byBuild.keys()]
+                // Under a bound the builds are asked about in a fresh random order too, so a tenant with more builds than
+                // one window can read has a different part of them read each tick, not always the first.
+                const ids = budget ? shuffled([...byBuild.keys()], budget, (id) => id) : [...byBuild.keys()]
                 for (let i = 0; i < ids.length; i += BATCH_GET_BUILDS_MAX) {
+                    if (spent()) break
                     let answer: BatchGetBuildsCommandOutput
                     try {
                         answer = await client.send(
@@ -183,6 +223,7 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                         console.warn(`SSSB jobs: the CodeBuild sweep could not read builds: ${messageOf(error)}`)
                         break
                     }
+                    const lost: { id: string; error: string }[] = []
                     for (const build of answer.builds ?? []) {
                         const jobId = build.id === undefined ? undefined : byBuild.get(build.id)
                         if (!jobId || !build.buildStatus || !ENDED.has(build.buildStatus)) continue
@@ -197,18 +238,18 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                         const jobId = byBuild.get(missing)
                         if (jobId) lost.push({ id: jobId, error: 'lost: CodeBuild has no record of its build' })
                     }
-                }
-                for (const { id, error } of lost) {
-                    try {
-                        if (await failLost({ tenantId: tenant.id, jobId: id, error, now })) failed += 1
-                    } catch (failure) {
-                        console.warn(`SSSB jobs: the CodeBuild sweep could not fail job ${id}: ${messageOf(failure)}`)
-                    }
+                    await failAll(lost)
                 }
             }
             return failed
         },
     }
+}
+
+/** `error`, marked as one after which a build may have started (`mayHaveStarted`, ../../ports/jobs.ts). */
+function markMayHaveStarted(error: unknown): Error {
+    const marked = error instanceof Error ? error : new Error(String(error))
+    return Object.assign(marked, { mayHaveStarted: true })
 }
 
 /** The StartBuild call for `job`: the project, and the job's context as the build's environment. */

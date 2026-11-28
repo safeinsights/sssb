@@ -119,13 +119,13 @@ describe('shuffled', () => {
 })
 
 describe('drainFairly', () => {
-    test('stops listing once the deadline passes, and starts nothing after it', async () => {
+    test('stops listing at its share of the window, and runs what it listed in the rest', async () => {
         let now = 0
         const listed: string[] = []
         const ran: string[] = []
         const left = await drainFairly(
             [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
-            { maxItems: NONE, deadline: 2, clock: () => now, random: seeded(3) },
+            { maxItems: NONE, deadline: 4, clock: () => now, random: seeded(3) },
             async (tenantId) => {
                 listed.push(tenantId)
                 now += 1 // each listing query takes a tick of the clock
@@ -134,12 +134,98 @@ describe('drainFairly', () => {
             (row) => row,
             async (row) => {
                 ran.push(row)
+                now += 1
             },
         )
-        // Listed at 0 and 1; at 2 the deadline had passed, so the third tenant was never queried and nothing started.
+        // Listed at 0 and 1; at 2 half the window had passed, so the third tenant was never queried. The two rows run
+        // at 2 and 3; at 4 the deadline had passed.
         expect(listed).toHaveLength(2)
-        expect(ran).toEqual([])
-        expect(left).toEqual({ deferred: 2, stoppedBy: 'time' })
+        expect(ran).toEqual(listed.map((t) => `${t}-0`))
+        expect(left).toEqual({ deferred: 0, stoppedBy: 'time' })
+    })
+
+    test('past a tenant count its window cannot list, a drain still starts work every tick (the review cliff)', async () => {
+        // The shape that started nothing before the listing had a share: 1,000 tenants, each listing 5 ms, a drain
+        // beginning 2 s into a 6 s window (the schedules', after the sweep's), and each started row 50 ms.
+        let now = 2_000
+        let listed = 0
+        let ran = 0
+        const tenants = Array.from({ length: 1_000 }, (_, i) => ({ id: `t${String(i).padStart(4, '0')}` }))
+        const left = await drainFairly(
+            tenants,
+            { maxItems: 100, deadline: 6_000, clock: () => now, random: seeded(5) },
+            async () => {
+                listed += 1
+                now += 5
+                return { rows: ['row'] }
+            },
+            (row) => row,
+            async () => {
+                ran += 1
+                now += 50
+            },
+        )
+        expect(listed).toBe(400) // 2 s of the 4 left, at 5 ms each
+        expect(ran).toBe(40) // the other 2 s, at 50 ms each
+        expect(left.stoppedBy).toBe('time')
+    })
+
+    test('a pass that runs out of listed rows early lists on, so a mid-sized drain reaches every tenant', async () => {
+        // The review's probe: 100 tenants at 10 ms a listing, one due row each at 1 ms, a 1,500 ms window. A single
+        // pass would list 75 by its half and finish at 825 ms with the other 25 never listed.
+        let now = 0
+        let listed = 0
+        let ran = 0
+        const tenants = Array.from({ length: 100 }, (_, i) => ({ id: `t${String(i).padStart(3, '0')}` }))
+        const left = await drainFairly(
+            tenants,
+            { maxItems: NONE, deadline: 1_500, clock: () => now, random: seeded(9) },
+            async () => {
+                listed += 1
+                now += 10
+                return { rows: ['row'] }
+            },
+            (row) => row,
+            async () => {
+                ran += 1
+                now += 1
+            },
+        )
+        expect({ listed, ran }).toEqual({ listed: 100, ran: 100 })
+        expect(left).toEqual({ deferred: 0, stoppedBy: null })
+    })
+
+    test('maxItems counts every pass, not each', async () => {
+        // 20 tenants at 10 ms a listing, one row each, rows instant, a 100 ms window: the first pass lists 5 (to 50 ms)
+        // and runs them; the second may start only 2 more of the 3 it lists.
+        let now = 0
+        const ran: string[] = []
+        const tenants = Array.from({ length: 20 }, (_, i) => ({ id: `t${String(i).padStart(2, '0')}` }))
+        const left = await drainFairly(
+            tenants,
+            { maxItems: 7, deadline: 100, clock: () => now, random: seeded(4) },
+            async (tenantId) => {
+                now += 10
+                return { rows: [`${tenantId}-0`] }
+            },
+            (row) => row,
+            async (row) => void ran.push(row),
+        )
+        expect(ran).toHaveLength(7)
+        expect(left).toEqual({ deferred: 1, stoppedBy: 'items' })
+    })
+
+    test('a drain that starts at or past its deadline lists nothing', async () => {
+        const left = await drainFairly(
+            [{ id: 'a' }],
+            { maxItems: NONE, deadline: 10, clock: () => 12 },
+            async () => {
+                throw new Error('listed after the deadline')
+            },
+            (row: string) => row,
+            async () => undefined,
+        )
+        expect(left).toEqual({ deferred: 0, stoppedBy: 'time' })
     })
 
     test('a listing the deadline cut short reports the stop even when it started nothing because nothing was listed', async () => {

@@ -17,6 +17,8 @@ const codebuild = vi.hoisted(() => ({
     batchFails: false,
     /** When set, the next StartBuild throws an SDK-shaped error with this fault. */
     startFault: undefined as 'client' | 'server' | undefined,
+    /** Called after each BatchGetBuilds answer is made: a test's clock can move there, as a slow read's does. */
+    onBatch: undefined as (() => void) | undefined,
 }))
 vi.mock('@aws-sdk/client-codebuild', () => {
     class StartBuildCommand {
@@ -50,6 +52,7 @@ vi.mock('@aws-sdk/client-codebuild', () => {
                 if (command instanceof BatchGetBuildsCommand) {
                     if (codebuild.batchFails) throw new Error('AccessDeniedException: not authorized to BatchGetBuilds')
                     codebuild.batchCalls.push(command.input.ids)
+                    codebuild.onBatch?.()
                     const builds = command.input.ids.flatMap((id) => {
                         const build = codebuild.builds.get(id)
                         return build ? [{ id, ...build }] : []
@@ -85,6 +88,7 @@ beforeEach(async () => {
     codebuild.batchCalls.length = 0
     codebuild.batchFails = false
     codebuild.startFault = undefined
+    codebuild.onBatch = undefined
 })
 
 const MINUTE = 60_000
@@ -193,6 +197,223 @@ describe('the CodeBuild jobs runner: starting a build', () => {
         const { createRealJobs } = await import('./jobs')
         const { fakeDb } = await world()
         expect(createRealJobs('proj', 'us-east-1', fakeDb).sweep).toBeUndefined()
+    })
+})
+
+describe("the CodeBuild jobs runner: a job's row is `starting` from its first write (safeinsights/sssb#251)", () => {
+    test("submitJob, a schedule spawn and a retry claim write the runner's starting ref with the row", async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { jobs } = await runner()
+        const { recordJobStatus, runDueRetries, submitJob } = await import('../../db/jobs')
+        const { runDueSchedules } = await import('../../db/schedules')
+        expect(jobs.startingRef).toBe('starting')
+
+        // A runner whose start throws before it writes anything: the row still says the runner owns it.
+        const refusing = { startingRef: 'starting', start: async () => Promise.reject(new Error('down')) }
+        await expect(
+            submitJob(fakeDb, refusing, { tenantId, orgId, kind: 'export-dockets', payload: {} }),
+        ).rejects.toThrow()
+        const submitted = await fakeDb
+            .getDb()
+            .selectFrom('jobs')
+            .select(['id', 'runner_ref'])
+            .where('tenant_id', '=', tenantId)
+            .orderBy('created_at', 'desc')
+            .executeTakeFirstOrThrow()
+        expect(submitted.runner_ref).toBe('starting')
+
+        const schedule = await fakeDb
+            .getDb()
+            .insertInto('job_schedules')
+            .values({
+                tenant_id: tenantId,
+                org_id: orgId,
+                kind: 'digest-email',
+                spec: { type: 'weekly', utcDay: 1, atUtcHour: 13, atUtcMinute: 0 },
+                next_run_at: new Date('2001-01-01T00:00:00.000Z'),
+                created_by: 'test',
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        await runDueSchedules(
+            fakeDb,
+            { startingRef: 'starting', start: async () => undefined },
+            new Date('2001-02-01T00:00:00.000Z'),
+        )
+        const spawned = await fakeDb
+            .getDb()
+            .selectFrom('jobs')
+            .select(['runner_ref', 'payload'])
+            .where('tenant_id', '=', tenantId)
+            .where('kind', '=', 'digest-email')
+            .execute()
+        expect(
+            spawned
+                .filter((j) => (j.payload as { scheduleId?: string }).scheduleId === schedule.id)
+                .map((j) => j.runner_ref),
+        ).toEqual(['starting'])
+
+        const { id: first } = await submitJob(
+            fakeDb,
+            { start: async () => undefined },
+            { tenantId, orgId, kind: 'flaky-dockets', payload: {} },
+        )
+        const armed = await recordJobStatus(fakeDb, tenantId, first, 'failed', {
+            error: 'one',
+            now: new Date(Date.now() - 2 * MINUTE),
+        })
+        expect((await row(armed.retry!.jobId)).runner_ref).toBeNull()
+        await runDueRetries(fakeDb, { startingRef: 'starting', start: async () => undefined }, new Date())
+        expect((await row(armed.retry!.jobId)).runner_ref).toBe('starting')
+    })
+
+    test('a submitted job whose start never wrote anything is failed by the sweep after the hour', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { jobs } = await runner()
+        const { submitJob } = await import('../../db/jobs')
+        const refusing = { startingRef: 'starting', start: async () => Promise.reject(new Error('down')) }
+        await submitJob(fakeDb, refusing, { tenantId, orgId, kind: 'export-dockets', payload: {} }).catch(
+            () => undefined,
+        )
+        const id = (
+            await fakeDb
+                .getDb()
+                .selectFrom('jobs')
+                .select('id')
+                .where('tenant_id', '=', tenantId)
+                .orderBy('created_at', 'desc')
+                .executeTakeFirstOrThrow()
+        ).id
+        await fakeDb
+            .getDb()
+            .updateTable('jobs')
+            .set({ updated_at: new Date(Date.now() - 61 * MINUTE).toISOString() })
+            .where('id', '=', id)
+            .execute()
+        expect(await jobs.sweep!(new Date())).toBe(1)
+        expect((await row(id)).error).toBe('lost: its CodeBuild build was never recorded as started')
+    })
+})
+
+describe('the CodeBuild jobs runner: a bounded sweep (safeinsights/sssb#252)', () => {
+    test('fails at most its count, judges nothing after its deadline, and leaves the rest for the next', async () => {
+        const { jobs } = await runner()
+        const ids: string[] = []
+        for (let i = 0; i < 4; i++) {
+            const id = await submitted(jobs, 'export-dockets', 30 * MINUTE)
+            codebuild.builds.set((await row(id)).runner_ref!, {
+                buildStatus: 'FAILED',
+                endTime: new Date(Date.now() - 20 * MINUTE),
+            })
+            ids.push(id)
+        }
+        expect(await jobs.sweep!(new Date(), { maxItems: 3, deadline: Number.MAX_SAFE_INTEGER })).toBe(3)
+        expect(await jobs.sweep!(new Date(), { maxItems: 3, deadline: 0, clock: () => 1 })).toBe(0)
+        expect(await jobs.sweep!(new Date(), { maxItems: 3, deadline: Number.MAX_SAFE_INTEGER })).toBe(1)
+        for (const id of ids) expect((await row(id)).status).toBe('failed')
+    })
+
+    test('visits the tenants in a fresh random order under a bound', async () => {
+        const { fakeDb } = await world()
+        const { jobs, notified } = await runner()
+        const { submitJob } = await import('../../db/jobs')
+        const lakeside = await fakeDb
+            .getDb()
+            .selectFrom('tenants')
+            .innerJoin('organizations', 'organizations.tenant_id', 'tenants.id')
+            .select(['tenants.id as tenantId', 'organizations.id as orgId'])
+            .where('tenants.slug', '=', 'lakeside')
+            .executeTakeFirstOrThrow()
+        for (let i = 0; i < 2; i++) {
+            await submitted(jobs)
+            await submitJob(fakeDb, jobs, { ...lakeside, kind: 'export-dockets', payload: {} })
+        }
+        // Every open job is quiet, and CodeBuild has no record of any of their builds: each is lost.
+        await fakeDb
+            .getDb()
+            .updateTable('jobs')
+            .set({ updated_at: new Date(Date.now() - 30 * MINUTE).toISOString() })
+            .where('status', '=', 'queued')
+            .execute()
+        const tenantOf = async (jobId: string) =>
+            (
+                await fakeDb
+                    .getDb()
+                    .selectFrom('jobs')
+                    .select('tenant_id')
+                    .where('id', '=', jobId)
+                    .executeTakeFirstOrThrow()
+            ).tenant_id
+        const failOne = async (random: () => number) => {
+            expect(await jobs.sweep!(new Date(), { maxItems: 1, deadline: Number.MAX_SAFE_INTEGER, random })).toBe(1)
+            return tenantOf(notified.at(-1)!)
+        }
+        // Of two tenants, a random of 0 visits the later id first and one near 1 the earlier; each tenant still has a loss.
+        expect(await failOne(() => 0)).not.toBe(await failOne(() => 0.99))
+    })
+
+    test("asks about a tenant's builds in a fresh random order under a bound", async () => {
+        const { jobs } = await runner()
+        const ids = [
+            await submitted(jobs, 'export-dockets', 30 * MINUTE),
+            await submitted(jobs, 'export-dockets', 30 * MINUTE),
+        ]
+        const builds = await Promise.all(ids.map(async (id) => (await row(id)).runner_ref!))
+        const [low, high] = [...builds].sort()
+        // CodeBuild has no record of either build. A random of 0 reverses the id order of two, so the later is asked
+        // about, and failed, first.
+        expect(await jobs.sweep!(new Date(), { maxItems: 1, deadline: Number.MAX_SAFE_INTEGER, random: () => 0 })).toBe(
+            1,
+        )
+        expect(codebuild.batchCalls).toEqual([[high, low]])
+        expect((await row(ids[builds.indexOf(high!)]!)).status).toBe('failed')
+        expect((await row(ids[builds.indexOf(low!)]!)).status).toBe('queued')
+    })
+
+    test('fails the losses that need no CodeBuild call even when reading builds spends the window', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { jobs } = await runner()
+        const { submitJob } = await import('../../db/jobs')
+        codebuild.startFault = 'client'
+        await expect(submitJob(fakeDb, jobs, { tenantId, orgId, kind: 'export-dockets', payload: {} })).rejects.toThrow(
+            /StartBuild failed/,
+        )
+        const lostBuild = await submitted(jobs) // CodeBuild has no record of it
+        await fakeDb
+            .getDb()
+            .updateTable('jobs')
+            .set({ updated_at: new Date(Date.now() - 10 * MINUTE).toISOString() })
+            .where('status', '=', 'queued')
+            .execute()
+        const refused = (
+            await fakeDb
+                .getDb()
+                .selectFrom('jobs')
+                .select('id')
+                .where('status', '=', 'queued')
+                .where('runner_ref', '=', 'refused')
+                .executeTakeFirstOrThrow()
+        ).id
+        let now = 0
+        codebuild.onBatch = () => {
+            now = 100 // the read takes the rest of the window
+        }
+        expect(await jobs.sweep!(new Date(), { maxItems: 10, deadline: 50, clock: () => now })).toBe(1)
+        expect((await row(refused)).error).toBe('lost: CodeBuild refused to start its build')
+        expect((await row(lostBuild)).status, 'judged after the deadline: left for the next sweep').toBe('queued')
+    })
+
+    test("fails one read's losses before the next read, so a read cut off by the deadline loses nothing found", async () => {
+        const { jobs } = await runner()
+        // 101 lost builds (CodeBuild has no record of any): two reads, the second of which spends the window.
+        for (let i = 0; i < 101; i++) await submitted(jobs, 'export-dockets', 30 * MINUTE)
+        let now = 0
+        codebuild.onBatch = () => {
+            if (codebuild.batchCalls.length === 2) now = 100
+        }
+        expect(await jobs.sweep!(new Date(), { maxItems: 1000, deadline: 50, clock: () => now })).toBe(100)
+        expect(codebuild.batchCalls.map((ids) => ids.length)).toEqual([100, 1])
+        expect(await jobs.sweep!(new Date()), 'the next sweep fails the rest').toBe(1)
     })
 })
 
@@ -387,6 +608,69 @@ describe('the CodeBuild jobs runner: the sweep for lost builds (safeinsights/sss
         await jobs.sweep!(new Date())
         expect(codebuild.batchCalls.map((ids) => ids.length).sort((a, b) => b - a)[0]).toBeLessThanOrEqual(100)
         expect(codebuild.batchCalls.flat().length).toBeGreaterThanOrEqual(101)
+    })
+
+    test('a retry whose StartBuild may have started a build stays `starting`, and the sweep judges it after the hour (J3)', async () => {
+        const { fakeDb } = await world()
+        const { jobs, notified } = await runner()
+        const { runDueRetries } = await import('../../db/jobs')
+        const id = await submitted(jobs, 'flaky-dockets', 30 * MINUTE)
+        codebuild.builds.set((await row(id)).runner_ref!, {
+            buildStatus: 'FAULT',
+            endTime: new Date(Date.now() - 20 * MINUTE),
+        })
+        expect(await jobs.sweep!(new Date())).toBe(1) // attempt 1 lost: attempt 2 armed
+        const retryOf = (attempt: number) =>
+            fakeDb
+                .getDb()
+                .selectFrom('jobs')
+                .select(['id', 'status', 'runner_ref', 'run_after'])
+                .where('retry_of', '=', id)
+                .where('attempt', '=', attempt)
+                .executeTakeFirst()
+        const ended: string[] = []
+        const onFailed = async (input: { jobId: string }) => void ended.push(input.jobId)
+
+        codebuild.startFault = 'server' // a fault after which CodeBuild may have started the build
+        const due = new Date(Date.now() + 2 * MINUTE)
+        expect(await runDueRetries(fakeDb, jobs, due, undefined, onFailed)).toMatchObject({ started: 0, failed: 1 })
+        expect(await retryOf(2)).toMatchObject({ status: 'queued', runner_ref: 'starting', run_after: null })
+        expect(await retryOf(3), 'no next attempt beside a build that may be running').toBeUndefined()
+        expect(ended).toEqual([])
+
+        // Not judged before the hour; after it, failed as never recorded started, which arms attempt 3.
+        expect(await jobs.sweep!(new Date(Date.now() + 30 * MINUTE))).toBe(0)
+        expect(await jobs.sweep!(new Date(Date.now() + 61 * MINUTE))).toBe(1)
+        expect((await row((await retryOf(2))!.id)).error).toBe(
+            'lost: its CodeBuild build was never recorded as started',
+        )
+        expect(await retryOf(3)).toMatchObject({ status: 'queued' })
+        expect(notified).toHaveLength(2)
+    })
+
+    test('a retry whose StartBuild CodeBuild refused is failed at once, arming the next attempt (J3)', async () => {
+        const { fakeDb } = await world()
+        const { jobs } = await runner()
+        const { runDueRetries } = await import('../../db/jobs')
+        const id = await submitted(jobs, 'flaky-dockets', 30 * MINUTE)
+        codebuild.builds.set((await row(id)).runner_ref!, {
+            buildStatus: 'FAULT',
+            endTime: new Date(Date.now() - 20 * MINUTE),
+        })
+        await jobs.sweep!(new Date())
+        codebuild.startFault = 'client'
+        await runDueRetries(fakeDb, jobs, new Date(Date.now() + 2 * MINUTE))
+        const attempts = await fakeDb
+            .getDb()
+            .selectFrom('jobs')
+            .select(['attempt', 'status', 'runner_ref'])
+            .where('retry_of', '=', id)
+            .orderBy('attempt', 'asc')
+            .execute()
+        expect(attempts.map((a) => [a.attempt, a.status])).toEqual([
+            [2, 'failed'],
+            [3, 'queued'],
+        ])
     })
 
     test('a lost build of a kind that retries arms its next attempt, which a new build completes', async () => {

@@ -11,7 +11,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { NotFoundError, PreconditionFailedError } from '../../ports/errors'
-import type { CopyOptions, StoragePort, StoredObject, StoredObjectInfo } from '../../ports/storage'
+import type { CopyOptions, PutUploadTarget, StoragePort, StoredObject, StoredObjectInfo } from '../../ports/storage'
 
 /** S3's hard cap on keys in one DeleteObjects request. */
 const DELETE_BATCH_SIZE = 1000
@@ -26,6 +26,53 @@ const DELETE_BATCH_SIZE = 1000
  */
 function copySourceFor(bucket: string, key: string): string {
     return `${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`
+}
+
+/** Seconds a presigned URL lives: the same window for a POST and a PUT, and the fake's. */
+const UPLOAD_EXPIRES_SECONDS = 900
+
+/**
+ * A presigned PUT. Its URL signs `Content-Type` and the exact `Content-Length`. Measured against the SDK's presigner
+ * (@aws-sdk/s3-request-presigner): by default it signs `content-length` and `host` but NOT `content-type`, and
+ * `signableHeaders` adds it; both are named so neither rests on that default. So the store refuses another type, and a body of another length if it honours a
+ * signed length (AWS S3 does; Cloudflare R2 is to be measured by cutover row `storage-compatible-store`). The browser
+ * is sent only the headers it must set; it adds the length itself from the body.
+ */
+async function createPutTarget(
+    client: S3Client,
+    bucket: string,
+    key: string,
+    contentType: string,
+    maxBytes: number,
+    sizeBytes: number | undefined,
+): Promise<PutUploadTarget> {
+    if (sizeBytes === undefined) {
+        throw new Error(
+            'storage createUploadTarget: STORAGE_UPLOAD_TARGET=put needs constraints.sizeBytes, the exact size of the ' +
+                'file the browser will send: a PUT has no size policy, so the size is signed into the URL.',
+        )
+    }
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > maxBytes) {
+        throw new Error(
+            `storage createUploadTarget: sizeBytes must be an integer from 0 to maxBytes (${maxBytes}), got ${sizeBytes}`,
+        )
+    }
+    const url = await getSignedUrl(
+        client,
+        new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType, ContentLength: sizeBytes }),
+        { expiresIn: UPLOAD_EXPIRES_SECONDS, signableHeaders: new Set(['content-type', 'content-length']) },
+    )
+    // The SDK's default checksum setting puts the CRC32 of an EMPTY body into the signed URL, which no real upload
+    // matches. Fail here, where the cause is the client's setting, not at the browser with the store's refusal.
+    for (const name of new URL(url).searchParams.keys()) {
+        if (/^x-amz-(sdk-)?checksum/i.test(name)) {
+            throw new Error(
+                `storage createUploadTarget: the presigned PUT carries ${name}, which no upload can match. Build the ` +
+                    "client with requestChecksumCalculation: 'WHEN_REQUIRED', or let createS3Storage build it.",
+            )
+        }
+    }
+    return { method: 'PUT', url, headers: { 'Content-Type': contentType } }
 }
 
 /**
@@ -55,6 +102,15 @@ export interface S3StorageOptions {
      * silently ignored.
      */
     client?: S3Client | undefined
+    /**
+     * The form of upload target `createUploadTarget` mints: `post` (the default), an S3 presigned POST, or `put`, a
+     * presigned PUT for a store that has no POST (Cloudflare R2). A PUT signs the exact `Content-Length` and the
+     * `Content-Type` into the URL (see `UploadConstraints.sizeBytes`), and must not carry the checksum the SDK's
+     * default settings add to a request: an adapter that builds its own client then defaults
+     * `requestChecksumCalculation` to `WHEN_REQUIRED`, and a `client` the caller built must already be set so
+     * (`createUploadTarget` throws, naming it, when the URL it signed carries a checksum).
+     */
+    uploadTarget?: 'post' | 'put' | undefined
 }
 
 /**
@@ -66,7 +122,7 @@ export interface S3StorageOptions {
  * `storage-copy`): typechecked, never run against a real bucket by SSSB's own tests.
  */
 export function createS3Storage(options: S3StorageOptions): StoragePort {
-    const { bucket, client: given, ...config } = options
+    const { bucket, client: given, uploadTarget = 'post', ...config } = options
     if (!bucket) throw new Error('createS3Storage: bucket is required')
     const configured = Object.entries(config).filter(([, value]) => value !== undefined)
     if (given && configured.length > 0) {
@@ -74,6 +130,10 @@ export function createS3Storage(options: S3StorageOptions): StoragePort {
             `createS3Storage: a client was given, so ${configured.map(([name]) => name).join(', ')} would be ignored; ` +
                 'configure the client instead',
         )
+    }
+    // A presigned PUT has to be signed without the SDK's default checksum (see `S3StorageOptions.uploadTarget`).
+    if (uploadTarget === 'put' && config.requestChecksumCalculation === undefined && !given) {
+        configured.push(['requestChecksumCalculation', 'WHEN_REQUIRED'])
     }
     const client = given ?? new S3Client(Object.fromEntries(configured) as S3ClientConfig)
 
@@ -218,7 +278,8 @@ export function createS3Storage(options: S3StorageOptions): StoragePort {
             }
         },
 
-        async createUploadTarget(key, { contentType, maxBytes }) {
+        async createUploadTarget(key, { contentType, maxBytes, sizeBytes }) {
+            if (uploadTarget === 'put') return createPutTarget(client, bucket, key, contentType, maxBytes, sizeBytes)
             // A presigned POST the browser uploads to directly. The Conditions ARE the security policy:
             // the object lands at exactly `key` (server-built — never client-chosen), its declared
             // Content-Type must equal `contentType`, and its size must fall within [0, maxBytes]. AWS
@@ -231,9 +292,9 @@ export function createS3Storage(options: S3StorageOptions): StoragePort {
                     ['eq', '$Content-Type', contentType],
                 ],
                 Fields: { 'Content-Type': contentType },
-                Expires: 900,
+                Expires: UPLOAD_EXPIRES_SECONDS,
             })
-            return { url, fields }
+            return { method: 'POST', url, fields }
         },
     }
 }

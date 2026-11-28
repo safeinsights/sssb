@@ -452,6 +452,9 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
             expect(server.env['HOSTNAME']).toBe('0.0.0.0')
             expect(functionUrlOriginProblems(all, assembly)).toEqual([])
             expect(viewerProblems(all)).toEqual([])
+            // The server believes the headers that function writes (@sssb/kit's publicOrigin and clientAddress) only
+            // because every behavior that reaches it runs the function, which viewerProblems has just held.
+            expect(server.env['SSSB_EDGE']).toBe('cloudfront')
             expect(securityHeadersProblems(all)).toEqual([])
 
             // The production fail-closed guard (packages/kit/src/adapters/index.ts) is irrelevant only while
@@ -556,6 +559,79 @@ describe('the synth assertions fail', () => {
                 cfn.addPropertyOverride('Environment.Variables.E2E_BUILD', '0')
             }),
         ).toThrow(/E2E_BUILD is set/)
+    })
+
+    it('when a behavior reaches the server without the forwarded-host function', () => {
+        const serverOrigin = (/** @type {any} */ app) =>
+            cdk.aws_cloudfront_origins.FunctionUrlOrigin.withOriginAccessControl(app.functionUrl)
+        expect(
+            withServer((app) => {
+                app.distribution.addBehavior('/api/extra/*', serverOrigin(app), {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                })
+            }),
+        ).toThrow(/\/api\/extra\/\* reaches the server without sssbApp.forwardedHost/)
+        // By an escape hatch on the default behavior too.
+        expect(
+            withServer((app) => {
+                const cfn = /** @type {cdk.CfnResource} */ (app.distribution.node.defaultChild)
+                cfn.addPropertyDeletionOverride('DistributionConfig.DefaultCacheBehavior.FunctionAssociations')
+            }),
+        ).toThrow(/the default behavior reaches the server without sssbApp.forwardedHost/)
+        // A viewer-request function of the adopter's own does not overwrite the headers the server believes.
+        expect(
+            withServer((app) => {
+                const own = new cdk.aws_cloudfront.Function(app, 'OwnViewerRequest', {
+                    code: cdk.aws_cloudfront.FunctionCode.fromInline(
+                        'function handler(event) { return event.request }',
+                    ),
+                    runtime: cdk.aws_cloudfront.FunctionRuntime.JS_2_0,
+                })
+                app.distribution.addBehavior('/api/extra/*', serverOrigin(app), {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    functionAssociations: [
+                        { function: own, eventType: cdk.aws_cloudfront.FunctionEventType.VIEWER_REQUEST },
+                    ],
+                })
+            }),
+        ).toThrow(/\/api\/extra\/\* reaches the server without sssbApp.forwardedHost/)
+        // Through an origin group whose member is the Function URL.
+        expect(
+            withServer((app) => {
+                const group = new cdk.aws_cloudfront_origins.OriginGroup({
+                    primaryOrigin: serverOrigin(app),
+                    fallbackOrigin: cdk.aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(app.assetsBucket),
+                })
+                app.distribution.addBehavior('/grouped/*', group, {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                })
+            }),
+        ).toThrow(/\/grouped\/\* reaches the server without sssbApp.forwardedHost/)
+        // On a second distribution of the stack's that is given the Function URL.
+        expect(
+            withServer((app) => {
+                new cdk.aws_cloudfront.Distribution(app, 'Second', {
+                    defaultBehavior: {
+                        origin: serverOrigin(app),
+                        viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    },
+                })
+            }),
+        ).toThrow(/the default behavior \(on .*Second.*\) reaches the server without sssbApp.forwardedHost/)
+        // With the function, a behavior of the adopter's own is fine.
+        expect(
+            withServer((app) => {
+                app.distribution.addBehavior('/api/extra/*', serverOrigin(app), {
+                    viewerProtocolPolicy: cdk.aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    functionAssociations: [
+                        {
+                            function: app.forwardedHost,
+                            eventType: cdk.aws_cloudfront.FunctionEventType.VIEWER_REQUEST,
+                        },
+                    ],
+                })
+            }),
+        ).not.toThrow()
     })
 
     it('when the server does not come up in real mode', () => {
@@ -1422,8 +1498,12 @@ describe("the forwarded-host function's name", () => {
 describe('the forwarded-host function', () => {
     /** The function as CloudFront's JS runtime loads it: a script defining `handler`, run alone. */
     const handler = /** @type {(event: any) => any} */ (vm.runInNewContext(`${FORWARDED_HOST_SOURCE}\nhandler`, {}))
-    /** @param {Record<string, { value: string, multiValue?: { value: string }[] }>} headers */
-    const request = (headers) => handler({ request: { method: 'GET', uri: '/en', querystring: {}, headers } }).headers
+    /**
+     * @param {Record<string, { value: string, multiValue?: { value: string }[] }>} headers
+     * @param {{ ip?: string } | null} [viewer]
+     */
+    const request = (headers, viewer = { ip: '198.51.100.7' }) =>
+        handler({ viewer, request: { method: 'GET', uri: '/en', querystring: {}, headers } }).headers
 
     it('overwrites a forged x-forwarded-host and port with the host CloudFront received and 443', () => {
         const headers = request({
@@ -1441,8 +1521,14 @@ describe('the forwarded-host function', () => {
         expect(headers['cookie']).toEqual({ value: 'a=1' })
     })
 
-    it('lowercases the host and drops any port the Host carried', () => {
+    it("lowercases the host and drops any port, and a fully-qualified name's trailing dot, the Host carried", () => {
         expect(request({ host: { value: 'App.Example.ORG:8443' } })['x-forwarded-host']).toEqual({
+            value: 'app.example.org',
+        })
+        expect(request({ host: { value: 'app.example.org.' } })['x-forwarded-host']).toEqual({
+            value: 'app.example.org',
+        })
+        expect(request({ host: { value: 'app.example.org.:443' } })['x-forwarded-host']).toEqual({
             value: 'app.example.org',
         })
     })
@@ -1452,6 +1538,25 @@ describe('the forwarded-host function', () => {
             value: 'd111.cloudfront.net',
         })
         expect(request({ 'x-forwarded-host': { value: 'evil.example' } })).not.toHaveProperty(['x-forwarded-host'])
+    })
+
+    it("overwrites a forged x-sssb-viewer-address with the viewer's address, and leaves X-Forwarded-For alone", () => {
+        const headers = request(
+            {
+                host: { value: 'app.example.org' },
+                'x-sssb-viewer-address': { value: '1.2.3.4', multiValue: [{ value: '1.2.3.4' }, { value: '5.6.7.8' }] },
+                'x-forwarded-for': { value: '1.2.3.4' },
+            },
+            { ip: '2001:db8::1' },
+        )
+        expect(headers['x-sssb-viewer-address']).toEqual({ value: '2001:db8::1' })
+        expect(headers['x-forwarded-for']).toEqual({ value: '1.2.3.4' })
+    })
+
+    it('drops a forged x-sssb-viewer-address when the event names no viewer address', () => {
+        const forged = { host: { value: 'app.example.org' }, 'x-sssb-viewer-address': { value: '1.2.3.4' } }
+        expect(request(forged, null)).not.toHaveProperty(['x-sssb-viewer-address'])
+        expect(request(forged, {})).not.toHaveProperty(['x-sssb-viewer-address'])
     })
 })
 

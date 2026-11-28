@@ -48,6 +48,7 @@ const MIGRATIONS = [
     '0015_app_user_grant',
     '0016_audit_detail',
     '0017_job_requester',
+    '0018_organizations_write',
     '0019_job_attempts',
     '0020_job_runner_ref',
     '0021_schedule_failures',
