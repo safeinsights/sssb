@@ -8525,6 +8525,113 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
   (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
 
+## Pages, layouts and metadata routes are judged as reads (2026-11-27, `fix/authz-pages`)
+
+safeinsights/sssb#221 and #259. The design and what it accepts are ADR-0012's last 2026-11-27 addendum; the calls it
+did not settle:
+
+- **Seen failing first.** With the scan change alone, the showcase's conformance check went red on eight pages, the
+  dashboard first: "showcase: ../[locale]/dashboard/page.tsx (at ../[locale]/(protected)/dashboard/page.tsx) default is
+  a page export, rendered on the server for every request, that does not reach authorize(...) on its own path, and
+  reads something: `auth.listMembers` is used, and a page may use `auth` only as `auth.getCurrentUser()`, …". The org
+  page failed the same way (a second copy of the #259 leak, its member list with emails and roles), and the starter
+  three times (its layouts and sign-in page reading the seed). A starter dashboard that called `auth.listMembers`, and
+  one that imported `findTenant` from the seed, each turned the starter's check red, and passed again restored.
+- **The page allow-list, entry by entry** (each pages only; routes keep INERT_IMPORTS):
+    - `setRequestLocale`, `getTranslations`, `getMessages` (`next-intl/server`): the catalog and the locale, on every
+      page; `getMessages` is next-intl's layout pattern. `getLocale` is left out: neither app needs it.
+    - `hasLocale` (`next-intl`) and `routing.locales` (`@sssb/kit/i18n/routing`, the member only): the locale layout's
+      segment check.
+    - `canInActiveOrg` (`@sssb/kit/authz/authorize`): a UI ability check of the caller's own abilities, never a read.
+    - `isDemoMode` (`@sssb/kit/adapters/index`): the run mode beside `appMode` and `isSimulated`, the demo badge.
+    - `sameOriginPath` (`@sssb/kit/core/same-origin-path`): the sign-in page's `returnTo` normaliser, a pure function.
+    - `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`): the locale layout's theme and
+      document shell, branding and constants.
+    - `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()`, `auth.listMyOrgs()`: the
+      caller's own session and placements (the header's org switcher), each only called. `auth` itself and every other
+      member are refused outright, `auth.listMembers` first.
+    - A component used only as a JSX tag from a `'use client'` module or a package; a same-file component only
+      rendered (read as part of the page); a real adapter's component loaded with `import()` only to render it (the
+      guide's own shape for real mode), from such a module.
+    - Added in review: `useTranslations` (`next-intl`), the same catalog read in a component that is not async, and
+      a default import of a stylesheet or an image used as a value (class names, a URL), both false positives the
+      first draft had.
+- **Narrowed in review.** The first draft rendered any imported component out of sight, so an async server component
+  of the app's own that loads its data (`<MemberList slug={user.orgSlug} />` calling `auth.listMembers`) passed as
+  reading nothing, by a named, default or namespace import and through `import()` alike. Round 1 made a tag out of sight only
+  when its module resolves to a file whose prologue is `'use client'` or to a package (under `node_modules`, or outside
+  the app's directory: `@sssb/kit`'s screens resolve to the framework's source in this repository); otherwise its name
+  is counted (narrowed again in rounds 2 and 3, below). Every component both apps render was already one of those, so neither app's verdict changed; seen
+  working by taking `'use client'` off the starter's `WelcomeScreen`, which turned its home page red ("it names
+  `WelcomeScreen`"). Also: `auth` and `routing` are checked before the tag allowance (`<auth.listMembers />` passed),
+  through a namespace and `import()` too, and refused from any other module (an app's re-export of `auth` plus a
+  `reads-only` entry naming it passed `auth.listMembers`); a lowercase `<auth />` stays allowed, since JSX makes it an
+  HTML element, not the import. `generateViewport` and `global-not-found` are judged; a page-named file with an
+  unread code extension (`page.mdx`, `page.mts`) and a Pages Router `pages` directory fail, as `route.mts` and
+  `pages/api` did; a `'use client'` metadata route is judged, since it runs on the server.
+- **Narrower than the issue's sketch.** `redirect` and `notFound` were already inert. Not listed: `analytics.isFlagEnabled`
+  (the showcase's two flag reads sit in pages that authorize now), `next/og`'s `ImageResponse` (no app has an image
+  route; one names it in its app's entry), `DEFAULT_TENANT_SLUG` (the showcase alone uses it).
+- **What each app names instead, and why there.** Seed and simulated-world reads are the app's, so they are app
+  entries, where an adopter sees them: the starter now ships `authz-exemptions.mjs` with `[locale]/layout.tsx`
+  (`tenants`, `findTenant`: the locale layout's theme fallback and the protected layout's tenant name; groups are
+  dropped, so the two layouts share one key and one reason) and `[locale]/signin/page.tsx` (`listAllPeople`,
+  `findTenant`: the simulated-mode picker). The showcase names the same sign-in reads, `DEFAULT_TENANT_SLUG` in its locale
+  layout, `findInvite` and `findOrg` on its accept-invite page (authorized by possession of the invite token, as the
+  framework's `auth/accept-invite/route.ts` exemption says), and `isActorId` on the Simulator's actor frame. Pages that
+  read the caller's own records authorize them instead of being named: the profile page and the protected layout read
+  the caller's acceptances and authorize the self-only `AgreementAcceptance` (the layout's `listAgreementsForTenant` and
+  feature flag ride on that authorize, as a route's other reads ride on its own). Rejected: an exemption listing `db`,
+  `tenantIdForSlug`, the agreement readers and seven pure gate functions, a list that described the layout but excused
+  `db` whole.
+- **Narrowed again in review (round 2): by the resolved file, not the text.** The asset allowance had trusted the
+  specifier's ending, so `import load from '../lib/members.css'` (which TypeScript and webpack resolve to a
+  `members.css.ts` beside it), `'./members?x.css'` and a missing file passed; now a `?` or `#` is refused, a specifier
+  that resolves to code or a declaration (but a `.d.css.ts` of `allowArbitraryExtensions`) is refused, and a relative or
+  alias one must name an asset file on disk. "A package" had been anything outside the app's directory, which put an
+  adopter's own workspace package (`packages/ui`, linked or reached by a path) out of sight, and a `node_modules` link
+  back into the app's own `src` too; now only a real path with a `node_modules` segment (pnpm's store) or
+  `@sssb/kit`'s real package directory counts, so the kit's screens stay out of sight here as for an adopter who
+  installs it. The `'use client'` check now reads the module that declares the component, through a barrel's
+  re-exports (a server `components/index.ts` re-exporting a client `x.tsx` was a false failure), and fails closed on a
+  cycle or an unresolvable re-export. The unread-page guard flags only `<name>.<one extension>` (`page.css.ts`,
+  `layout.styles.ts`, `page.spec.e2e.ts` were false failures), and no walk of routes or pages enters a private `_`
+  folder, which Next does not route: that drops a route there from the route walk too, which never served one, while
+  the Server Action walk still enters it. Neither app has a `_` folder under `src/app`; both apps' verdicts and file
+  counts are unchanged.
+- **Narrowed rather than patched (round 3).** A third round found more resolution edges in the same two allowances,
+  so both shrank instead of gaining cases. An asset is now only a relative or `paths`-alias specifier whose literal
+  file exists (no `?` or `#`, no resolution to code, no declaration but the asset's own sibling `.d.css.ts`); a bare
+  specifier (a package's `styles.css`, `baseUrl`, a self-reference, `imports`, a bundler alias) is never one, and is
+  refused as any default import is. "Installed" now means a real path through a `node_modules` whose parent is the
+  app's directory or an ancestor (where a package manager installs), never one below the app's root (`src/node_modules`)
+  and never a pnpm `file:` or `link:` dependency (`.pnpm/<name>@file+…`), which are the adopter's own code; the kit's
+  directory is not trusted for an app inside it. And a `next.config` that sets `pageExtensions` now fails the check
+  (read with the TypeScript parser, so a comment does not count), since the scan reads no custom extension and the
+  unread-file guard catches only `.mts`, `.cts`, `.cjs`, `.mdx` and `.md`. Neither app nor the fixture changed verdict.
+- **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
+Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
+  (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only
+  when `canInActiveOrg(user, 'read', 'Membership')` and authorizing inside that branch, which the scan would pass but
+  the guide's rule (authorize on a path every request takes) forbids. The first draft let a person without standing
+  reach that `authorize` and get its `ForbiddenError`, which in a server component with no error boundary is a 500,
+  on the page sign-in sends everyone to by default. Now both pages check standing first, with the non-throwing
+  `canInActiveOrg(user, 'read', 'Membership')`, and send such a person to their own profile (the one page here that is
+  theirs, which authorizes its self-only read), then authorize unconditionally on the path every other request takes,
+  so the scan still counts the call and `listMembers` never runs for them. Rejected: `notFound()` (says the page does
+  not exist) and a no-access screen (new copy in both catalogs; safeinsights/sssb#265 is that screen). Pinned by
+  `apps/showcase/src/app/[locale]/(protected)/dashboard/page.test.tsx` and its org twin (real abilities, faked
+  adapters: a member gets the active members, `none` is redirected to `/<locale>/profile` and `listMembers` never runs).
+- **Matched by URL, as routes.** A route group's layout and its parent's share a key, which a reviewer may find
+  surprising: one entry, each layout judged by it alone; an `outsideApi.prefixes` entry covers the pages under it too.
+  A page under an intercepting segment (Next's modal pattern) was refused outright in the first draft, even one that
+  authorized; it is now judged as any page with no exemption applying, so it authorizes or reads nothing, and an entry
+  only it would use is stale. An intercepting route is still refused outright (its `service/` and `webhooks/` gates are
+  path-keyed).
+- **Found on the way:** following `export *` for a page's `default`, as the lookups follow it for a verb, would have
+  taken a default JavaScript never re-exports through one; both lookups now skip it. The check keeps its id `authz-mutations`; its title
+  and second test name now say pages.
+
 ## The ticker marker is written whole and cleared without a gap; a failing default fixture always fails typed (2026-11-27, `fix/marker-atomic-and-fake-failure`)
 
 `safeinsights/sssb#258`, `#257` and `#249`: three leftovers of the `#146` and `#145` work.
