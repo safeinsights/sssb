@@ -8831,3 +8831,26 @@ manager's call, and leaves `#152`'s question open:
 - **jscpd, re-measured as the issue asked** (2026-11-27, `pnpm jscpd` with the repository's `.jscpd.json`): 41 clones,
   654 duplicated lines (1.40%) on this branch, against 50 clones and 758 lines (1.57%) on `int-platform` before it.
   Nine fewer clones in all, which counts the showcase-and-starter pairs `safeinsights/sssb#114` tracks among them.
+
+## Main (0.9.1) into int-fixes: where the job retries' Simulator call went (2026-11-28, `merge/main-into-int-fixes`)
+
+Main moved the Simulator's clock and run-due routes out of the showcase into the kit's host (`simulator-api.ts`, served by
+each app's `api/simulator/[...path]` route, safeinsights/sssb#129) while int-fixes added due job retries to those routes
+(safeinsights/sssb#135; the entry above, "Job retries with backoff, a new row per attempt", names them). The merge takes the deletion: both
+routes are gone, and the host's `runDueAtWorldNow`, which its `clock` and `schedules/run-due` handlers share, runs due
+schedules, then due retries, then due deliveries, as the two routes did. `simulator-api.test.ts` proves it through the
+host: run-due alone leaves a retry that is not yet due, and moving the clock past its backoff starts it (red with the call
+taken out). The static twin's clock runs its own retry drain, which main did not touch.
+
+The other conflicts: the migrations registry and the family fence list main's `0018_organizations_write` (unchanged)
+with int-fixes' 0019 to 0021; the attachment confirm route authorizes before its lookup (int-fixes, safeinsights/sssb#137)
+and then takes main's pending check, `head` and size ceiling; the export count is 148 (145 at the merge base, one added
+by int-fixes, two by main), and the internal-module count 99, as `public-surface.test.ts` computes it.
+
+**A database that ran int-fixes' 0019 to 0021 before 0018 cannot take 0018.** The migrator runs the two sequences
+(framework, app) unordered against each other, but in order within each (`packages/kit/src/db/migrate.ts`, "migrations
+out of order within their sequence"), so 0018 after 0019 is refused, loudly, at the first query. Every released database
+is fine: 0.9.1's has 0018 and takes 0019 to 0021 after it, and an older one takes all four in order. What is refused is a
+world, local or deployed, built from int-fixes before this merge: this checkout's own e2e world failed exactly so until
+it was wiped (CLAUDE.md's rule after a migration change). Nothing in the code changes: 0019 to 0021 already come after 0018, which is right for every released database.
+Such a world is wiped; whether a deployment runs int-fixes, and so must be kept, is for its owner to say.

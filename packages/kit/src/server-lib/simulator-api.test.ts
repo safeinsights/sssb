@@ -316,6 +316,11 @@ describe('jobs and the clock', () => {
     // safeinsights/sssb#135 through this host, which is what the Simulator moves time with since it took over the clock
     // and run-due routes: moving the clock past a failed attempt's backoff starts its next attempt.
     test("moving the clock past a failed attempt's backoff starts its next attempt, and run-due alone does not", async () => {
+        // Its own starting point, whatever an earlier test in this block left: jobs not held, the clock at real time.
+        const { setFlag } = await import('../adapters/fake/analytics')
+        const { JOBS_HELD_FLAG } = await import('../adapters/fake/jobs')
+        setFlag(JOBS_HELD_FLAG, false)
+        expect(await (await call('clock', { json: { action: 'reset' } })).json()).toMatchObject({ clockOffsetMs: 0 })
         const { fakeDb } = await import('../adapters/fake/db')
         const { fakeJobs } = await import('../adapters/fake/jobs')
         const { submitJob } = await import('../db/jobs')
