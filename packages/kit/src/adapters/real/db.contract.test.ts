@@ -832,6 +832,46 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
     // safeinsights/sssb#135: a failure of a kind that retries inserts the next attempt in the status transaction, and
     // the tick's retry drain claims it once its delay has passed, all under FORCE RLS as app_user. Proven here on real
     // Postgres: the timestamptz comparison, the self-referencing foreign key and the partial index's predicate.
+    // safeinsights/sssb#202: a tenant's open transaction that lowered its due hint holds the hint row until it commits;
+    // the tick's raise must not wait on it (a raise that does not land only means the tenant is listed again).
+    test('a raise on a hint row another transaction holds returns at once and does not land', async () => {
+        await realDb.migrateToLatest()
+        const admin = realDb.getDb()
+        const tenant = await admin
+            .insertInto('tenants')
+            .values({ slug: `hint-lock-${randomUUID().slice(0, 8)}`, name: 'hint lock' })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        await admin
+            .insertInto('due_hints')
+            .values({ tenant_id: tenant.id, drain: 'schedules', list_after: new Date(0), version: 7 })
+            .execute()
+        const { raiseHint } = await import('../../db/due-hints')
+        const now = new Date('2030-01-01T00:00:00.000Z')
+        let elapsed = 0
+        await admin.transaction().execute(async (trx) => {
+            await trx.selectFrom('due_hints').select('version').where('tenant_id', '=', tenant.id).forUpdate().execute()
+            const started = Date.now()
+            await raiseHint(realDb, { id: tenant.id, hintVersion: '7' }, 'schedules', now, null)
+            elapsed = Date.now() - started
+        })
+        expect(elapsed).toBeLessThan(2_000)
+        const row = await admin
+            .selectFrom('due_hints')
+            .select('list_after')
+            .where('tenant_id', '=', tenant.id)
+            .executeTakeFirstOrThrow()
+        expect(new Date(row.list_after as Date).getTime()).toBe(0)
+        // Unlocked, the same raise lands.
+        await raiseHint(realDb, { id: tenant.id, hintVersion: '7' }, 'schedules', now, null)
+        const raised = await admin
+            .selectFrom('due_hints')
+            .select('list_after')
+            .where('tenant_id', '=', tenant.id)
+            .executeTakeFirstOrThrow()
+        expect(new Date(raised.list_after as Date).getTime()).toBeGreaterThan(now.getTime())
+    })
+
     test('a failed attempt of a kind that retries arms its next attempt, and the retry drain starts it once', async () => {
         await realDb.migrateToLatest()
         const admin = realDb.getDb()

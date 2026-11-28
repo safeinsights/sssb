@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely'
+import { sql, type Kysely, type Transaction } from 'kysely'
 import { KEYSET_MAX_LIMIT, encodeKeysetCursor } from '../core/keyset'
 import type { DbPort } from '../ports/db'
 import { jsonb } from './jsonb'
@@ -616,6 +616,108 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
         scheduleWriteRejected = /row-level security/.test(String(error))
     }
     expect(scheduleWriteRejected).toBe(true)
+
+    // ---- due_hints (0022): owner-only, written by a SECURITY DEFINER trigger ----
+    //
+    // A cross-tenant table that says when each tenant next has work due (safeinsights/sssb#202). `app_user` must not
+    // be able to read it (it would tell one tenant when another has work) or write it (it could hide another tenant's
+    // work from the tick), and the trigger that keeps it must still write it when `app_user` makes work due.
+    const dueHintAttempts: [string, (trx: Transaction<DB>) => Promise<unknown>][] = [
+        ['SELECT', (trx: Transaction<DB>) => trx.selectFrom('due_hints').selectAll().execute()],
+        [
+            'INSERT',
+            (trx: Transaction<DB>) =>
+                trx
+                    .insertInto('due_hints')
+                    .values({
+                        tenant_id: demoTenantId,
+                        drain: 'schedules',
+                        list_after: new Date('2099-01-01T00:00:00.000Z'),
+                    })
+                    .execute(),
+        ],
+        [
+            'UPDATE',
+            (trx: Transaction<DB>) =>
+                trx
+                    .updateTable('due_hints')
+                    .set({ list_after: new Date('2099-01-01T00:00:00.000Z') })
+                    .execute(),
+        ],
+        ['DELETE', (trx: Transaction<DB>) => trx.deleteFrom('due_hints').execute()],
+    ]
+    for (const [operation, attempt] of dueHintAttempts) {
+        let refused = false
+        try {
+            await runWithTenant(appDb, alphaTenantId, attempt)
+        } catch (error) {
+            refused = /permission denied/.test(String(error))
+        }
+        expect(`${operation} on due_hints refused to app_user: ${refused}`).toBe(
+            `${operation} on due_hints refused to app_user: true`,
+        )
+    }
+    let noteDueRefused = false
+    try {
+        await runWithTenant(appDb, alphaTenantId, (trx) => sql`SELECT sssb_note_due()`.execute(trx))
+    } catch (error) {
+        // Not EXECUTE-able by app_user, and a trigger function cannot be called directly in any case.
+        noteDueRefused = /permission denied|trigger functions can only be called as triggers/.test(String(error))
+    }
+    expect(noteDueRefused).toBe(true)
+    // From the catalog, so each property can fail on its own: no privilege of app_user's on the table, no EXECUTE on
+    // the function, the function SECURITY DEFINER, and its search_path exactly the pinned one.
+    const tablePrivileges = await sql<{ privilege: string; held: boolean }>`
+        SELECT p AS privilege, has_table_privilege('app_user', 'public.due_hints', p) AS held
+        FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p
+    `.execute(db)
+    expect(JSON.stringify(tablePrivileges.rows.filter((r) => r.held))).toBe('[]')
+    const noteDue = await sql<{ executable: boolean; definer: boolean; config: string[] | null }>`
+        SELECT has_function_privilege('app_user', 'public.sssb_note_due()', 'EXECUTE') AS executable,
+               prosecdef AS definer, proconfig AS config
+        FROM pg_proc WHERE oid = 'public.sssb_note_due()'::regprocedure
+    `.execute(db)
+    expect(noteDue.rows[0]?.executable).toBe(false)
+    expect(noteDue.rows[0]?.definer).toBe(true)
+    expect(JSON.stringify(noteDue.rows[0]?.config)).toBe(JSON.stringify(['search_path=pg_catalog, public, pg_temp']))
+    // app_user moving its own schedule earlier lowers its tenant's hint, through the definer trigger.
+    const earlier = new Date('2026-08-01T00:00:00.000Z')
+    await runWithTenant(appDb, alphaTenantId, (trx) =>
+        trx.updateTable('job_schedules').set({ next_run_at: earlier }).where('id', '=', alphaSchedule!.id).execute(),
+    )
+    const alphaHint = await db
+        .selectFrom('due_hints')
+        .select('list_after')
+        .where('tenant_id', '=', alphaTenantId)
+        .where('drain', '=', 'schedules')
+        .executeTakeFirst()
+    expect(alphaHint !== undefined && new Date(alphaHint.list_after as Date).getTime() <= earlier.getTime()).toBe(true)
+    // ...and a write naming the other tenant, which RLS refuses, leaves that tenant's hint exactly as it was: the
+    // trigger fires only for a row RLS has let through, so it never writes a tenant the writer cannot.
+    const demoHintOf = async () =>
+        JSON.stringify(
+            await db
+                .selectFrom('due_hints')
+                .select(['list_after', 'version'])
+                .where('tenant_id', '=', demoTenantId)
+                .where('drain', '=', 'schedules')
+                .executeTakeFirst(),
+        )
+    const demoHintBefore = await demoHintOf()
+    let crossTenantMoveRejected = false
+    try {
+        await runWithTenant(appDb, alphaTenantId, (trx) =>
+            trx
+                .updateTable('job_schedules')
+                .set({ tenant_id: demoTenantId, next_run_at: new Date('2000-01-01T00:00:00.000Z') })
+                .where('id', '=', alphaSchedule!.id)
+                .execute(),
+        )
+    } catch (error) {
+        crossTenantMoveRejected = /row-level security/.test(String(error))
+    }
+    expect(crossTenantMoveRejected).toBe(true)
+    expect(await demoHintOf()).toBe(demoHintBefore)
 
     // the scheduler's advance path: a scoped UPDATE of next_run_at succeeds under RLS
     await runWithTenant(appDb, alphaTenantId, (trx) =>

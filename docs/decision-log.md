@@ -8481,6 +8481,108 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
   (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.
 
+## The tick lists only the tenants with work due (2026-11-27, `fix/tick-listing`)
+
+safeinsights/sssb#202: each of the tick's drains lists due rows with one `withTenant` transaction per tenant, so
+listing costs every tenant every tick, whether or not it has anything due. Measured before deciding.
+
+- **The measurement** (1,000 tenants, nothing due, embedded Postgres on the maintainer's machine, through the real
+  adapters; the script and raw numbers are in the shared notes for this batch, not the repository):
+    - pg: about 0.3 ms a tenant a drain, so about 0.3 s a drain, 1,000 transactions.
+    - The RDS Data API, through the emulator: about 0.6 ms a tenant a drain locally, but 4,004 API calls a drain:
+      BeginTransaction, the tenant scope, the query, Commit, for every tenant. Real Data API calls are HTTPS round trips
+      to AWS. Their latency was not measured here (no live AWS). At 10 ms a call that is 40 s a drain; at 25 ms, 100 s.
+      Either is past the tick's whole 30-second limit, and far past the schedules' 6-second window. Since #97 a drain
+      stops listing at its deadline, so the tick would list one or two hundred tenants at most and leave the rest to later ticks: work
+      in a 1,000-tenant deployment would wait many ticks.
+    - With 100 tenants: about 400 calls a drain, which fills the schedules' 6-second window at 15 ms a call.
+    - Verdict: not worth it on pg, and worth it for the Data API transport, which an adopter chooses for scale-to-zero
+      and which is where many tenants would hurt.
+- **The design: an owner-only due hint per tenant and drain, lowered by triggers, raised by the drain.** Migration
+  `0022_due_hints` adds `due_hints(tenant_id, drain, list_after, version)`. `AFTER` row triggers on `job_schedules`,
+  `webhook_deliveries` and `jobs` (an INSERT and an UPDATE trigger on each) call one `SECURITY DEFINER` function,
+  `sssb_note_due`, which lowers the tenant's `list_after` to the row's due time (never raises it) and bumps
+  `version`.
+    - They fire on each write that can make work due SOONER: a row inserted eligible, a row becoming eligible (a
+      schedule enabled, a delivery back to pending or failed, a retry queued), or an eligible row's due time moving
+      earlier.
+    - A write that moves an eligible row LATER does not fire. That covers the tick's own advance of a schedule and its
+      claim of a delivery. It cannot hide work from a raise, since whatever a raise saw of that row was no later. So the
+      tick's writes take no hint row, and never wait on, or deadlock with, a tenant's open transaction that holds one.
+    - A trigger that has to create the row cannot know what else the tenant has due, so it writes the epoch: unknown,
+      and the tenant is listed. The drain's raise then sets it. Writing the one row's time there instead would hide the
+      tenant's earlier work, most of all at rollout, when no row exists yet (round 1 of review found it).
+        - The drain reads the hints in one query (tenants left-joined to hints) and lists only tenants with no hint, a hint
+          that has come, or one more than `MAX_SKIP_MS` (a day) away.
+        - After listing a tenant with nothing due, the drain raises its hint to the tenant's next due time, at most a day
+          on. The next due time comes from one more statement in the same listing transaction. The raise is a
+          compare-and-set on the version read before listing, so a write that lowered the hint meanwhile is kept. It is
+          one statement that skips a hint row another transaction holds (`FOR UPDATE SKIP LOCKED`), so it never waits; a
+          skipped raise only means the tenant is listed again.
+        - The hint is never later than the truth, so no work is delayed by it. The day's cap bounds what a hint can skip,
+          and covers a simulated world whose clock was moved back.
+        - Measured after (same 1,000 tenants): the first tick after the migration lists every tenant once (6,007 Data API
+          calls a drain, about 1.5 times before). Every tick after that with nothing due: 1 call and 0 transactions a
+          drain, on both transports.
+- **Why triggers rather than the write paths noting it.** A trigger sees every write, the app's own included: an app
+  that inserts a schedule from its own route lowers the hint without knowing hints exist. Rejected: noting due work
+  from the framework's own write paths (`enqueueWebhookEvent`, `recordJobStatus`, …), which an app writing those tables
+  itself would bypass, so its work would wait up to the cap.
+- **Why owner-only, and the definer function.** `due_hints` is cross-tenant with no RLS. `app_user` holds no privilege
+  on it: reading it would tell one tenant when another has work; writing it could hide another's work from the tick.
+  So the trigger, which fires as `app_user`, writes it through `SECURITY DEFINER`. `search_path` is pinned to
+  `pg_catalog, public, pg_temp`, and `EXECUTE` is revoked from `PUBLIC` and from `app_user`; a trigger function cannot
+  be called directly anyway. The table is revoked from both too.
+  It writes only the tenant of the row being written, which RLS's `WITH CHECK` has already confined. `SECURITY.md` and
+  `rls-proofs.ts` say and prove it. The proofs run on pglite and in the contract suite on pg, the Data API, and the
+  non-superuser owner pass. Rejected:
+    - **One query across tenants** through a `SECURITY DEFINER` read of the due rows themselves. That would put tenant
+      content behind a definer function. The hint holds no content, only when.
+    - **A `BYPASSRLS` role for the tick**, which the guide forbids for good reason.
+- **Opt-in per call.** The budget's `dueHints: true` turns hints on. The tick sets it; a drain called without it lists
+  every tenant, so the Simulator's own controls, which drain two or three tenants, are untouched. A drain that cannot
+  read the hints (a server connecting as some role that does not own the table) logs and lists every tenant, as
+  before, and raises nothing.
+- **Not changed: the jobs port's sweep** still lists every tenant (the in-process runner's and the CodeBuild
+  runner's). It is the subject of safeinsights/sssb#252, its missing bound; hints for it are a step further, and the
+  sweep runs once a tick rather than three times.
+- **Recorded for the previous change** (`fix/lost-builds-and-failing-schedules`), whose limits were accepted there and
+  are now filed: a `starting` write that fails leaves a CodeBuild job queued with no ref (safeinsights/sssb#251); the
+  sweep has no bound of its own (safeinsights/sssb#252).
+- **Proofs.**
+    - `db/due-hints.test.ts`, on pglite, through the drains as the tick calls them:
+        - a future schedule's trigger sets the hint;
+        - a tenant with no hint is listed once and raised;
+        - the next tick skips it;
+        - a schedule written due lowers the hint, and the next tick lists the tenant and fires it;
+        - a drain without hints lists everyone;
+        - a delivery enqueued and a retry armed each lower the hint and are drained;
+        - a raise does not land over a write after the read;
+        - a hint more than a day off is read as come;
+        - unreadable hints list every tenant.
+    - `rls-proofs.ts`: `app_user` refused on all four operations and on the function. From the catalog, so each can
+      fail on its own: no privilege of `app_user`'s on the table, no EXECUTE on the function, `prosecdef`, and
+      `proconfig` exactly the pinned `search_path`. Its own write lowers its hint.
+    - `db.contract.test.ts`: a raise against a hint row another transaction holds returns at once and does not land.
+    - More hint tests: a raise to the earliest next due time and at most a day; re-enabling; a status-only move back to
+      failed; a budget's leftover deliveries staying listed; the tick's own advance leaving the version alone; moving a
+      schedule earlier lowering it.
+- **Lock coupling within one tenant (accepted).** Writes of one tenant that make work due sooner on the same drain now
+  serialize on that tenant's hint row for the rest of their transactions. Two such transactions touching two drains in
+  opposite orders can deadlock. That is confined to the tenant's own writers and never crosses tenants, and the tick
+  takes no part in it.
+- **What review changed** (Opus rounds 1 and 2, the security review on Fable, then a check of the last fixes as a
+  diff):
+    - the epoch on a first trigger write;
+    - triggers only for sooner work;
+    - the never-waiting raise;
+    - the catalog proofs;
+    - `pg_temp` and the revokes from `app_user`;
+    - the jobs trigger watching `status`;
+    - tests for each gap the reviewers named. Each of those mutations was run and turned red.
+        - `rds-data.contract.test.ts`: a hinted drain over tenants with nothing due costs one Data API call, after the tick
+          that first lists them.
+
 ## A reused pid does not keep a stale ticker marker alive, and the vendor ban reads one list one way (2026-11-27, `fix/ticker-marker-and-vendor-ban`)
 
 `safeinsights/sssb#146` and `safeinsights/sssb#155`, two tooling leftovers.
@@ -9271,3 +9373,53 @@ and #248/#268's CodeBuild sweep meet.
 - **Review.** One Opus round: the MEDIUM (passes) and the LOW (the `sweep` condition) above, both fixed. Then a claims
   pass. The release-notes findings J8 (the schedules' window stated as 8 s) and J2 (a paused cluster's first tick) are
   fixed in `bounded-tick-drains.md` and `job-retries.md` on the same branch.
+
+## The due hints beside 0.10.0's listing share (2026-11-28, `fix/tick-listing` onto `int-followups`)
+
+`fix/tick-listing` (safeinsights/sssb#202, PR #263) was held for after 0.10.0, and is now merged onto `int-followups`,
+cut from the release. 0.10.0 brought three things it meets: the drains' listing share and passes (#287's J1 fix, "A
+drain lists for half its window" above), the sweep's own window (#268), and migrations 0019 to 0021.
+
+- **The hints sit beside the listing share; `LISTING_SHARE` stays.** The two answer different costs. The hints decide
+  which tenants a tick's drain lists: only those whose hint has come, so an idle tenant costs nothing. The share decides
+  how long a drain may spend listing the ones it does list: at most half of what is left of its window per pass, so the
+  drain always runs something. The share is still needed in two cases the hints do not cover: the first tick after
+  migration 0022, which has no hints and lists every tenant once; and a tick where many tenants really do have work due,
+  each still a listing of its own. `drainFairly` keeps #287's passes, and hands a tenant listed with nothing due to
+  `listedNothing` (the hint's raise) in whichever pass lists it.
+    - Rejected: dropping the share now that the hints exist, which would bring back J1's cliff on those two kinds of
+      tick.
+- **The sweep is unchanged by the hints.** It runs first, in its own 2 s window (#268), and lists tenants with no
+  hints, as the decision above said ("The sweep is unchanged (#252)", now bounded by #252's fix). The hints are the
+  drains' only.
+- **Migrations.** 0.10.0 ships 0019 to 0021; `0022_due_hints` follows them unchanged, and `migrations/index.ts`
+  registers it last. Its jobs trigger already watched `run_after`, which 0019 added.
+- **J3's retry left `starting`** (#287) does not lower a hint: the retry claim clears `run_after`, which makes the row
+  less due, not more, so the trigger does not fire.
+- **Merge mechanics.** `drain-budget.ts` (the passes and the hints' `listOne` shape, `{ rows, nextDue }`), `jobs.ts`
+  (both imports) and the module count in `adopting-reference.md` (99 on `int-followups`, plus `due-hints.ts` and the `0022` migration: 101)
+  conflicted. #287's drain tests now return `{ rows }`.
+- **Review of the merged branch** (one Opus round, one Fable security pass, the merge changing the design). Neither
+  found a hint that can hide due work, or a way across tenants (Fable probed a cross-tenant insert and a tenant move
+  as `app_user`, the 0018 organizations writes, temp-schema shadowing of the function and a direct call, all refused).
+  Fixed here:
+    - **Both: a tenant's first raise waited on its open transaction.** The raise's update path skips a locked row,
+      but creating a missing row is an `INSERT … ON CONFLICT DO NOTHING`, which waits on another transaction's
+      uncommitted insert of the same key (the trigger's "unknown"); a probe waited 3 s. The worst case was the first
+      tick after the migration, when every tenant's raise is a create. Migration 0022 now writes every existing tenant
+      an "unknown" row per drain, so the raises after it update. The insert path remains only for a tenant created
+      since, on its first raise per drain, while a write of its own is open. Rejected: skipping the raise when the row
+      is missing, which would list such a tenant every tick until it wrote something; a `lock_timeout`, which needs a
+      transaction (four Data API calls a raise, the cost the single-statement raise removed).
+    - **Fable: the owner's queries named `due_hints` unqualified,** so a temporary table `app_user` created on a pooled
+      pg connection could stand in for it on that connection's next owner query (probed). `tenantsToList` and
+      `raiseHint` now go through `withSchema('public')`. Arbitrary SQL as `app_user` is already worse than this, so
+      it is hardening.
+    - **Fable: no proof that a refused cross-tenant write leaves the other tenant's hint alone.** `rls-proofs.ts` now
+      moves a schedule to the other tenant as `app_user`, sees RLS refuse it, and checks that tenant's hint unchanged.
+      Accepted, as before: writes of one tenant that make work due sooner queue on that tenant's hint row until they
+      commit (the version bump the compare-and-set needs), and two of its transactions touching two drains' hints in
+      opposite order can deadlock (Fable reproduced it), within that tenant only.
+      Proofs: the backfill on a database migrated to 0021 with tenants (`due-hints.test.ts`), the temporary table not
+      standing in (same), the refused cross-tenant move (`rls-proofs.ts`, every transport). Removing the backfill or the
+      qualification turns its test red.
