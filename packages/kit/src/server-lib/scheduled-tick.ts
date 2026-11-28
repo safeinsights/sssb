@@ -6,6 +6,7 @@ import {
     RETRIES_WINDOW_MS,
     SCHEDULES_WINDOW_MS,
     SWEEP_WINDOW_MS,
+    resolveDrainBudget,
 } from '../db/drain-budget'
 import { runDueRetries } from '../db/jobs'
 import { runDueSchedules } from '../db/schedules'
@@ -119,13 +120,16 @@ export async function runScheduledTick(
     const now = isSimulated ? worldNow() : new Date()
     // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
     // reported here, the failed jobs' errors say it.
+    // Checked as the drains' budgets are, and before the sweep's try, so a malformed one (NaN, 0) throws rather than
+    // unbounding the sweep or stopping it for good.
+    const sweepBudget = resolveDrainBudget({
+        maxItems: budget.maxSweep,
+        deadline: startedAt + budget.sweepWindowMs,
+        clock,
+        ...(options.random && { random: options.random }),
+    })
     try {
-        await jobs.sweep?.(now, {
-            maxItems: budget.maxSweep,
-            deadline: startedAt + budget.sweepWindowMs,
-            clock,
-            ...(options.random && { random: options.random }),
-        })
+        await jobs.sweep?.(now, sweepBudget)
     } catch (error) {
         // A sweep that fails must not stop the schedules and deliveries behind it.
         console.warn(
