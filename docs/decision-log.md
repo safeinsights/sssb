@@ -8533,6 +8533,21 @@ did not settle:
   feature flag ride on that authorize, as a route's other reads ride on its own). Rejected: an exemption listing `db`,
   `tenantIdForSlug`, the agreement readers and seven pure gate functions, a list that described the layout but excused
   `db` whole.
+- **Narrowed again in review (round 2): by the resolved file, not the text.** The asset allowance had trusted the
+  specifier's ending, so `import load from '../lib/members.css'` (which TypeScript and webpack resolve to a
+  `members.css.ts` beside it), `'./members?x.css'` and a missing file passed; now a `?` or `#` is refused, a specifier
+  that resolves to code or a declaration (but a `.d.css.ts` of `allowArbitraryExtensions`) is refused, and a relative or
+  alias one must name an asset file on disk. "A package" had been anything outside the app's directory, which put an
+  adopter's own workspace package (`packages/ui`, linked or reached by a path) out of sight, and a `node_modules` link
+  back into the app's own `src` too; now only a real path with a `node_modules` segment (pnpm's store) or
+  `@sssb/kit`'s real package directory counts, so the kit's screens stay out of sight here as for an adopter who
+  installs it. The `'use client'` check now reads the module that declares the component, through a barrel's
+  re-exports (a server `components/index.ts` re-exporting a client `x.tsx` was a false failure), and fails closed on a
+  cycle or an unresolvable re-export. The unread-page guard flags only `<name>.<one extension>` (`page.css.ts`,
+  `layout.styles.ts`, `page.spec.e2e.ts` were false failures), and no walk of routes or pages enters a private `_`
+  folder, which Next does not route: that drops a route there from the route walk too, which never served one, while
+  the Server Action walk still enters it. Neither app has a `_` folder under `src/app`; both apps' verdicts and file
+  counts are unchanged.
 - **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
 Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
   (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only

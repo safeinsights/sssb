@@ -1137,9 +1137,10 @@ read handler, labelled by its name. `generateStaticParams` (build time) and the 
 not. `error` and `global-error` are not read: Next requires both to be client components. A component file whose prologue is
 `'use client'`, or an export whose function sits in one, is skipped: it runs in the browser and reaches data only
 through routes, which are judged. A metadata route is judged whatever its prologue: it runs on the server. A file named
-for one of these with a code extension the scan does not read (`page.mts`, `page.mdx`, a custom `pageExtensions`)
+for one of these with one extension the scan does not read (`page.mts`, `page.mdx`, a custom `pageExtensions`)
 fails, as an unread `route.<ext>` does, and so does a `pages` or `src/pages` directory (the Pages Router), where
-before only `pages/api` did. Re-exports are followed and an unreadable page is refused, as for a route; `export *`
+before only `pages/api` did. A private folder (`_lib`), which Next does not route, is not walked for routes or pages
+(the route walk read one before), though Server Actions there are still judged. Re-exports are followed and an unreadable page is refused, as for a route; `export *`
 re-exports no `default`, as in JavaScript, so the lookup does not follow one through it.
 
 **How a page passes.** As a read route does, three ways: it reaches `authorize(...)`; it reads nothing; or an app entry
@@ -1159,25 +1160,30 @@ reads the session, its copy and its locale, and renders components:
   (`next-intl/server`), `hasLocale` and `useTranslations` (`next-intl`), `canInActiveOrg` (`@sssb/kit/authz/authorize`), `isDemoMode`
   (`@sssb/kit/adapters/index`), `sameOriginPath` (`@sssb/kit/core/same-origin-path`), `getTenantTheme`
   (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`); and a default import of a static asset (a stylesheet
-  or an image) as a value;
+  or an image) as a value, decided by what the specifier lands on, not its text: no `?` or `#`, no resolution to code
+  or a declaration (`./members.css` resolves to a `members.css.ts` beside it), and the file itself on disk for a
+  relative or alias specifier;
 - imports allowed only through listed members (PAGE_MEMBERS): `auth.getCurrentUser()`, `auth.requireUser()`,
   `auth.signInPath()`, `auth.refusal()` and `auth.listMyOrgs()` (the caller's own session and placements), each only
   as a call's callee, and `routing.locales` (`@sssb/kit/i18n/routing`). The object used any other way, passed along,
   aliased, spread, destructured, read by a computed key, rendered as a tag, reached through a namespace or `import()`,
   any other member (`auth.listMembers`), or an `auth` or `routing` from any other module (an app's re-export), is
   refused outright, checked before anything else: no exemption's name can excuse it, so the page authorizes;
-- an imported component it only renders, a reference that is a JSX tag's name, when its module is a client one (the
-  file it resolves to opens with `'use client'`) or a package's (it resolves under `node_modules`, or outside the app's
-  directory). What it renders is out of sight, as an imported helper is. A server component of the app's own is
-  counted under its name instead, since it may load its own data (an async `<MemberList slug={…} />` that calls
-  `auth.listMembers` passed as reading nothing in the first draft); every component both reference apps render is a
-  client one or a package's;
+- an imported component it only renders, a reference that is a JSX tag's name, when it is declared in a client module
+  (the module that declares it, followed through a barrel's re-exports, opens with `'use client'`), or is an installed
+  package's (its file's real path has a `node_modules` segment, as pnpm's store has) or `@sssb/kit`'s (its real
+  package directory, as the app resolves it). What it renders is out of sight, as an imported helper is. Any other
+  server component, the app's own or a workspace package's (linked into `node_modules`, whose real path is in the
+  repository, or reached by a path or an alias), is counted under its name instead, since it may load its own data
+  (an async `<MemberList slug={…} />` that calls `auth.listMembers` passed as reading nothing in the first draft; the
+  second treated everything outside the app's directory as a package). A re-export that does not resolve or leads back
+  to itself fails closed. Every component both reference apps render is a client one or the kit's or a package's;
 - a component of its own file that it only renders, a function declared once and never reassigned or a `const` bound
   to a function literal: it is in sight, so its text is read as part of the page, by the same rules, once each;
 - a module it loads with `import()` only to render what it takes from it, the shape the app guide gives a real
   adapter's form: `const { Form } = await import('…')`, or one element of an awaited global `Promise.all([...])`
   destructured the same way, every name plain and kept under its exported name, each used only as a JSX tag, from a
-  client module or a package (from the app's own server module, the name is counted). Any other `import()` is refused,
+  client module or a package by the same rule (from a server module of your own, the name is counted). Any other `import()` is refused,
   in a page as in a route.
 
 Each entry is a case both reference apps' pages or a typical adopter page have, and none carries org-scoped data. What
@@ -1192,8 +1198,10 @@ which read the caller's own acceptances, authorize the self-only `AgreementAccep
 **What it does not see.** What a package's component or a client component does: the scan does not follow an
 import, so a package's server component that loads data passes unseen, and the rule is "load in the page, authorize
 there". A page's top-level code (a `metadata` object built from a query at load), a custom `pageExtensions`
-(`page.page.tsx` is not found), and a `'use client'` component's server render (it cannot await data, and reaches it
-through a route or a Server Action, both judged). Like a gate, reading nothing proves the kind of page.
+(`page.page.tsx` is not found). And a `'use client'` component's server render: Next renders a client component on
+the server too, so one could read server-side data during that render (a module-level read of something the server
+holds); the skip rests on it running in the browser, where it reaches data only through a route or a Server Action,
+both judged. That residual is accepted. Like a gate, reading nothing proves the kind of page.
 
 **Decided: a person without standing does not reach the dashboard** (#259's open question). Every card on it reads
 through a route that refuses them, and the member list is the team's. The page checks standing first with

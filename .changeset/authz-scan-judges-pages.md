@@ -26,28 +26,36 @@ What the check newly **accepts**, in a page only (a route is judged as before):
   `isDemoMode` (`@sssb/kit/adapters/index`), `sameOriginPath` (`@sssb/kit/core/same-origin-path`), `getTenantTheme`
   (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`), each a named import under its exported name;
 - a default import of a static asset (a `.css`, `.module.css` or `.scss` stylesheet, a `.png`, `.jpg`, `.jpeg`, `.gif`,
-  `.svg`, `.webp`, `.avif` or `.ico` image) used as a value;
-- an imported component used only as a JSX tag (by a named, default or namespace import) whose module is a client one
-  (the file it resolves to opens with `'use client'`) or a package's (it resolves under `node_modules` or outside the
-  app's directory, as `@sssb/kit`'s screens do);
+  `.svg`, `.webp`, `.avif` or `.ico` image) used as a value, when the specifier has no `?` or `#`, does not resolve to
+  code or a declaration (a `.d.css.ts` of `allowArbitraryExtensions` excepted), and, for a relative or alias specifier,
+  names a file that exists;
+- an imported component used only as a JSX tag (by a named, default or namespace import) declared in a client module
+  (the module that declares it, followed through a barrel's re-exports, opens with `'use client'`), in an installed
+  package (its file's real path is under `node_modules`) or in `@sssb/kit` (its real package directory, as the app
+  resolves it);
 - a component of the page's own file used only as a JSX tag (a function declared once and never reassigned, or a
   `const` bound to a function), whose code is read as part of the page;
 - `const { Form } = await import('…')`, alone or as one element of an awaited global `Promise.all([...])` destructured
-  the same way, when every name it binds is used only as a JSX tag and the module is a client one or a package's (the
+  the same way, when every name it binds is used only as a JSX tag and the component is a client one or a package's (the
   guide's shape for a real adapter's component);
 - a `reads-only` entry under `outsideApi.files` keyed by a page, layout or metadata route file (`[locale]/signin/page.tsx`),
   not only a `route.*`; and an existing `outsideApi.prefixes` entry now covers the pages under it as well as the routes;
 - a `'use client'` component file, or a page re-exporting a client component, which is skipped (a metadata route is
   judged whatever its prologue);
-- a page under an intercepting segment (`(.)x`, Next's modal pattern) that authorizes or reads nothing.
+- a page under an intercepting segment (`(.)x`, Next's modal pattern) that authorizes or reads nothing;
+- **for routes too:** a route or page in a private folder (a segment starting with `_`, which Next does not route) is no
+  longer read or judged, so a `route.ts` under `src/app/_lib/` that failed before now passes unread (Next never serves
+  it). A Server Action there is still judged.
 
 What it newly **refuses**:
 
 - a page's export that names anything else and does not reach `authorize(...)`: the seed, the simulated world, a port,
   a data helper, `db`, `analytics`, `next/og`'s `ImageResponse`, a value of the page's own file, a component passed as
-  a value or called, and a server component of the app's own (a module under the app without `'use client'`, which may
-  load its own data) rendered as a tag or loaded with `import()`: its name is counted, so the page authorizes or an
-  entry lists it;
+  a value or called, and a server component of your own (a module without `'use client'`, in the app or in a workspace
+  package, linked into `node_modules` or reached by a path or an alias, which may load its own data) rendered as a tag
+  or loaded with `import()`: its name is counted, so the page authorizes or an entry lists it; and a default import
+  whose specifier only looks like an asset (`'./members.css'` beside a `members.css.ts`, `'./x.css?inline'`, a file that
+  does not exist);
 - `auth` (and `routing`) used any other way, whatever an entry lists: another member (`auth.listMembers`,
   `auth.getMember`, `routing.defaultLocale`), the object passed along, aliased, spread, destructured, read by a
   computed key, rendered as a tag (`<auth.listMembers />`) or reached through a namespace or `import()`, a listed method
@@ -59,8 +67,8 @@ What it newly **refuses**:
 - an app entry of any gate kind but `reads-only` for a page, even under `src/app/api`; and a page under
   `src/app/api/service/` that is not wrapped by `withServiceCaller`;
 - a `pages` or `src/pages` directory (the Pages Router), where before only `pages/api` failed, and a file named for a
-  page, layout or metadata route with a code extension the check does not read (`page.mts`, `layout.cjs`, `page.mdx`,
-  `page.page.tsx`).
+  page, layout or metadata route with one extension the check does not read (`page.mts`, `page.cts`, `layout.cjs`,
+  `page.mdx`, `default.md`); a file with a middle segment (`page.css.ts`, `layout.styles.ts`) is a module of its own.
 
 Pages are matched by URL as routes are, so a route group's layout and its parent layout share one key
 (`[locale]/layout.tsx`): one entry covers both, each judged on its own. The generated app ships an

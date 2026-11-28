@@ -147,8 +147,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
   app serves routes and pages from `src/app` alone: a root-level `app/` directory, a `pages` directory beside `src` or
-  inside it (the Pages Router), or a file named `route.<ext>`, `page.<ext>` or for another page file below with an extension the
-  check does not read (`route.mts`, `page.mdx`, a custom `pageExtensions`) fails it.
+  inside it (the Pages Router), or a file named `route.<ext>`, `page.<ext>` or for another page file below with an
+  extension the check does not read (`route.mts`, `page.mdx`, a custom `pageExtensions`) fails it. A private folder
+  (`_lib`), which Next does not route, holds no route or page the check reads; a Server Action there is still judged.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names (a `reads-only`
   entry, reads only), each judged on
@@ -189,17 +190,21 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   is a team's member list), its copy and locale (`setRequestLocale`, `getTranslations` and `getMessages` from
   `next-intl/server`, `hasLocale` and `useTranslations` from `next-intl`, `routing.locales`), `canInActiveOrg`,
   `isDemoMode`, `sameOriginPath`, `getTenantTheme`, Mantine's `mantineHtmlProps` and a default-imported stylesheet or
-  image; a component it only renders as a JSX tag, from a `'use client'` module or a package; a component of its own
+  image (the file itself, with no `?` or `#`, and no code beside it of the same name); a component it only renders as
+  a JSX tag, declared in a `'use client'` module (a barrel's re-export is followed to it) or in an installed package
+  (one under `node_modules`) or SSSB's kit; a component of its own
   file it only renders, which is read as part of it; and a real adapter's component it loads with
   `const { Form } = await import('…')` (alone, or in an awaited `Promise.all`) only to render it. Anything else it names
-  (the seed, a port, a data helper, a server component of the app's own, `auth` used any other way) means it
+  (the seed, a port, a data helper, a server component of your own, in the app or a workspace package, `auth` used any
+  other way) means it
   authorizes, as `src/app/[locale]/(protected)/dashboard/page.tsx` would before reading the team's data, or, only if
   it reads nothing org-scoped, has a `reads-only` entry under `outsideApi` keyed by its file, as `authz-exemptions.mjs`
   names the sign-in page's, or an `outsideApi.prefixes` entry above it, which covers the pages under it as it covers the
   routes. A route group is dropped from the key, so a group's layout shares its parent's (`[locale]/layout.tsx`). A page
   under an intercepting segment (`(.)x`) can match no entry: it authorizes or reads nothing.
-- A component from a package or a `'use client'` module is out of the check's sight, as a helper in another module is.
-  A server component of the app's own is named instead, since it may load its own data: load the data in the page,
+- A component from an installed package, SSSB's kit or a `'use client'` module is out of the check's sight, as a
+  helper in another module is. A server component of your own (in the app, or a workspace package it links or reaches
+  by a path or an alias) is named instead, since it may load its own data: load the data in the page,
   authorize there, and hand the component the rows. A person the page's `authorize` refuses gets its `ForbiddenError`
   instead of the page, so a page a person without standing may open checks `canInActiveOrg` first and sends them
   where they have something to see.
