@@ -18,7 +18,6 @@ import * as m0018 from './0018_organizations_write'
 import * as m0019 from './0019_job_attempts'
 import * as m0020 from './0020_job_runner_ref'
 import * as m0021 from './0021_schedule_failures'
-import * as m0022 from './0022_due_hints'
 
 /**
  * Static migration registry (no filesystem scanning — bundles cleanly into the Lambda migrator and
@@ -55,7 +54,6 @@ export const frameworkMigrations: Record<string, Migration> = {
     '0019_job_attempts': m0019,
     '0020_job_runner_ref': m0020,
     '0021_schedule_failures': m0021,
-    '0022_due_hints': m0022,
 }
 
 export const migrations: Record<string, Migration> = { ...frameworkMigrations, ...appMigrations }

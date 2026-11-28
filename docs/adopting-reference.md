@@ -476,7 +476,7 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
 lists the 148 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 101 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 99 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -747,8 +747,7 @@ the showcase carries the same route over the same function.
   cannot keep another's work waiting tick after tick. Each drain lists tenants (a transaction each, about four calls on
   the RDS Data API) for at most half of what is left of its window, runs what it listed, and lists on if time is left: past the
   number of tenants it can list in that time, it serves a fresh random set of them each tick, not none, and the rest
-  wait for a later tick. The tick lists only the tenants whose due hint has come (a tenant found with nothing due is
-  not listed again until its work comes due, or for a day), so an idle tenant costs a drain nothing. What a tick leaves is not touched and the next tick takes it; the
+  wait for a later tick. What a tick leaves is not touched and the next tick takes it; the
   route's JSON says how much it left (`deferred`, at least that many, for schedules and inside `retries` and
   `deliveries`; the sweep's is not reported) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
   bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional, and one that is not a usable bound (`NaN`, `0`) throws.

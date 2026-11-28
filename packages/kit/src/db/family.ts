@@ -39,29 +39,6 @@ export interface DbFamily {
     readonly isolation: DbIsolation
     /** A JSON value as a column parameter (`jsonb` in Postgres), safe for an array as well as an object. */
     json<T>(value: T): RawBuilder<T>
-    /**
-     * The tick's due-hint read (./due-hints.ts, 0022_due_hints): the tenants `drain` lists at `now` (no hint, a hint
-     * that has come or is past `cap`, or an event that has come), each with its hint's version, and a token for the read
-     * (`snapshot`: in Postgres the statement's `pg_current_snapshot()`). On the owner's raw handle.
-     */
-    readDueHints(
-        db: Kysely<DB>,
-        drain: string,
-        now: Date,
-        cap: Date,
-    ): Promise<{ id: string; version: string | number | null; snapshot: string }[]>
-    /**
-     * Sets the listed tenants' hints for `drain` by compare-and-set on the version each was read at (an insert when none
-     * was), and deletes, for each tenant it set, at most `perTenant` of its events that the read identified by `snapshot`
-     * could see. One statement.
-     */
-    settleDueHints(
-        db: Kysely<DB>,
-        drain: string,
-        snapshot: string,
-        rows: readonly { tenantId: string; listAfter: Date; version: string | null }[],
-        perTenant: number,
-    ): Promise<void>
     /** The selected rows, locked for the rest of the transaction (`FOR UPDATE` in Postgres). Use with `$call`. */
     lockRow<D, TB extends keyof D, O>(query: SelectQueryBuilder<D, TB, O>): SelectQueryBuilder<D, TB, O>
     /** The database's own clock, as a value to write (`now()` in Postgres: the transaction's start). */
@@ -86,56 +63,6 @@ const postgresFamily: DbFamily = {
     isolation: 'rls',
     json: jsonb,
     lockRow: (query) => query.forUpdate(),
-    readDueHints: async (db, drain, now, cap) =>
-        (
-            await sql<{ id: string; version: string | number | null; snapshot: string }>`
-                SELECT t.id, h.version, pg_current_snapshot()::text AS snapshot
-                FROM public.tenants t
-                LEFT JOIN public.due_hints h ON h.tenant_id = t.id AND h.drain = ${drain}
-                WHERE h.tenant_id IS NULL OR h.list_after <= ${now} OR h.list_after > ${cap}
-                    OR EXISTS (
-                        SELECT 1 FROM public.due_hint_events e
-                        WHERE e.tenant_id = t.id AND e.drain = ${drain} AND e.due <= ${now}
-                    )
-            `.execute(db)
-        ).rows,
-    settleDueHints: async (db, drain, snapshot, rows, perTenant) => {
-        const values = sql.join(
-            rows.map((r) => sql`(${r.tenantId}::uuid, ${r.listAfter}::timestamptz, ${r.version}::bigint)`),
-        )
-        // An event the snapshot could not see was committed after the read: its tenant's listing may not have seen
-        // its row, so it stays, and the tenant is listed again. At most `perTenant` a tenant, read along the events
-        // index, so one tenant's backlog costs this statement no more than any other's; the rest stay, and only mean
-        // the tenant is listed again.
-        await sql`
-            WITH v (tenant_id, list_after, version) AS (VALUES ${values}),
-            updated AS (
-                UPDATE public.due_hints h SET list_after = v.list_after, version = h.version + 1
-                FROM v
-                WHERE v.version IS NOT NULL AND h.tenant_id = v.tenant_id AND h.drain = ${drain}
-                    AND h.version = v.version
-                RETURNING h.tenant_id
-            ),
-            inserted AS (
-                INSERT INTO public.due_hints (tenant_id, drain, list_after, version)
-                SELECT v.tenant_id, ${drain}, v.list_after, 1 FROM v WHERE v.version IS NULL
-                ON CONFLICT (tenant_id, drain) DO NOTHING
-                RETURNING tenant_id
-            )
-            DELETE FROM public.due_hint_events d
-            WHERE d.ctid = ANY (ARRAY(
-                SELECT x.ctid
-                FROM (SELECT tenant_id FROM updated UNION ALL SELECT tenant_id FROM inserted) s
-                CROSS JOIN LATERAL (
-                    SELECT e.ctid FROM public.due_hint_events e
-                    WHERE e.tenant_id = s.tenant_id AND e.drain = ${drain}
-                        AND pg_visible_in_snapshot(e.writer, ${snapshot}::pg_snapshot)
-                    ORDER BY e.due
-                    LIMIT ${perTenant}
-                ) x
-            ))
-        `.execute(db)
-    },
     currentTime: () => sql<string>`now()`,
     keysetSlice: (query, { orderColumn, after, take }) => {
         // ONE reference to the ordering column, used by the comparison, the cursor rendering and the ORDER BY.
