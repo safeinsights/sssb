@@ -41,7 +41,7 @@ export interface DbFamily {
     json<T>(value: T): RawBuilder<T>
     /**
      * Locks the rows a query selects unless another transaction holds them, which it skips (`FOR UPDATE SKIP LOCKED` in
-     * Postgres): for a write that must never wait, and for which a skipped row is no harm (../db/due-hints.ts's raise).
+     * Postgres): for a write that must never wait, and for which a skipped row is no harm (./due-hints.ts's raise).
      */
     lockRowsNotHeld<D, TB extends keyof D, O>(query: SelectQueryBuilder<D, TB, O>): SelectQueryBuilder<D, TB, O>
     /** The selected rows, locked for the rest of the transaction (`FOR UPDATE` in Postgres). Use with `$call`. */
