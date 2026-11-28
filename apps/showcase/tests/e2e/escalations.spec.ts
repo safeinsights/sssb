@@ -3,6 +3,7 @@ import { openSimulatorPanel } from './support/simulator'
 import { pickOrg } from './support/org-switcher'
 import { untilNewDocument } from './support/new-document'
 import { reachDashboard, signInAs } from './support/people'
+import { coldRoute } from './support/budgets'
 
 /**
  * Cross-org escalations, end to end. An escalation is TWO-SIDED: the org that raised it sees it under
@@ -60,7 +61,7 @@ async function createRequest(page: Page, targetName: string, subject: string, bo
         await page.getByTestId('escalation-subject').fill(subject, { timeout: 2_000 })
         await page.getByTestId('escalation-body').fill(body, { timeout: 2_000 })
         await expect(page.getByTestId('escalation-create')).toBeEnabled({ timeout: 1_000 })
-    }).toPass({ timeout: 45_000 })
+    }).toPass({ timeout: coldRoute(45_000) })
     await page.getByTestId('escalation-create').click()
     await expect(page.getByTestId('escalations-sent-list')).toContainText(subject)
 }

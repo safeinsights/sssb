@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { untilNewDocument } from './new-document'
+import { coldRoute } from './budgets'
 
 export async function signInAs(page: Page, personId: string) {
     await page.goto('/en/signin')
@@ -27,6 +28,6 @@ export async function reachDashboard(page: Page) {
     await page
         .locator('[data-testid="simulator-pill"][data-hydrated], [data-testid="simulator-panel"][data-hydrated]')
         .first()
-        .waitFor({ state: 'attached', timeout: 45_000 })
+        .waitFor({ state: 'attached', timeout: coldRoute(45_000) })
     await untilNewDocument(page, () => page.getByTestId('nav-dashboard').click())
 }

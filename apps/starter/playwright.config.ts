@@ -33,16 +33,18 @@ export default defineConfig({
     // full Next compile on every route it touches — sign-in, dashboard, the items route, the Simulator's. The default
     // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
     // warm-up pass to inherit, so the budget is raised rather than left to flake.
-    timeout: 60_000,
-    expect: { timeout: 15_000 },
+    timeout: E2E_BUILD ? 15_000 : 60_000,
+    // On a production build nothing compiles while a test runs, so the budgets only cover the app's own work: measured
+    // in five CI runs (2026-11-28), the slowest test took 3.6 s and the slowest assertion 2.3 s, so a test gets 15 s and an
+    // assertion 10 s, each over four times that. Under `next dev` they are what they were.
+    expect: { timeout: E2E_BUILD ? 10_000 : 15_000 },
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 2 : 1,
     // One worker, on CI too — this app's whole suite is a few short specs, so parallelism buys little here,
     // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
     // saving time.
     workers: 1,
-    // TEMPORARY: the timing reporter is the measurement; the commit that sets the budgets removes it.
-    reporter: process.env['CI'] ? [['github'], ['./tests/e2e/timing-reporter.ts']] : 'list',
+    reporter: process.env['CI'] ? 'github' : 'list',
     use: {
         baseURL: BASE_URL,
         trace: 'on-first-retry',

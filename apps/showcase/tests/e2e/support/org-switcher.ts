@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test'
+import { coldRoute } from './budgets'
 
 /**
  * Open the header OrgSwitcher (a Mantine Menu) and pick `slug`, hydration-safe: a click on the
@@ -30,6 +31,6 @@ export async function pickOrg(page: Page, slug: string) {
         // click closes the menu.
         name = (await item.locator('p').first().innerText({ timeout: 2_000 })).trim()
         await item.click({ timeout: 2_000 })
-    }).toPass({ timeout: 45_000 })
-    await expect(trigger.locator('p').first()).toHaveText(name, { timeout: 45_000 })
+    }).toPass({ timeout: coldRoute(45_000) })
+    await expect(trigger.locator('p').first()).toHaveText(name, { timeout: coldRoute(45_000) })
 }

@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import { openSimulatorPanel } from './support/simulator'
 import { signInAs } from './support/people'
+import { coldRoute } from './support/budgets'
 
 /**
  * Full-app axe sweep (extends smoke.spec.ts, which only covers the public home page).
@@ -28,7 +29,7 @@ const actorRoutes = ['/en/simulator/actors/bundle-analyzer?paused=1', '/en/simul
 for (const route of actorRoutes) {
     test(`axe: ${route} (paused actor)`, async ({ page }) => {
         await page.goto(route)
-        await expect(page.getByTestId('actor-shell')).toBeVisible({ timeout: 30_000 })
+        await expect(page.getByTestId('actor-shell')).toBeVisible({ timeout: coldRoute(30_000) })
         await page.waitForLoadState('networkidle')
         const results = await new AxeBuilder({ page }).analyze()
         expect(results.violations, route).toEqual([])

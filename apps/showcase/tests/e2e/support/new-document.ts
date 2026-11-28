@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import { coldRoute } from './budgets'
 
 type Stamped = { __previousDocument?: boolean }
 
@@ -31,6 +32,6 @@ export async function untilNewDocument(page: Page, trigger: () => Promise<unknow
     })
     await trigger()
     await page.waitForFunction(() => !(window as unknown as Stamped).__previousDocument, undefined, {
-        timeout: 45_000,
+        timeout: coldRoute(45_000),
     })
 }
