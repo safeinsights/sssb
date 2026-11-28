@@ -718,3 +718,178 @@ describe('the seam review (build output, unreadable directories)', () => {
         },
     )
 })
+
+describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#221)', () => {
+    const readsOnly = (names: string[], reason = 'reads the seed world only') =>
+        `{ reason: '${reason}', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(names)} } }`
+    const SEED_PAGE =
+        "import { findTenant } from '../../../seed'\nexport default function P() { return findTenant('x') }\n"
+    const MEMBERS_PAGE =
+        "import { auth } from '@sssb/kit/adapters/index'\n" +
+        'export default async function P() { const u = await auth.requireUser(); return auth.listMembers(u.orgSlug) }\n'
+    const THIN_PAGE =
+        "import { setRequestLocale } from 'next-intl/server'\nimport { Screen } from './screen'\n" +
+        'export default function P() { setRequestLocale("en"); return <Screen /> }\n'
+
+    it('walks every page under src/app, judges each export, and reports a failing one by its URL path and export', async () => {
+        const scan = await scanApp(
+            app({
+                'api/dockets/route.ts': AUTHORIZED_POST,
+                '[locale]/page.tsx': THIN_PAGE,
+                '[locale]/(team)/members/page.tsx': MEMBERS_PAGE,
+                'layout.tsx': 'export default function L({ children }: { children: unknown }) { return children }\n',
+            }),
+        )
+        expect(scan.pages.map((page) => page.rel)).toEqual([
+            '../[locale]/members/page.tsx',
+            '../[locale]/page.tsx',
+            '../layout.tsx',
+        ])
+        expect(scan.failures).toHaveLength(1)
+        expect(scan.failures[0]).toMatch(
+            /^acme: \.\.\/\[locale\]\/members\/page\.tsx \(at \.\.\/\[locale\]\/\(team\)\/members\/page\.tsx\) default is a page export/,
+        )
+        expect(scan.failures[0]).toMatch(/`auth\.listMembers` is used/)
+    })
+
+    it('walks an app that has pages and no route at all', async () => {
+        const scan = await scanApp(app({ 'page.tsx': THIN_PAGE }))
+        expect(scan.routes).toEqual([])
+        expect(scan.pages).toHaveLength(1)
+        expect(scan.failures).toEqual([])
+    })
+
+    it("skips a 'use client' page", async () => {
+        const scan = await scanApp(app({ 'page.tsx': `'use client'\n${MEMBERS_PAGE}` }))
+        expect(scan.failures).toEqual([])
+    })
+
+    it('pass a page that reads the seed under an outsideApi reads-only entry for its file, and only with the listed names', async () => {
+        const exemptions = `export default { outsideApi: { files: { '[locale]/signin/page.tsx': ${readsOnly(['findTenant'])} } } }\n`
+        const scan = await scanApp(app({ '[locale]/signin/page.tsx': SEED_PAGE }, exemptions))
+        expect(scan.exemptionProblems).toEqual([])
+        expect(scan.failures).toEqual([])
+        // The entry covers that page alone: the same read elsewhere fails.
+        const elsewhere = await scanApp(
+            app({ '[locale]/signin/page.tsx': SEED_PAGE, '[locale]/dashboard/page.tsx': SEED_PAGE }, exemptions),
+        )
+        expect(elsewhere.failures).toEqual([
+            expect.stringMatching(/^acme: \.\.\/\[locale\]\/dashboard\/page\.tsx default/),
+        ])
+        // A name beyond the list, and `auth.listMembers`, which no name can excuse.
+        const more = await scanApp(
+            app(
+                {
+                    '[locale]/signin/page.tsx': SEED_PAGE.replace("findTenant('x')", "findTenant('x') ?? db").replace(
+                        '\nexport',
+                        "\nimport { db } from '../../../db'\nexport",
+                    ),
+                },
+                exemptions,
+            ),
+        )
+        expect(more.failures).toEqual([
+            expect.stringMatching(/under an exemption that holds only when .*: it names `db`/),
+        ])
+        const members = await scanApp(
+            app(
+                { '[locale]/signin/page.tsx': MEMBERS_PAGE },
+                `export default { outsideApi: { files: { '[locale]/signin/page.tsx': ${readsOnly(['auth'])} } } }\n`,
+            ),
+        )
+        expect(members.failures).toEqual([
+            expect.stringMatching(/`auth\.listMembers` is used, and a page may use `auth` only as/),
+        ])
+    })
+
+    it('cover a layout and a group layout that share one URL with one entry, each judged on its own', async () => {
+        const exemptions = `export default { outsideApi: { files: { '[locale]/layout.tsx': ${readsOnly(['findTenant', 'tenants'])} } } }\n`
+        const TENANTS = "import { tenants } from '../../../seed'\nexport default function L() { return tenants }\n"
+        const scan = await scanApp(
+            app({ '[locale]/layout.tsx': TENANTS, '[locale]/(app)/layout.tsx': SEED_PAGE }, exemptions),
+        )
+        expect(scan.failures).toEqual([])
+        expect(scan.exemptionProblems).toEqual([])
+        // Two keys for that one URL are both refused, as for a route.
+        const twice = appExemptionsFrom(
+            {
+                outsideApi: {
+                    files: {
+                        '[locale]/layout.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['tenants'] } },
+                        '[locale]/(app)/layout.tsx': {
+                            reason: 'r',
+                            mustMatch: { kind: 'reads-only', names: ['findTenant'] },
+                        },
+                    },
+                },
+            },
+            'x',
+        )
+        expect(twice.problems).toEqual([expect.stringMatching(/names the same route as another key/)])
+        expect(twice.exemptions.files).toEqual({})
+    })
+
+    it('take a page, layout or metadata route file as an outsideApi.files key, and nothing else that is not a route', () => {
+        const entry = { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } }
+        const keys = [
+            'a/page.tsx',
+            'layout.ts',
+            'b/template.jsx',
+            'c/default.js',
+            'loading.mjs',
+            'not-found.tsx',
+            'forbidden.tsx',
+            'unauthorized.tsx',
+            'sitemap.ts',
+            'robots.ts',
+            'manifest.ts',
+            'opengraph-image.tsx',
+            'twitter-image.tsx',
+            'icon1.tsx',
+            'apple-icon.tsx',
+            'd/route.ts',
+        ]
+        const { exemptions, problems } = appExemptionsFrom(
+            { outsideApi: { files: Object.fromEntries(keys.map((k) => [k, entry])) } },
+            'x',
+        )
+        expect(problems).toEqual([])
+        expect(Object.keys(exemptions.files)).toEqual(keys.map((k) => `../${k}`))
+        for (const key of ['a/page.module.css', 'error.tsx', 'b/glue.tsx', 'icon12.tsx', 'page.mts']) {
+            expect(appExemptionsFrom({ outsideApi: { files: { [key]: entry } } }, 'x').problems, key).toEqual([
+                expect.stringMatching(/must name one route file .*, or one page, layout or metadata route file/),
+            ])
+        }
+        // Inside src/app/api a key still names a route file only: a page there can match no app entry.
+        expect(appExemptionsFrom({ files: { 'a/page.tsx': entry } }, 'x').problems).toEqual([
+            'x: files `a/page.tsx` must name one route file (route.ts, route.tsx, route.js, route.jsx, route.mjs)',
+        ])
+    })
+
+    it('call a page entry stale without a judged page there (none, or a client one), and an unused name a problem', async () => {
+        const exemptions = `export default { outsideApi: { files: { 'x/page.tsx': ${readsOnly(['findTenant', 'tenants'])} } } }\n`
+        const none = await scanApp(app({ 'api/dockets/route.ts': AUTHORIZED_POST }, exemptions))
+        expect(none.exemptionProblems).toEqual([
+            "acme/authz-exemptions.mjs: outsideApi.files `x/page.tsx` is stale — the app's src/app has no read handler there",
+        ])
+        const client = await scanApp(app({ 'x/page.tsx': `'use client'\n${SEED_PAGE}` }, exemptions))
+        expect(client.exemptionProblems).toEqual([
+            "acme/authz-exemptions.mjs: outsideApi.files `x/page.tsx` is stale — the app's src/app has no read handler there",
+        ])
+        const unused = await scanApp(app({ 'x/page.tsx': SEED_PAGE }, exemptions))
+        expect(unused.failures).toEqual([])
+        expect(unused.exemptionProblems).toEqual([
+            'acme/authz-exemptions.mjs: outsideApi.files `x/page.tsx` lists `tenants`, which no read handler it covers names; list only what the read uses',
+        ])
+        // A page that authorizes rests on nothing, so its entry's names are unused.
+        const authorized = await scanApp(
+            app(
+                {
+                    'x/page.tsx': `${AUTHORIZE}export default function P() { authorize(user, 'd', 'read', { type: 'Docket', orgId: 'd' }); return null }\n`,
+                },
+                exemptions,
+            ),
+        )
+        expect(authorized.exemptionProblems).toHaveLength(2)
+    })
+})
