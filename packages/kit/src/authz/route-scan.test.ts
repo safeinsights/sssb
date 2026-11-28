@@ -3828,7 +3828,11 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
         )
         // Without the mark, the same entry applies.
         expect(
-            judge({ ...route, intercepting: undefined }, { verb: 'default', facts: facts({}) }, policy),
+            judge(
+                { root: route.root, rel: route.rel, file: route.file, handlers: [], page: true },
+                { verb: 'default', facts: facts({}) },
+                policy,
+            ),
         ).toBeUndefined()
     })
 })
