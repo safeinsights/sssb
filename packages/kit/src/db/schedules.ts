@@ -114,7 +114,7 @@ async function drainOne(
     now: Date,
     schedule: { id: string; tenant_id: string },
 ): Promise<number> {
-    const result = await spawnInTransaction(db, now, schedule).catch(async (error: unknown) => {
+    const result = await spawnInTransaction(db, jobs, now, schedule).catch(async (error: unknown) => {
         // The spawn transaction rolled back, so the schedule is still due: back it off, or turn it off (#215).
         await recordSpawnFailure(db, now, schedule, error)
         throw error
@@ -144,6 +144,7 @@ async function drainOne(
 /** The locked spawn+advance transaction; null when the under-lock re-check finds nothing to do. */
 async function spawnInTransaction(
     db: DbPort,
+    jobs: JobsPort,
     now: Date,
     schedule: { id: string; tenant_id: string },
 ): Promise<{ jobId: string; kind: string; orgId: string } | null> {
@@ -166,6 +167,8 @@ async function spawnInTransaction(
                 org_id: locked.org_id,
                 kind: locked.kind,
                 payload: { scheduleId: schedule.id },
+                // The runner's starting ref, in the spawn's own insert (#251).
+                runner_ref: jobs.startingRef ?? null,
             })
             .returning('id')
             .executeTakeFirstOrThrow()

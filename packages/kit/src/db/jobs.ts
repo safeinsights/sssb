@@ -65,6 +65,8 @@ export async function submitJob(
                 kind: input.kind,
                 payload: input.payload,
                 requested_by: input.requestedBy ?? null,
+                // The runner's starting ref, in the same insert, so no separate write can fail between the two (#251).
+                runner_ref: jobs.startingRef ?? null,
             })
             .returning('id')
             .executeTakeFirstOrThrow()
@@ -282,7 +284,7 @@ async function startRetry(
         if (!row || row.status !== 'queued' || row.run_after === null || new Date(row.run_after) > now) return null
         await trx
             .updateTable('jobs')
-            .set({ run_after: null, updated_at: family.currentTime() })
+            .set({ run_after: null, runner_ref: jobs.startingRef ?? null, updated_at: family.currentTime() })
             .where('id', '=', jobId)
             .execute()
         return row

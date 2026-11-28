@@ -7,8 +7,8 @@
  * wall clock (`clock`, `Date.now` by default: the server's time limit is wall-clock time, so a simulated world clock
  * never moves it). The deadline is checked before each tenant's listing query and before each row, so past it a drain
  * lists nothing more and starts nothing more. Work already started is never cut short; the bound is on what is
- * STARTED, so the deadline has to leave room for the longest item after it (`runScheduledTick` sets both drains'
- * deadlines with that margin). A drain called with no budget at all is unbounded, as every drain was before the bound:
+ * STARTED, so the deadline has to leave room for the longest item after it (`runScheduledTick` sets each drain's
+ * deadline with that margin). A drain called with no budget at all is unbounded, as every drain was before the bound:
  * the tick always passes one, and the Simulator's own controls, which run no server limit, pass none.
  *
  * FAIRNESS. Each tenant's listed due rows form a queue; the drain takes one row from each tenant in turn
@@ -65,8 +65,9 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
 /*
  * The default windows, from the tick's start, in which each drain may START work. They are sized to the server's
  * 30-second limit (@sssb/cdk's `SssbApp`, `packages/cdk/src/sssb-app.js:526` in SSSB's repository; the tick runs inside
- * the cron route's request), counted from the start of the request: schedules first, then job retries, then deliveries,
- * so schedules may start work for 6 seconds, retries until 10 and deliveries until 16. A delivery started at 16 seconds
+ * the cron route's request), counted from the start of the request: the jobs port's sweep first (`SWEEP_WINDOW_MS`, its
+ * first 2 seconds, safeinsights/sssb#252), then schedules, then job retries, then deliveries, so schedules may start work
+ * until 6 seconds, retries until 10 and deliveries until 16. A delivery started at 16 seconds
  * may take the POST's 10 (`WEBHOOK_TIMEOUT_MS`, ../server-lib/webhook-dispatch.ts) plus its claim, record and audit
  * transactions, which leaves about four seconds for those, a listing query begun just before the deadline, and the
  * response. Giving each drain a window of its own means none can spend the whole tick: retries always get from where
@@ -74,6 +75,11 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
  * in-process jobs runner run the job itself (`jobs.start`), which no window can bound; such work belongs on a runner
  * with compute of its own. A change to the server's timeout has to change these too.
  */
+/**
+ * How long after the tick's start the jobs port's sweep may judge lost jobs (safeinsights/sssb#252): two seconds, the
+ * first part of the schedules' window, so a sweep that finds many lost jobs leaves the drains most of theirs.
+ */
+export const SWEEP_WINDOW_MS = 2_000
 /** How long after the tick's start the schedules drain may start a spawn. */
 export const SCHEDULES_WINDOW_MS = 6_000
 /** How long after the tick's start the job-retry drain may start a retry (safeinsights/sssb#135). */
