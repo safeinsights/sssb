@@ -3008,10 +3008,37 @@ describe("the fix review's second verdict (Y3, Y5)", () => {
 // Pages, layouts and metadata routes (safeinsights/sssb#221).
 // ---------------------------------------------------------------------------------------------------------
 
-/** Writes `files` under a fresh directory and scans its pages as one root. */
+/** A package in the case's own node_modules: what a page renders from one is out of sight. */
+function pkg(name: string): Record<string, string> {
+    return {
+        [`node_modules/${name}/package.json`]: JSON.stringify({ name, main: 'index.js' }),
+        [`node_modules/${name}/index.js`]: 'export {}\n',
+    }
+}
+
+/**
+ * The modules every page case can render from, which a case's own files override: client components (`glue`, `screen`,
+ * `ui`, `real`), a server component of the app's own (`server-list`, no `'use client'`), and packages.
+ */
+const PAGE_FIXTURES: Record<string, string> = {
+    'glue.tsx': "'use client'\nexport function Glue() { return null }\n",
+    'screen.tsx':
+        "'use client'\nexport function Screen() { return null }\nexport default function S() { return null }\n",
+    'ui.tsx': "'use client'\nexport function Card() { return null }\n",
+    'real.tsx': "'use client'\nexport function Real() { return null }\n",
+    'server-list.tsx': "import { db } from './db'\nexport async function MemberList() { return db }\n",
+    ...pkg('@mantine/core'),
+    ...pkg('next-intl'),
+    ...pkg('ui-kit'),
+    'node_modules/@sssb/kit/adapters/real/user-menu.js': 'export {}\n',
+    'node_modules/@sssb/kit/adapters/real/sign-in-form.js': 'export {}\n',
+    'node_modules/@sssb/kit/package.json': JSON.stringify({ name: '@sssb/kit' }),
+}
+
+/** Writes `files` (over PAGE_FIXTURES) under a fresh directory and scans its pages as one root. */
 function scanPageTree(files: Record<string, string>): ScannedRoute[] {
     const dir = path.join(SCRATCH, `case-${++caseNumber}`)
-    for (const [rel, src] of Object.entries(files)) {
+    for (const [rel, src] of Object.entries({ ...PAGE_FIXTURES, ...files })) {
         mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
         writeFileSync(path.join(dir, rel), src)
     }
@@ -3091,7 +3118,7 @@ describe('pages, layouts and metadata routes are read handlers (safeinsights/sss
             expect(isPageFileName(name)).toBe(false)
     })
 
-    it('judges the default export and the three generate functions, each by name, and nothing else Next reads', () => {
+    it('judges the default export and the four generate functions, each by name, and nothing else Next reads', () => {
         const states = pageStates({
             'page.tsx':
                 'export default function Page() { return null }\n' +
@@ -3107,9 +3134,17 @@ describe('pages, layouts and metadata routes are read handlers (safeinsights/sss
             generateMetadata: 'reads nothing',
             generateImageMetadata: 'reads nothing',
             generateSitemaps: 'reads nothing',
+            generateViewport: 'reads nothing',
         })
         // Each is a read, for the exemption lookup, the reads-only gate and staleness alike.
-        for (const name of ['default', 'generateMetadata', 'generateImageMetadata', 'generateSitemaps', 'GET']) {
+        for (const name of [
+            'default',
+            'generateMetadata',
+            'generateImageMetadata',
+            'generateSitemaps',
+            'generateViewport',
+            'GET',
+        ]) {
             expect(isReadVerb(name), name).toBe(true)
         }
         expect(isReadVerb('POST')).toBe(false)
@@ -3182,14 +3217,14 @@ describe('pages, layouts and metadata routes are read handlers (safeinsights/sss
         ).toBe('authorized')
     })
 
-    it('refuses a page under an intercepting segment, and matches one under a group or slot by its URL', () => {
+    it('judges a page under an intercepting segment as a page, marked so no exemption applies, and matches one under a group or slot by its URL', () => {
         const pages = scanPageTree({
             '(.)photo/page.tsx': 'export default function P() { return null }\n',
             '(shop)/@modal/cart/page.tsx': 'export default function P() { return null }\n',
         })
-        expect(pages.find((p) => p.rel === '(.)photo/page.tsx')?.handlers[0]?.refusal).toMatch(
-            /the page is under an intercepting segment/,
-        )
+        const photo = pages.find((p) => p.rel === '(.)photo/page.tsx')
+        expect(photo?.intercepting).toBe(true)
+        expect(photo?.handlers.map(pageState)).toEqual(['reads nothing'])
         const cart = pages.find((p) => p.rel === 'cart/page.tsx')
         expect(cart?.written).toBe('(shop)/@modal/cart/page.tsx')
         expect(cart?.page).toBe(true)
@@ -3297,12 +3332,20 @@ describe('a member-level allowance: `auth` only as a session read (safeinsights/
         expect(page('void routing', routing)).toMatch(/^refusal: `routing` is used itself/)
     })
 
-    it('holds the allowance to the module and the exported name', () => {
+    it('holds the allowance to the module and the exported name, and never counts the name, from any module', () => {
+        // An app's own `auth` (a re-export, a look-alike) is refused outright, so no reads-only entry can list it.
         expect(
             pageDefault(
-                "import { auth } from './auth'\nexport default async function P() { await auth.getCurrentUser(); return null }\n",
+                "import { auth } from './auth'\nexport default async function P() { await auth.listMembers('x'); return null }\n",
             ),
-        ).toBe('names: auth')
+        ).toBe(
+            "refusal: `auth` is reached through './auth', and a page may use `auth` only as imported by name from " +
+                '@sssb/kit/adapters/index, through its listed members, since what else it reaches may be org-scoped; no ' +
+                'exemption can list it',
+        )
+        expect(
+            pageDefault("import { routing } from './i18n'\nexport default function P() { return routing.locales }\n"),
+        ).toMatch(/^refusal: `routing` is reached through '\.\/i18n'/)
         expect(
             pageDefault(
                 "import { auth as session } from '@sssb/kit/adapters/index'\nexport default async function P() { await session.getCurrentUser(); return null }\n",
@@ -3345,7 +3388,7 @@ describe('components a page renders (safeinsights/sssb#221)', () => {
             wrapper('return <Glue rows={await db.rows()}>{children}</Glue>', `${GLUE}import { db } from './db'\n`),
         ).toBe('names: db')
         expect(wrapper('return cache.get("x")', 'const cache = new Map()\n')).toBe(
-            "refusal: `cache` is a declaration of the route's own file, which code of the file can change; put it in a module and list the import",
+            "refusal: `cache` is a declaration of the page's own file, which code of the file can change: render it as a component of this file (a JSX tag), or move it into a module and list the import",
         )
         const arrow = pageDefault(
             `${GLUE}const Shell = () => <Glue />\nexport default function P() { return <Shell /> }\n`,
@@ -3356,14 +3399,14 @@ describe('components a page renders (safeinsights/sssb#221)', () => {
     it('refuses a component of its own file it does not only render, or that the file reassigns', () => {
         expect(
             pageDefault('function Inner() { return null }\nexport default function P() { return Inner() }\n'),
-        ).toMatch(/^refusal: `Inner` is a declaration of the route's own file/)
+        ).toMatch(/^refusal: `Inner` is a declaration of the page's own file/)
         expect(
             pageDefault(
                 'function Inner() { return null }\nInner = () => null\nexport default function P() { return <Inner /> }\n',
             ),
-        ).toMatch(/^refusal: `Inner` is a declaration of the route's own file/)
+        ).toMatch(/^refusal: `Inner` is a declaration of the page's own file/)
         expect(pageDefault('let Inner = () => null\nexport default function P() { return <Inner /> }\n')).toMatch(
-            /^refusal: `Inner` is a declaration of the route's own file/,
+            /^refusal: `Inner` is a declaration of the page's own file/,
         )
     })
 
@@ -3572,5 +3615,220 @@ describe('metadata routes (safeinsights/sssb#221)', () => {
                 'icon.tsx',
             ),
         ).toEqual({ default: 'names: ImageResponse, loadOrg' })
+    })
+})
+
+describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
+    it("renders out of sight only a client module's or a package's component; the app's own server component is named", () => {
+        // Client modules and packages: PAGE_FIXTURES' glue, screen, ui and ui-kit.
+        expect(
+            pageDefault(
+                `${GLUE}import Screen from './screen'\nimport * as UI from './ui'\nimport { Kit } from 'ui-kit'\n` +
+                    'export default function P() { return <UI.Card><Screen><Kit /><Glue /></Screen></UI.Card> }\n',
+            ),
+        ).toBe('reads nothing')
+        // An async server component that loads its own data is counted, so the page authorizes or an entry lists it.
+        const list = "import { MemberList } from './server-list'\n"
+        expect(pageDefault(`${list}export default function P() { return <MemberList slug="x" /> }\n`)).toBe(
+            'names: MemberList',
+        )
+        expect(pageDefault("import List from './server-list'\nexport default function P() { return <List /> }\n")).toBe(
+            'refusal: `List` is a default import, which has no exported name',
+        )
+        expect(
+            pageDefault(
+                "import * as S from './server-list'\nexport default function P() { return <S.MemberList /> }\n",
+            ),
+        ).toBe('refusal: `S` is a namespace import, the whole module')
+        // A module that does not resolve is not a client one.
+        expect(pageDefault("import { Gone } from './gone'\nexport default function P() { return <Gone /> }\n")).toBe(
+            'names: Gone',
+        )
+        // `'use client'` after another statement is no directive.
+        expect(
+            pageDefault("import { Late } from './late'\nexport default function P() { return <Late /> }\n", {
+                'late.tsx': "const x = 1\n'use client'\nexport function Late() { return x }\n",
+            }),
+        ).toBe('names: Late')
+    })
+
+    it("holds what a page loads with import() to the same rule: the app's own server module's component is named", () => {
+        expect(
+            pageDefault(
+                "export default async function P() { const { MemberList } = await import('./server-list'); return <MemberList /> }\n",
+            ),
+        ).toBe('names: MemberList')
+        expect(
+            pageDefault(
+                "export default async function P() { const { Real } = await import('./real'); return <Real /> }\n",
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('runs the member check before the JSX-tag allowance: `auth` is never a component', () => {
+        expect(pageDefault(`${SESSION}export default function P() { return <auth.listMembers /> }\n`)).toMatch(
+            /^refusal: `auth\.listMembers` is used/,
+        )
+        // A lowercase tag is an HTML element (`React.createElement('auth')`), not the import: it reads nothing.
+        expect(pageDefault(`${SESSION}export default function P() { return <auth /> }\n`)).toBe('reads nothing')
+        expect(
+            pageDefault(
+                "import * as kit from '@sssb/kit/adapters/index'\nexport default function P() { return <kit.auth.listMembers /> }\n",
+            ),
+        ).toMatch(/^refusal: `auth` is reached through the namespace import `kit`/)
+        expect(
+            pageDefault(
+                "export default async function P() { const { auth } = await import('@sssb/kit/adapters/index'); return <auth.listMembers /> }\n",
+            ),
+        ).toMatch(/^refusal: `auth` is reached through import\('@sssb\/kit\/adapters\/index'\)/)
+    })
+
+    it('pins the page allow-list as an exact set, as the failure names it', () => {
+        const route: ScannedRoute = { root: 'app', rel: '../x/page.tsx', file: 'x', handlers: [], page: true }
+        const facts: HandlerFacts = {
+            reachesAuthorize: false,
+            wrappedBy: null,
+            calls: new Set(),
+            opensWithSimulated404: false,
+            outsideNames: new Set(['x']),
+            outsideSources: new Map(),
+            outsideRefusal: null,
+            readsNothing: false,
+        }
+        const why = judge(
+            route,
+            { verb: 'default', facts },
+            { exemptPrefixes: {}, exemptFiles: {}, requiredAlongside: {} },
+        )
+        expect(why).toContain(
+            'the inert values a read route may name, `getMessages`, `getTranslations`, `setRequestLocale` (next-intl/server), ' +
+                '`hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
+                '(@sssb/kit/adapters/index), `sameOriginPath` (@sssb/kit/core/same-origin-path), `getTenantTheme` ' +
+                '(@sssb/kit/theme), `mantineHtmlProps` (@mantine/core), `auth.getCurrentUser()`, `auth.listMyOrgs()`, ' +
+                '`auth.refusal()`, `auth.requireUser()`, `auth.signInPath()` (@sssb/kit/adapters/index; `auth` itself, or ' +
+                'any other member of it, is not), `routing.locales` (@sssb/kit/i18n/routing; `routing` itself, or any other ' +
+                'member of it, is not), a component it only renders',
+        )
+    })
+
+    it('holds the Promise.all shape to the global, awaited, with one argument, and import() to one argument', () => {
+        for (const body of [
+            "const [{ C }] = await Promise.all([import('./real')], 1); return <C />",
+            "const p = Promise.all([import('./real')]); return p",
+            "const [{ C }] = await Promised.all([import('./real')]); return <C />",
+            "const { C } = await import('./real', { with: { type: 'json' } }); return <C />",
+        ]) {
+            expect(
+                pageDefault(`import { Promised } from './p'\nexport default async function P() { ${body} }\n`),
+                body,
+            ).toMatch(/^refusal: it loads a module with `import\(\)` other than to render what it takes from it/)
+        }
+        expect(
+            pageDefault(
+                "import { Promise } from './p'\nexport default async function P() { const [{ C }] = await Promise.all([import('./real')]); return <C /> }\n",
+            ),
+        ).toMatch(/^refusal: it loads a module with `import\(\)`/)
+    })
+
+    it('follows no same-file component that is redeclared, a generator, ambient, or a member of a value', () => {
+        const tag = (prelude: string) => pageDefault(`${prelude}\nexport default function P() { return <C /> }\n`)
+        expect(tag('function C() { return null }\nfunction C() { return null }')).toMatch(
+            /^refusal: `C` is a declaration of the page's own file/,
+        )
+        expect(tag('function* C() { yield null }')).toMatch(/^refusal: `C` is a declaration of the page's own file/)
+        expect(tag('declare function C(): null')).toBe(
+            'refusal: `C` is declared with `declare`, so its value is out of sight',
+        )
+        expect(
+            pageDefault(
+                "import { db } from './db'\nconst Rows: Record<string, unknown> = {}\nRows.X = async () => db\n" +
+                    'export default function P() { return <Rows.X /> }\n',
+            ),
+        ).toMatch(/^refusal: `Rows` is a declaration of the page's own file/)
+        expect(
+            pageDefault(
+                "import { db } from './db'\nfunction Rows() { return null }\nRows.X = async () => db\n" +
+                    'export default function P() { return <Rows.X /> }\n',
+            ),
+        ).toMatch(/^refusal: `Rows` is a declaration of the page's own file/)
+    })
+
+    it("judges a page whose prologue is 'use server', and a 'use client' metadata route", () => {
+        expect(pageDefault("'use server'\nexport default async function P() { return fetch('/x') }\n")).toBe(
+            'refusal: `fetch` is a global off the inert list',
+        )
+        expect(
+            pageStates(
+                { 'sitemap.ts': "'use client'\nexport default function s() { return fetch('/x') }\n" },
+                'sitemap.ts',
+            ),
+        ).toEqual({ default: 'refusal: `fetch` is a global off the inert list' })
+        expect(
+            pageStates(
+                {
+                    'icon1.tsx': "export { default } from './client-icon'\n",
+                    'client-icon.tsx': "'use client'\nexport default function I() { return fetch('/x') }\n",
+                },
+                'icon1.tsx',
+            ),
+        ).toEqual({ default: 'refusal: `fetch` is a global off the inert list' })
+    })
+
+    it('reads a static asset default import and useTranslations as nothing, and no other default import', () => {
+        expect(
+            pageDefault(
+                "import styles from './page.module.css'\nimport logo from './logo.png'\nimport { useTranslations } from 'next-intl'\n" +
+                    "export default function P() { const t = useTranslations('x'); return <img className={styles.x} src={logo} alt={t('a')} /> }\n",
+            ),
+        ).toBe('reads nothing')
+        expect(pageDefault("import data from './data.json'\nexport default function P() { return data }\n")).toBe(
+            'refusal: `data` is a default import, which has no exported name',
+        )
+        // Only a page: a route's asset import is a default import as before.
+        const route = scanTree({
+            'route.ts': "import styles from './x.css'\nexport function GET() { return Response.json(styles) }\n",
+        })[0]!
+        expect(pageState(route.handlers[0]!)).toBe('refusal: `styles` is a default import, which has no exported name')
+    })
+
+    it('finds global-not-found, and judges an intercepting page with no exemption', () => {
+        expect(scanPageTree({ 'global-not-found.tsx': 'export default function G() { return null }\n' })[0]?.rel).toBe(
+            'global-not-found.tsx',
+        )
+        const route: ScannedRoute = {
+            root: 'app',
+            rel: '../(.)x/page.tsx',
+            file: 'x',
+            handlers: [],
+            page: true,
+            intercepting: true,
+        }
+        const policy: ScanPolicy = {
+            exemptPrefixes: {},
+            exemptFiles: { '../(.)x/page.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } } },
+            requiredAlongside: {},
+        }
+        const facts = (overrides: Partial<HandlerFacts>): HandlerFacts => ({
+            reachesAuthorize: false,
+            wrappedBy: null,
+            calls: new Set(),
+            opensWithSimulated404: false,
+            outsideNames: new Set(['x']),
+            outsideSources: new Map(),
+            outsideRefusal: null,
+            readsNothing: false,
+            ...overrides,
+        })
+        expect(judge(route, { verb: 'default', facts: facts({ reachesAuthorize: true }) }, policy)).toBeUndefined()
+        expect(
+            judge(route, { verb: 'default', facts: facts({ outsideNames: new Set(), readsNothing: true }) }, policy),
+        ).toBeUndefined()
+        expect(judge(route, { verb: 'default', facts: facts({}) }, policy)).toMatch(
+            /it names `x`\..*It is under an intercepting segment .* so no exemption applies to it: authorize, or read nothing\./,
+        )
+        // Without the mark, the same entry applies.
+        expect(
+            judge({ ...route, intercepting: undefined }, { verb: 'default', facts: facts({}) }, policy),
+        ).toBeUndefined()
     })
 })

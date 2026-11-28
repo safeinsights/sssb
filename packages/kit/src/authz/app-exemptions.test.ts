@@ -730,12 +730,14 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
     const THIN_PAGE =
         "import { setRequestLocale } from 'next-intl/server'\nimport { Screen } from './screen'\n" +
         'export default function P() { setRequestLocale("en"); return <Screen /> }\n'
+    const CLIENT_SCREEN = "'use client'\nexport function Screen() { return null }\n"
 
     it('walks every page under src/app, judges each export, and reports a failing one by its URL path and export', async () => {
         const scan = await scanApp(
             app({
                 'api/dockets/route.ts': AUTHORIZED_POST,
                 '[locale]/page.tsx': THIN_PAGE,
+                '[locale]/screen.tsx': CLIENT_SCREEN,
                 '[locale]/(team)/members/page.tsx': MEMBERS_PAGE,
                 'layout.tsx': 'export default function L({ children }: { children: unknown }) { return children }\n',
             }),
@@ -753,7 +755,7 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
     })
 
     it('walks an app that has pages and no route at all', async () => {
-        const scan = await scanApp(app({ 'page.tsx': THIN_PAGE }))
+        const scan = await scanApp(app({ 'page.tsx': THIN_PAGE, 'screen.tsx': CLIENT_SCREEN }))
         expect(scan.routes).toEqual([])
         expect(scan.pages).toHaveLength(1)
         expect(scan.failures).toEqual([])
@@ -892,4 +894,125 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
         )
         expect(authorized.exemptionProblems).toHaveLength(2)
     })
+})
+
+describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
+    const readsOnly = (names: string[]) =>
+        `{ reason: 'reads nothing org-scoped', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(names)} } }`
+    const RENDERS =
+        "import { MemberList } from '../../components/member-list'\nexport default function P() { return <MemberList /> }\n"
+
+    /** A scratch app with files beside src/app too (`src/components/…`, or `../shared/…` outside the app). */
+    function appWith(files: Record<string, string>, exemptions?: string): string {
+        const dir = path.join(makeTestTmpDir('authz-app-'), 'acme')
+        mkdirSync(dir, { recursive: true })
+        if (exemptions !== undefined) writeFileSync(path.join(dir, APP_EXEMPTIONS_FILE), exemptions)
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            writeFileSync(path.join(dir, rel), src)
+        }
+        return dir
+    }
+
+    it("names an app's own server component a page renders, passes a client one and one from outside the app", async () => {
+        const server = await scanApp(
+            appWith({
+                'src/app/x/page.tsx': RENDERS,
+                'src/components/member-list.tsx':
+                    "import { auth } from '@sssb/kit/adapters/index'\nexport async function MemberList() { return auth.listMembers('x') }\n",
+            }),
+        )
+        expect(server.failures).toEqual([
+            expect.stringMatching(/^acme: \.\.\/x\/page\.tsx default .*it names `MemberList`/),
+        ])
+        const client = await scanApp(
+            appWith({
+                'src/app/x/page.tsx': RENDERS,
+                'src/components/member-list.tsx': "'use client'\nexport function MemberList() { return null }\n",
+            }),
+        )
+        expect(client.failures).toEqual([])
+        const outside = await scanApp(
+            appWith({
+                'src/app/x/page.tsx':
+                    "import { Card } from '../../../../shared/card'\nexport default function P() { return <Card /> }\n",
+                '../shared/card.tsx': 'export async function Card() { return null }\n',
+            }),
+        )
+        expect(outside.failures).toEqual([])
+    })
+
+    it('lets no reads-only entry list `auth`, even an app re-export of it', async () => {
+        const scan = await scanApp(
+            appWith(
+                {
+                    'src/app/x/page.tsx':
+                        "import { auth } from '../../lib/session'\nexport default async function P() { return auth.listMembers('x') }\n",
+                    'src/lib/session.ts': "export { auth } from '@sssb/kit/adapters/index'\n",
+                },
+                `export default { outsideApi: { files: { 'x/page.tsx': ${readsOnly(['auth'])} } } }\n`,
+            ),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(
+                /under an exemption that holds only when .*, and this one does not: `auth` is reached through '\.\.\/\.\.\/lib\/session'/,
+            ),
+        ])
+    })
+
+    it('applies no entry to an intercepting page, and calls an entry only it would use stale', async () => {
+        const SEED =
+            "import { findTenant } from '../../../../seed'\nexport default function P() { return findTenant('x') }\n"
+        const exemptions = `export default { outsideApi: { files: { '@modal/(.)photo/page.tsx': ${readsOnly(['findTenant'])} } } }\n`
+        const scan = await scanApp(app({ '@modal/(.)photo/page.tsx': SEED }, exemptions))
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/so no exemption applies to it: authorize, or read nothing/),
+        ])
+        expect(scan.exemptionProblems).toEqual([
+            "acme/authz-exemptions.mjs: outsideApi.files `(.)photo/page.tsx` is stale — the app's src/app has no read handler there",
+        ])
+        // One that authorizes, or reads nothing, passes.
+        const fine = await scanApp(app({ '@modal/(.)photo/page.tsx': 'export default function P() { return null }\n' }))
+        expect(fine.failures).toEqual([])
+    })
+
+    it('covers the pages under an outsideApi prefix entry too', async () => {
+        const SEED =
+            "import { findTenant } from '../../../../seed'\nexport default function P() { return findTenant('x') }\n"
+        const exemptions = `export default { outsideApi: { prefixes: { 'public/': ${readsOnly(['findTenant'])} } } }\n`
+        const scan = await scanApp(app({ 'public/about/page.tsx': SEED }, exemptions))
+        expect(scan.failures).toEqual([])
+        expect(scan.exemptionProblems).toEqual([])
+    })
+
+    it('fails a file named like a page with an extension the scan does not read, and leaves assets and tests alone', async () => {
+        const unread = ['a/page.mts', 'b/layout.cjs', 'c/page.page.tsx', 'd/page.mdx', 'icon.mts']
+        const fine = [
+            'e/page.module.css',
+            'icon.png',
+            'manifest.json',
+            'robots.txt',
+            'f/page.test.tsx',
+            'g/page.d.ts',
+            'opengraph-image.alt.txt',
+        ]
+        const scan = await scanApp(app(Object.fromEntries([...unread, ...fine].map((f) => [f, 'export {}\n']))))
+        expect(scan.failures.map((f) => f.split(' ')[1])).toEqual(unread.map((f) => `src/app/${f}`).sort())
+        expect(scan.failures[0]).toMatch(
+            /is named like a page, layout or metadata route, but the authorization scan reads only/,
+        )
+    })
+
+    it.each(['pages/index.tsx', 'src/pages/about.tsx'])(
+        'fails a Pages Router directory (%s) outright',
+        async (file) => {
+            const dir = app({})
+            mkdirSync(path.dirname(path.join(dir, file)), { recursive: true })
+            writeFileSync(path.join(dir, file), 'export default function P() { return null }\n')
+            const scan = await scanApp(dir)
+            expect(scan.failures).toEqual([
+                expect.stringMatching(/pages is a Pages Router directory, whose pages Next renders/),
+            ])
+        },
+    )
 })
