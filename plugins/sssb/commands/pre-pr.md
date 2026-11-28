@@ -15,8 +15,9 @@ several). Paths below are relative to an app's directory.
       `process.env` reads outside it and the guide's other named places; a framework import that is not a
       published `@sssb/kit/…` subpath; a framework union or registry edited instead of registered through
       `src/app-config/`; tenant queries not routed through `db.withTenant()` (a raw `getDb()` anywhere in `src`, or a
-      new entry in the app's `lint-exceptions.mjs` (if any)); a mutating route without `authorize(...)`; hard-coded UI
-      strings; logic in a route file instead of a router-agnostic screen.
+      new entry in the app's `lint-exceptions.mjs` (if any)); a route handler (a read or a mutation), page or Server
+      Action without `authorize(...)` on its own path; hard-coded UI strings; logic in a route file instead of a
+      router-agnostic screen.
     - Dead or speculative code.
     - Copy-paste that should be a shared function or component.
     - `messages/en.json` vs `messages/es.json` drift (missing keys, mismatched placeholders).

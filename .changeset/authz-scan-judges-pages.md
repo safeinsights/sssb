@@ -21,10 +21,12 @@ What the check newly **accepts**, in a page only (a route is judged as before):
 
 - the session through `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()` and
   `auth.listMyOrgs()` (`@sssb/kit/adapters/index`), each called;
-- `setRequestLocale`, `getTranslations` and `getMessages` (`next-intl/server`), `hasLocale` and `useTranslations`
-  (`next-intl`), `routing.locales` (`@sssb/kit/i18n/routing`), `canInActiveOrg` (`@sssb/kit/authz/authorize`),
-  `isDemoMode` (`@sssb/kit/adapters/index`), `sameOriginPath` (`@sssb/kit/core/same-origin-path`), `getTenantTheme`
-  (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`), each a named import under its exported name;
+- `setRequestLocale`, `getTranslations`, `getMessages` and `getLocale` (`next-intl/server`), `hasLocale` and
+  `useTranslations` (`next-intl`), `use` (`react`: next-intl's sync page, `const { locale } = use(params)`; `use` only
+  unwraps what it is handed, and that value's names are judged), `routing.locales` (`@sssb/kit/i18n/routing`),
+  `canInActiveOrg` (`@sssb/kit/authz/authorize`), `isDemoMode` (`@sssb/kit/adapters/index`), `sameOriginPath`
+  (`@sssb/kit/core/same-origin-path`), `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`),
+  each a named import under its exported name;
 - a default import of a static asset (a `.css`, `.module.css` or `.scss` stylesheet, a `.png`, `.jpg`, `.jpeg`, `.gif`,
   `.svg`, `.webp`, `.avif` or `.ico` image) used as a value, only by a relative specifier (`./`, `../`) or a tsconfig
   `paths` alias, with no `?` or `#`, whose literal file exists with one of those extensions, and which TypeScript's
@@ -35,6 +37,15 @@ What the check newly **accepts**, in a page only (a route is judged as before):
   package (its file's real path runs through a `node_modules` whose parent is the app's directory or an ancestor of it,
   and through no pnpm `file:` or `link:` dependency) or in `@sssb/kit` (its real package directory, as the app resolves
   it, unless the app is inside it);
+- an imported Server Action handed on by reference, the whole value of a JSX attribute (`<form action={saveItem}>`,
+  `<Form action={saveItem} />`, `formAction={…}`), by a named or default import, when the module that declares it
+  (followed through a barrel's re-exports) is a file under `src` whose prologue is `'use server'`, or the exported
+  function's own body opens with `'use server'` (written as such: an escaped `'use\x20server'`, which is no directive,
+  is neither an action nor accepted here). A component it is handed to may call it, even during the render; that is safe
+  because the check judges the action itself, as the POST it is, which must reach `authorize` on its own path (any
+  reachable `authorize` counts, the limit below). Called from the page, used any other way (`saveItem.bind(…)`, inside
+  an array or a spread), or declared outside `src` or in a package, it is counted; so is any other import handed on as a
+  prop;
 - a component of the page's own file used only as a JSX tag (a function declared once and never reassigned, or a
   `const` bound to a function), whose code is read as part of the page;
 - `const { Form } = await import('…')`, alone or as one element of an awaited global `Promise.all([...])` destructured
@@ -51,16 +62,21 @@ What the check newly **accepts**, in a page only (a route is judged as before):
 
 What it newly **refuses**:
 
-- a page's export that names anything else and does not reach `authorize(...)`: the seed, the simulated world, a port,
-  a data helper, `db`, `analytics`, `next/og`'s `ImageResponse`, a value of the page's own file, a component passed as
-  a value or called, and a server component of your own (a module without `'use client'`, in the app or in a workspace
-  package, linked into `node_modules` or reached by a path or an alias, which may load its own data) rendered as a tag
-  or loaded with `import()`: its name is counted, so the page authorizes or an entry lists it; and a default import
-  whose specifier only looks like an asset (`'./members.css'` beside a `members.css.ts`, `'./x.css?inline'`, a file that
-  does not exist) or is bare (`'some-ui/styles.css'`, a `baseUrl` path, a package's self-reference or `imports`, a
-  bundler alias): none is an asset here, so each is refused as any default import is; and a component in a
-  `node_modules` folder below the app's root (under its `src`) or in a pnpm `file:` or `link:` dependency, which is the
-  adopter's own code, unless it is a client one;
+- a page's export that names anything else and does not reach `authorize(...)`: the seed, the simulated world, a port, a
+  data helper, `db`, `analytics`, `next/og`'s `ImageResponse`, `headers` and `cookies` (`next/headers`: the request's
+  headers carry its Cookie and Authorization, the session's credential, which a page could render into its HTML; a page
+  that reads them names them in its entry, `names: { headers: 'next/headers' }`, with a reason), a value of the page's
+  own file (a module-level `const LINKS = [...]` included: code of the file can change it, so no entry can list it;
+  write it inline where the page uses it, or move it into a module and list the import in the page's entry, and a
+  `const` bound to a primitive literal is already inert), a component passed as a value or called, and a server
+  component of your own (a module without `'use client'`, in the app or in a workspace package, linked into
+  `node_modules` or reached by a path or an alias, which may load its own data) rendered as a tag or loaded with
+  `import()`: its name is counted, so the page authorizes or an entry lists it; and a default import whose specifier
+  only looks like an asset (`'./members.css'` beside a `members.css.ts`, `'./x.css?inline'`, a file that does not exist)
+  or is bare (`'some-ui/styles.css'`, a `baseUrl` path, a package's self-reference or `imports`, a bundler alias): none
+  is an asset here, so each is refused as any default import is; and a component in a `node_modules` folder below the
+  app's root (under its `src`) or in a pnpm `file:` or `link:` dependency, which is the adopter's own code, unless it is
+  a client one;
 - `auth` (and `routing`) used any other way, whatever an entry lists: another member (`auth.listMembers`,
   `auth.getMember`, `routing.defaultLocale`), the object passed along, aliased, spread, destructured, read by a
   computed key, rendered as a tag (`<auth.listMembers />`) or reached through a namespace or `import()`, a listed method
@@ -80,14 +96,16 @@ What it newly **refuses**:
 Pages are matched by URL as routes are, so a route group's layout and its parent layout share one key
 (`[locale]/layout.tsx`): one entry covers both, each judged on its own. The generated app ships an
 `authz-exemptions.mjs` naming its two layouts' seed reads (`tenants`, `findTenant`) and its sign-in page's
-simulated-mode picker (`listAllPeople`, `findTenant`).
+simulated-mode picker (`listAllPeople`, `findTenant`), each pinned to the module it comes from.
 
 **To adopt.** Run the conformance suite (`pnpm test:unit`). For each page it names:
 
 - if the page reads org-scoped data, authorize the read in the page before it, as a route does:
   `authorize(user, user.orgSlug, 'read', { type: 'Membership', orgId: user.orgSlug })` before `auth.listMembers`, or
   your own subject before your own query; a read of the caller's own records authorizes its self-only subject
-  (`{ type: 'AgreementAcceptance', ownerId: user.id }`);
+  (`{ type: 'AgreementAcceptance', ownerId: user.id }`). The check proves the page can reach an `authorize`, not that
+  it is the right one: any reachable `authorize` satisfies it, so authorize the subject the page reads, and a
+  self-only `authorize` does not cover an org read that follows it;
 - if it names a server component of your own, mark it `'use client'` if it is one, or, since it may load its own data,
   load in the page instead, authorize there, and pass the rows: the check cannot see into a component;
 - if it reads nothing org-scoped (the seed, a public list), name it in `authz-exemptions.mjs` beside your
@@ -97,18 +115,32 @@ simulated-mode picker (`listAllPeople`, `findTenant`).
 export default {
     outsideApi: {
         files: {
+            // The locale layout and the (protected) group's layout share this URL, so one entry covers both.
+            '[locale]/layout.tsx': {
+                reason:
+                    "the seed's tenants, the instance's own list, not an org's data: the locale layout's theme " +
+                    "fallback (tenants) and the signed-in header's tenant name (findTenant)",
+                mustMatch: {
+                    kind: 'reads-only',
+                    names: { findTenant: 'src/seed/index.ts', tenants: 'src/seed/index.ts' },
+                },
+            },
             '[locale]/signin/page.tsx': {
                 reason: "signed out by definition: the simulated-mode picker lists the simulated world's people",
-                mustMatch: { kind: 'reads-only', names: ['findTenant', 'listAllPeople'] },
+                mustMatch: {
+                    kind: 'reads-only',
+                    names: { findTenant: 'src/seed/index.ts', listAllPeople: '@sssb/kit/adapters/fake/auth' },
+                },
             },
         },
     },
 }
 ```
 
-If your app came from an earlier generator, copy the generated app's `authz-exemptions.mjs` from SSSB's
-`apps/starter` at this release, or write the two entries above for your layouts and sign-in page. Two keys for one
-URL (`[locale]/layout.tsx` and `[locale]/(protected)/layout.tsx`) are both refused: write the one.
+If your app came from an earlier generator, these two entries are what its layouts and sign-in page need (the same
+as the generated app's `authz-exemptions.mjs` in SSSB's `apps/starter` at this release); if you moved the seed, pin
+the file you moved it to. Two keys for one URL (`[locale]/layout.tsx` and `[locale]/(protected)/layout.tsx`) are both
+refused: write the one.
 
 An app that cannot fix every page at once may leave the check out while it does, by its id with a reason, in its
 suite file (`src/sssb.conformance.test.ts`):
