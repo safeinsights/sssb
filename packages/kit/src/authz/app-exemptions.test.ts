@@ -914,7 +914,7 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
         return dir
     }
 
-    it("names an app's own server component a page renders, passes a client one and one from outside the app", async () => {
+    it('names a server component a page renders from the app or from outside it, and passes a client one', async () => {
         const server = await scanApp(
             appWith({
                 'src/app/x/page.tsx': RENDERS,
@@ -939,7 +939,16 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
                 '../shared/card.tsx': 'export async function Card() { return null }\n',
             }),
         )
-        expect(outside.failures).toEqual([])
+        // Outside the app is not a package: a workspace package of the adopter's own may load data too.
+        expect(outside.failures).toEqual([expect.stringMatching(/it names `Card`/)])
+        const sharedClient = await scanApp(
+            appWith({
+                'src/app/x/page.tsx':
+                    "import { Card } from '../../../../shared/card'\nexport default function P() { return <Card /> }\n",
+                '../shared/card.tsx': "'use client'\nexport function Card() { return null }\n",
+            }),
+        )
+        expect(sharedClient.failures).toEqual([])
     })
 
     it('lets no reads-only entry list `auth`, even an app re-export of it', async () => {
@@ -986,7 +995,7 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
     })
 
     it('fails a file named like a page with an extension the scan does not read, and leaves assets and tests alone', async () => {
-        const unread = ['a/page.mts', 'b/layout.cjs', 'c/page.page.tsx', 'd/page.mdx', 'icon.mts']
+        const unread = ['a/page.mts', 'b/layout.cjs', 'c/default.md', 'd/page.mdx', 'icon.mts', 'h/not-found.cts']
         const fine = [
             'e/page.module.css',
             'icon.png',
@@ -995,6 +1004,14 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
             'f/page.test.tsx',
             'g/page.d.ts',
             'opengraph-image.alt.txt',
+            // A middle segment is a module of its own, and a private folder is not routed.
+            'c/page.page.tsx',
+            'i/page.css.ts',
+            'i/layout.styles.ts',
+            'i/default.config.ts',
+            'i/page.spec.e2e.ts',
+            '_lib/page.mts',
+            'j/_parts/layout.cjs',
         ]
         const scan = await scanApp(app(Object.fromEntries([...unread, ...fine].map((f) => [f, 'export {}\n']))))
         expect(scan.failures.map((f) => f.split(' ')[1])).toEqual(unread.map((f) => `src/app/${f}`).sort())
@@ -1015,4 +1032,20 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
             ])
         },
     )
+})
+
+describe('round-2 review of the page scan (safeinsights/sssb#221)', () => {
+    it('judges no route or page in a private folder, which Next does not route, but every Server Action there', async () => {
+        const scan = await scanApp(
+            app({
+                '_lib/open/route.ts': OPEN_POST,
+                '_components/page.tsx': "export default function P() { return fetch('/x') }\n",
+                '_lib/actions.ts': "'use server'\nexport async function wipe() { return 1 }\n",
+                'api/dockets/route.ts': AUTHORIZED_POST,
+            }),
+        )
+        expect(scan.routes.map((r) => r.rel)).toEqual(['dockets/route.ts'])
+        expect(scan.pages).toEqual([])
+        expect(scan.failures).toEqual([expect.stringMatching(/^acme: app\/_lib\/actions\.ts Server Action `wipe`/)])
+    })
 })

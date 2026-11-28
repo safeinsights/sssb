@@ -3779,6 +3779,7 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
             pageDefault(
                 "import styles from './page.module.css'\nimport logo from './logo.png'\nimport { useTranslations } from 'next-intl'\n" +
                     "export default function P() { const t = useTranslations('x'); return <img className={styles.x} src={logo} alt={t('a')} /> }\n",
+                { 'page.module.css': '.x {}\n', 'logo.png': 'png' },
             ),
         ).toBe('reads nothing')
         expect(pageDefault("import data from './data.json'\nexport default function P() { return data }\n")).toBe(
@@ -3834,5 +3835,209 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
                 policy,
             ),
         ).toBeUndefined()
+    })
+})
+
+describe('round-2 review of the page scan: allowances decided by the resolved file (safeinsights/sssb#221)', () => {
+    /** Writes `files` and `links` (path → target) under a fresh directory, and scans its pages, with `tsconfig` if given. */
+    function scanCase(
+        files: Record<string, string>,
+        links: Record<string, string> = {},
+        tsconfig?: object,
+    ): ScannedRoute[] {
+        const dir = path.join(SCRATCH, `case-${++caseNumber}`)
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            writeFileSync(path.join(dir, rel), src)
+        }
+        for (const [rel, target] of Object.entries(links)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            symlinkSync(target, path.join(dir, rel))
+        }
+        if (tsconfig) writeFileSync(path.join(dir, 'tsconfig.json'), JSON.stringify(tsconfig))
+        return scanPages([
+            {
+                label: 'case',
+                dir,
+                exemptDir: dir,
+                appDir: dir,
+                tsconfig: tsconfig ? path.join(dir, 'tsconfig.json') : undefined,
+            },
+        ])
+    }
+    const defaultOf = (pages: ScannedRoute[]) => pageState(pages.find((p) => p.rel === 'page.tsx')!.handlers[0]!)
+    const ASSET_PAGE = (specifier: string) =>
+        `import asset from '${specifier}'\nexport default function P() { return <img src={asset} /> }\n`
+
+    it('refuses an asset specifier that resolves to code, carries a query or a hash, or names no file', () => {
+        expect(
+            defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./members.css'), 'members.css.ts': 'export default 1\n' })),
+        ).toBe('refusal: `asset` is a default import, which has no exported name')
+        // The literal file beside it does not help: TypeScript (and a bundler) may load the code.
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': ASSET_PAGE('./members.css'),
+                    'members.css': '.x {}\n',
+                    'members.css.tsx': 'export default 1\n',
+                }),
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
+        for (const specifier of ['./members?x.css', './members.css#x', './gone.png']) {
+            expect(
+                defaultOf(scanCase({ 'page.tsx': ASSET_PAGE(specifier), 'members.css': '.x {}\n' })),
+                specifier,
+            ).toMatch(/^refusal: `asset` is a default import/)
+        }
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./members.css'), 'members.css': '.x {}\n' }))).toBe(
+            'reads nothing',
+        )
+    })
+
+    it("takes an asset's declaration file and an alias as the app's options resolve them, and a package's asset", () => {
+        const options = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                allowArbitraryExtensions: true,
+                paths: { '@/*': ['./assets/*'] },
+            },
+        }
+        const declared = {
+            'members.css': '.x {}\n',
+            'members.d.css.ts': 'declare const s: Record<string, string>\nexport default s\n',
+        }
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./members.css'), ...declared }, {}, options))).toBe(
+            'reads nothing',
+        )
+        expect(
+            defaultOf(
+                scanCase(
+                    { 'page.tsx': ASSET_PAGE('./members.css'), 'members.d.css.ts': declared['members.d.css.ts'] },
+                    {},
+                    options,
+                ),
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
+        expect(
+            defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/logo.png'), 'assets/logo.png': 'png' }, {}, options)),
+        ).toBe('reads nothing')
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/gone.png') }, {}, options))).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toBe('reads nothing')
+    })
+
+    it('follows a re-export to the module that declares the component, and fails closed', () => {
+        const page = "import { X } from './components'\nexport default function P() { return <X /> }\n"
+        const client = "'use client'\nexport function X() { return null }\n"
+        const server = "import { db } from './db'\nexport async function X() { return db }\n"
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export { X } from './x'\n",
+                    'components/x.tsx': client,
+                }),
+            ),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export * from './x'\n",
+                    'components/x.tsx': client,
+                }),
+            ),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "import { X } from './x'\nexport { X }\n",
+                    'components/x.tsx': client,
+                }),
+            ),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export { X } from './x'\n",
+                    'components/x.tsx': server,
+                }),
+            ),
+        ).toBe('names: X')
+        // A cycle, and a re-export that does not resolve.
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export { X } from './y'\n",
+                    'components/y.ts': "export { X } from './index'\n",
+                }),
+            ),
+        ).toBe('names: X')
+        expect(defaultOf(scanCase({ 'page.tsx': page, 'components/index.ts': "export { X } from './gone'\n" }))).toBe(
+            'names: X',
+        )
+        // A client barrel re-exporting a server component is judged by the component's own module.
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "'use client'\nexport { X } from './x'\n",
+                    'components/x.tsx': server,
+                }),
+            ),
+        ).toBe('names: X')
+    })
+
+    it("treats as a package only what is installed (a real path under node_modules) or SSSB's own kit", () => {
+        const page = (specifier: string) =>
+            `import { X } from '${specifier}'\nexport default function P() { return <X /> }\n`
+        const server = 'export async function X() { return null }\n'
+        // Installed: the real path has a node_modules segment, as pnpm's store does.
+        expect(
+            defaultOf(
+                scanCase(
+                    { 'page.tsx': page('ui'), 'node_modules/.pnpm/ui@1/node_modules/ui/index.js': server },
+                    { 'node_modules/ui': '.pnpm/ui@1/node_modules/ui' },
+                ),
+            ),
+        ).toBe('reads nothing')
+        // A workspace package of the adopter's own, linked into node_modules, by a path, or outside the app: named.
+        const workspace = {
+            'page.tsx': page('@acme/ui'),
+            '../ws/ui/package.json': JSON.stringify({ name: '@acme/ui', main: 'index.js' }),
+            '../ws/ui/index.js': server,
+        }
+        expect(defaultOf(scanCase(workspace, { 'node_modules/@acme/ui': '../../../ws/ui' }))).toBe('names: X')
+        expect(defaultOf(scanCase({ 'page.tsx': page('../shared/x'), '../shared/x.tsx': server }))).toBe('names: X')
+        // A node_modules link back into the app's own source hides nothing.
+        expect(
+            defaultOf(scanCase({ 'page.tsx': page('self/x'), 'src/x.tsx': server }, { 'node_modules/self': '../src' })),
+        ).toBe('names: X')
+        // SSSB's kit, linked as a workspace package is in this repository: its real package directory is out of sight.
+        const kit = {
+            'page.tsx': page('@sssb/kit/screen'),
+            '../kit-src/package.json': JSON.stringify({ name: '@sssb/kit' }),
+            '../kit-src/screen.js': server,
+        }
+        expect(defaultOf(scanCase(kit, { 'node_modules/@sssb/kit': '../../../kit-src' }))).toBe('reads nothing')
+    })
+
+    it('walks no private folder: a page or route under `_name` is not routed, so it is not judged', () => {
+        const pages = scanCase({
+            '_lib/page.tsx': "export default function P() { return fetch('/x') }\n",
+            'a/_parts/x/page.tsx': 'export default function P() { return null }\n',
+            'b/page.tsx': 'export default function P() { return null }\n',
+        })
+        expect(pages.map((p) => p.rel)).toEqual(['b/page.tsx'])
+        const routes = scanTree({
+            '_internal/route.ts': 'export async function POST() { return new Response() }\n',
+            'route.ts': 'export {}\n',
+        })
+        expect(routes.map((r) => r.rel)).toEqual(['route.ts'])
     })
 })
