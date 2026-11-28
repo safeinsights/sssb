@@ -20,6 +20,7 @@ import {
     scanPages,
     scanRoutes,
 } from './route-scan'
+import { FRAMEWORK_POLICY } from './route-policy'
 
 /**
  * The analyser's own cases: which export forms it reads, what counts as a handler's path, what it refuses.
@@ -2315,12 +2316,25 @@ describe('judging a handler against a policy', () => {
         )
     })
 
-    it('a read that reads nothing passes under an exemption whose gate it misses, but not a required gate', () => {
+    it('a read that reads nothing passes under an exemption whose gate it misses, and under a required gate', () => {
         expect(
             judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
         ).toBeUndefined()
+        // It reads no data, so the caller-verifying wrapper has no actor to build for it (an inline-headers preflight).
         expect(
-            judge(route('svc/jobs/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
+            judge(route('svc/jobs/route.ts'), { verb: 'OPTIONS', facts: facts({ readsNothing: true }) }, policy),
+        ).toBeUndefined()
+        // A read that reads something there still needs the wrapper, authorized or not.
+        expect(
+            judge(
+                route('svc/jobs/route.ts'),
+                { verb: 'GET', facts: facts({ reachesAuthorize: true, outsideNames: new Set(['load']) }) },
+                policy,
+            ),
+        ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
+        // And a mutation that reads nothing is no read: it needs the wrapper and authorize.
+        expect(
+            judge(route('svc/jobs/route.ts'), { verb: 'POST', facts: facts({ readsNothing: true }) }, policy),
         ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
         expect(
             judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, policy),
@@ -3388,7 +3402,7 @@ describe('components a page renders (safeinsights/sssb#221)', () => {
             wrapper('return <Glue rows={await db.rows()}>{children}</Glue>', `${GLUE}import { db } from './db'\n`),
         ).toBe('names: db')
         expect(wrapper('return cache.get("x")', 'const cache = new Map()\n')).toBe(
-            "refusal: `cache` is a declaration of the page's own file, which code of the file can change: render it as a component of this file (a JSX tag), or move it into a module and list the import",
+            "refusal: `cache` is a declaration of the page's own file, which code of the file can change: write the value inline where the page uses it (a literal), render it as a component of this file (a JSX tag), or move it into a module and list the import in the page's reads-only entry (a const bound to a primitive literal is already inert)",
         )
         const arrow = pageDefault(
             `${GLUE}const Shell = () => <Glue />\nexport default function P() { return <Shell /> }\n`,
@@ -3701,8 +3715,8 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
             { exemptPrefixes: {}, exemptFiles: {}, requiredAlongside: {} },
         )
         expect(why).toContain(
-            'the inert values a read route may name, `getMessages`, `getTranslations`, `setRequestLocale` (next-intl/server), ' +
-                '`hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
+            'the inert values a read route may name, `getLocale`, `getMessages`, `getTranslations`, `setRequestLocale` ' +
+                '(next-intl/server), `use` (react), `headers` (next/headers), `hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
                 '(@sssb/kit/adapters/index), `sameOriginPath` (@sssb/kit/core/same-origin-path), `getTenantTheme` ' +
                 '(@sssb/kit/theme), `mantineHtmlProps` (@mantine/core), `auth.getCurrentUser()`, `auth.listMyOrgs()`, ' +
                 '`auth.refusal()`, `auth.requireUser()`, `auth.signInPath()` (@sssb/kit/adapters/index; `auth` itself, or ' +
@@ -4215,5 +4229,152 @@ describe('round-3 review of the page scan: asset and package allowances narrowed
             'app/page.tsx': renders('@sssb/kit/screen'),
         }
         expect(scan(outside, { 'app/node_modules/@sssb/kit': '../../../kit' }, 'app')).toBe('reads nothing')
+    })
+})
+
+describe('the page shapes the authorization review found failing (Z1), and a preflight under service/ (Z4)', () => {
+    it('passes React `use`, `getLocale` and `headers()`: request-scoped readers that carry no org data', () => {
+        expect(
+            pageDefault(
+                "import { use } from 'react'\nimport { useTranslations } from 'next-intl'\n" +
+                    "import { setRequestLocale } from 'next-intl/server'\n" +
+                    'export default function P({ params }: { params: Promise<{ locale: string }> }) {\n' +
+                    '  const { locale } = use(params)\n  setRequestLocale(locale)\n  const t = useTranslations("x")\n' +
+                    '  return <h1>{t("title")}</h1>\n}\n',
+            ),
+        ).toBe('reads nothing')
+        expect(
+            pageDefault(
+                "import { getLocale } from 'next-intl/server'\nimport { headers } from 'next/headers'\n" +
+                    'export default async function P() { const l = await getLocale(); const h = await headers()\n' +
+                    '  return <p>{l}{h.get("user-agent")}</p> }\n',
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('holds each to its module and name: `cookies` (the session) and a look-alike `use` are counted', () => {
+        expect(
+            pageDefault(
+                "import { cookies } from 'next/headers'\nexport default async function P() { return (await cookies()).size }\n",
+            ),
+        ).toBe('names: cookies')
+        expect(
+            pageDefault("import { use } from './hooks'\nexport default function P(p: never) { return use(p) }\n"),
+        ).toBe('names: use')
+        expect(
+            pageDefault("import { use as u } from 'react'\nexport default function P(p: never) { return u(p) }\n"),
+        ).toBe('refusal: `u` is an import under another name than its exported `use`')
+    })
+
+    const ACTION = "'use server'\nexport async function saveItem(form: FormData) { return form }\n"
+    const handsOn = (specifier: string, jsx = '<form action={saveItem} />', name = 'saveItem') =>
+        `import { ${name} } from '${specifier}'\nimport { Glue } from './glue'\n` +
+        `export default function P() { return <div><Glue x={1} />${jsx}</div> }\n`
+
+    it("passes an imported Server Action handed on by reference, a JSX attribute's whole value", () => {
+        expect(pageDefault(handsOn('./src/actions'), { 'src/actions.ts': ACTION })).toBe('reads nothing')
+        expect(pageDefault(handsOn('./src/actions', '<Glue action={saveItem} />'), { 'src/actions.ts': ACTION })).toBe(
+            'reads nothing',
+        )
+        expect(
+            pageDefault(handsOn('./src/actions', '<button formAction={saveItem} />'), { 'src/actions.ts': ACTION }),
+        ).toBe('reads nothing')
+        // Through a barrel's re-export, to the 'use server' module that declares it.
+        expect(
+            pageDefault(handsOn('./src/index'), {
+                'src/actions.ts': ACTION,
+                'src/index.ts': "export { saveItem } from './actions'\n",
+            }),
+        ).toBe('reads nothing')
+        // A function whose own body opens with 'use server', in a module that does not.
+        expect(
+            pageDefault(handsOn('./src/inline'), {
+                'src/inline.ts': "export async function saveItem() { 'use server'\n  return 1 }\n",
+            }),
+        ).toBe('reads nothing')
+        expect(
+            pageDefault(handsOn('./src/inline'), {
+                'src/inline.ts': "export const saveItem = async () => { 'use server'\n  return 1 }\n",
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it('counts a Server Action the page calls or uses any other way, and anything else handed on as a prop', () => {
+        const files = { 'src/actions.ts': ACTION }
+        for (const jsx of [
+            '{saveItem(null as never)}',
+            '<form action={saveItem.bind(null, 1)} />',
+            '<form action={(saveItem)} />',
+            '{String(saveItem)}',
+            '<Glue {...{ action: saveItem }} />',
+            '<Glue action={[saveItem]} />',
+        ]) {
+            expect(pageDefault(handsOn('./src/actions', `<form action={saveItem} />${jsx}`), files), jsx).toBe(
+                'names: saveItem',
+            )
+        }
+        // A plain module's function handed on as a prop may run in the render: counted.
+        expect(
+            pageDefault(handsOn('./src/data', '<Glue load={saveItem} />'), {
+                'src/data.ts': 'export async function saveItem() { return [] }\n',
+            }),
+        ).toBe('names: saveItem')
+        // An inline action beside a plain export: only the action is one.
+        expect(
+            pageDefault(handsOn('./src/mixed', '<Glue load={load} />', 'load'), {
+                'src/mixed.ts':
+                    "export async function saveItem() { 'use server'\n  return 1 }\nexport async function load() { return [] }\n",
+            }),
+        ).toBe('names: load')
+    })
+
+    it("counts an action the Server Action walk does not judge: outside src, a package's, or a plain re-export", () => {
+        expect(pageDefault(handsOn('./lib/actions'), { 'lib/actions.ts': ACTION })).toBe('names: saveItem')
+        expect(pageDefault(handsOn('./src/node_modules/acts'), { 'src/node_modules/acts/index.ts': ACTION })).toBe(
+            'names: saveItem',
+        )
+        expect(
+            pageDefault(handsOn('acts'), {
+                'node_modules/acts/package.json': JSON.stringify({ name: 'acts', main: 'index.js' }),
+                'node_modules/acts/index.js': ACTION,
+            }),
+        ).toBe('names: saveItem')
+        // A 'use server' file re-exporting a plain module's function: followed to the plain module, which is no action.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': "'use server'\nexport { saveItem } from './plain'\n",
+                'src/plain.ts': 'export async function saveItem() { return [] }\n',
+            }),
+        ).toBe('names: saveItem')
+        expect(pageDefault(handsOn('./src/missing'))).toBe('names: saveItem')
+    })
+
+    it('keeps refusing a module-level const of the page file, and names the ways through', () => {
+        const state = pageDefault(
+            "const LINKS = [{ href: '/a' }]\nexport default function P() { return <ul>{LINKS.map((l) => <li key={l.href}>{l.href}</li>)}</ul> }\n",
+        )
+        expect(state).toMatch(/^refusal: `LINKS` is a declaration of the page's own file/)
+        expect(state).toMatch(/write the value inline where the page uses it/)
+        expect(state).toMatch(/move it into a module and list the import in the page's reads-only entry/)
+        // Inlined, it is a literal.
+        expect(
+            pageDefault(
+                "export default function P() { return <ul>{[{ href: '/a' }].map((l) => <li key={l.href}>{l.href}</li>)}</ul> }\n",
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('passes a read under service/ that reads nothing, and still requires withServiceCaller of one that reads', () => {
+        const [route] = scanTree({
+            'service/jobs/route.ts':
+                "import { authorize } from '@sssb/kit/authz/authorize'\nimport { load } from './load'\n" +
+                "export function OPTIONS() { return new Response(null, { status: 204, headers: { allow: 'GET' } }) }\n" +
+                'export async function GET() { authorize({} as never, "read", {} as never); return Response.json(await load()) }\n',
+        })
+        const verdict = Object.fromEntries(route!.handlers.map((h) => [h.verb, judge(route!, h, FRAMEWORK_POLICY)]))
+        expect(verdict['OPTIONS']).toBeUndefined()
+        expect(verdict['GET']).toMatch(
+            /must also satisfy: the handler is itself a call to an imported withServiceCaller/,
+        )
     })
 })

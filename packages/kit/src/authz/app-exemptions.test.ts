@@ -1102,3 +1102,18 @@ describe('the unread-file guards walk no private folder (safeinsights/sssb#221)'
         ])
     })
 })
+
+describe('a page that hands on a Server Action, which is judged on its own (Z1)', () => {
+    it('passes the page, and fails the action that does not authorize', async () => {
+        const scan = await scanApp(
+            app({
+                '[locale]/form/page.tsx':
+                    "import { saveItem } from '../../../lib/actions'\nexport default function P() { return <form action={saveItem} /> }\n",
+                '../lib/actions.ts': "'use server'\nexport async function saveItem(form: FormData) { return form }\n",
+            }),
+        )
+        expect(scan.pages.map((page) => page.rel)).toEqual(['../[locale]/form/page.tsx'])
+        expect(scan.failures).toHaveLength(1)
+        expect(scan.failures[0]).toMatch(/^acme: lib\/actions\.ts Server Action `saveItem` does not reach authorize/)
+    })
+})

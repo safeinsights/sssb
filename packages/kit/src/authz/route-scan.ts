@@ -29,8 +29,9 @@ import ts from 'typescript'
  * segment). What a page may name and still read nothing is wider than for a route, and only for a page: the page
  * allow-list (PAGE_IMPORTS, PAGE_MEMBERS: the session, the catalog, the locale, a UI ability check), a component it only
  * renders as a JSX tag from a client module or a package (out of sight, as an imported helper is), a component of its
- * own file it only renders (read, as part of the page), and a client module or package it loads with `import()` only to
- * render what it exports (`outsideNamesOf`). A component file whose prologue is `'use client'` is not judged: it runs in
+ * own file it only renders (read, as part of the page), a client module or package it loads with `import()` only to
+ * render what it exports, and an imported Server Action it only hands on as a JSX attribute's value, which is judged on
+ * its own (`outsideNamesOf`). A component file whose prologue is `'use client'` is not judged: it runs in
  * the browser, and reaches data only through routes, which are. A metadata route always is.
  *
  * WHAT "REACHES" MEANS. A call counts for a handler when it sits on that handler's own path:
@@ -770,13 +771,15 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
     // does not pass the gate is judged like any other, so one that authorizes passes.
     const exemption = exemptionFor(policy, route.rel, handler.verb)
     if (exemption && gateHolds(exemption.mustMatch, handler.facts, handler.verb)) return undefined
+    // A read that names nothing but inert values and its request reads no data, so it has nothing to authorize, and a
+    // gate required alongside (`service/`'s caller-verifying wrapper, which builds the actor a read would authorize)
+    // has nothing to add: it passes before that gate is asked for (an inline-headers CORS preflight under `service/`).
+    const read = isReadVerb(handler.verb)
+    if (read && handler.facts.readsNothing) return undefined
     const required = requiredFor(policy, route.rel)
     if (required && !gateHolds(required.mustMatch, handler.facts, handler.verb)) {
         return `${where} must also satisfy: ${describeGate(required.mustMatch)}. ${required.reason}`
     }
-    // A read that names nothing but inert values and its request reads no data, so it has nothing to authorize.
-    const read = isReadVerb(handler.verb)
-    if (!handler.facts.reachesAuthorize && read && handler.facts.readsNothing) return undefined
     if (!handler.facts.reachesAuthorize && exemption) {
         const gate = exemption.mustMatch
         const facts = handler.facts
@@ -888,8 +891,9 @@ function judgePage(
         `component that loads its own data is out of the scan's sight. A page reads nothing when it names nothing from ` +
         `outside itself but the inert values a read route may name, ${describePageAllowance()}, a component it only ` +
         `renders as a JSX tag from a 'use client' module or a package (a server component of the app's own is named), ` +
-        `a component of its own file it only renders (which is read as part of it), and what it loads with ` +
-        `\`import()\` from such a module only to render it. ` +
+        `a component of its own file it only renders (which is read as part of it), what it loads with ` +
+        `\`import()\` from such a module only to render it, and an imported Server Action (from a 'use server' module ` +
+        `under src, judged on its own) it only hands on as a JSX attribute's value, \`action={save}\`, never calls. ` +
         (route.intercepting
             ? `It is under an intercepting segment (\`(.)x\`), which Next also serves at the URL it intercepts, so no ` +
               `exemption applies to it: authorize, or read nothing.`
@@ -1040,6 +1044,47 @@ class RootScanner {
         if (first < 0 || segments.some((segment) => /@(?:file|link)\+/.test(segment))) return false
         const above = segments.slice(0, first).join(path.sep)
         return this.appReal === above || this.appReal.startsWith(above + path.sep)
+    }
+
+    /**
+     * Whether the export `name` of the module `specifier` names, imported from `from`, is a Server Action the scan
+     * judges on its own (`scanServerActions`), so a page may hand it on by reference (safeinsights/sssb#221): followed
+     * through re-exports to the module that declares it, as `isRenderable` follows a component, that module is a file
+     * under the app's `src` (the tree the Server Action walk reads, not through a `node_modules`), and either its
+     * prologue is `'use server'` (every export of it is an action) or the exported function's own body opens with
+     * `'use server'`. A module that does not resolve, a re-export that cannot be followed or leads back to itself, and
+     * anything else exported, are not one.
+     */
+    private isJudgedServerAction(from: Source, specifier: string, name: string): boolean {
+        let binding: Binding | undefined = { kind: 'module', src: from, specifier, name }
+        const seen = new Set<string>()
+        while (binding?.kind === 'module') {
+            const target = this.resolve(binding.src, binding.specifier)
+            if (typeof target === 'string') return false
+            const key = `${target.fileName}\0${binding.name}`
+            if (seen.has(key)) return false
+            seen.add(key)
+            binding = this.exportNamed(target, binding.name, new Set())
+        }
+        if (binding?.kind !== 'decl') return false
+        const real = realpathOrUndefined(binding.src.fileName)
+        const srcDir = realpathOrUndefined(path.join(this.appDir, 'src'))
+        if (real === undefined || srcDir === undefined || !real.startsWith(srcDir + path.sep)) return false
+        if (real.split(path.sep).includes('node_modules')) return false
+        if (hasUseServer(binding.src.sf.statements)) return true
+        const decl = binding.decl
+        const fn = ts.isFunctionDeclaration(decl)
+            ? decl
+            : ts.isVariableDeclaration(decl) && isConst(decl) && decl.initializer !== undefined
+              ? unwrap(decl.initializer)
+              : undefined
+        return (
+            fn !== undefined &&
+            (ts.isFunctionDeclaration(fn) || isFunctionLiteral(fn)) &&
+            fn.body !== undefined &&
+            ts.isBlock(fn.body) &&
+            hasUseServer(fn.body.statements)
+        )
     }
 
     /**
@@ -1321,6 +1366,7 @@ class RootScanner {
                     ? {
                           renderable: (specifier, name) => this.isRenderable(node.src, specifier, name),
                           asset: (specifier) => this.isStaticAsset(node.src, specifier),
+                          serverAction: (specifier, name) => this.isJudgedServerAction(node.src, specifier, name),
                       }
                     : undefined,
             )
@@ -2488,7 +2534,14 @@ const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
 const PAGE_IMPORTS: Readonly<Record<string, readonly string[]>> = {
     // The catalog and the locale: what every page reads to render its copy in the request's language (a layout's
     // `getMessages` for NextIntlClientProvider is next-intl's own pattern). No data but the catalog and the locale.
-    'next-intl/server': ['getMessages', 'getTranslations', 'setRequestLocale'],
+    // `getLocale` is the request's locale itself, the value `setRequestLocale` set or the URL's segment gave.
+    'next-intl/server': ['getLocale', 'getMessages', 'getTranslations', 'setRequestLocale'],
+    // React's `use`, as next-intl's documented sync page unwraps its params (`const { locale } = use(params)`): it only
+    // unwraps the promise or context it is handed, and that value's own names are judged where the page writes them.
+    react: ['use'],
+    // The request's own headers: what the client sent (a user agent, a language, a forwarded host), no org data. Not
+    // `cookies`, which carries the session: a page reaches the session through `auth` (PAGE_MEMBERS) alone.
+    'next/headers': ['headers'],
     // The locale layout's check that the URL's locale segment is one the app serves: a function of its two arguments.
     // `useTranslations` is the same catalog read, in a component that is not async.
     'next-intl': ['hasLocale', 'useTranslations'],
@@ -2554,6 +2607,8 @@ interface PageResolution {
     renderable(specifier: string, name: string | undefined): boolean
     /** Whether a default import of `specifier` is a static asset. */
     asset(specifier: string): boolean
+    /** Whether the export `name` of `specifier` is a Server Action the scan judges on its own (`isJudgedServerAction`). */
+    serverAction(specifier: string, name: string): boolean
 }
 
 /** Whether `file` is a file (through a link); false when it is missing or a directory. */
@@ -2610,6 +2665,9 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  *   it does is out of sight, as an imported helper's is; a server component of the app's own, which may load its own
  *   data, is counted under its name, so a page loads its data itself and authorizes there;
  * - a default import of a static asset (`styles` from `./page.module.css`, an image's URL);
+ * - an imported Server Action it only hands on, the whole value of a JSX attribute (`<form action={saveItem}>`), when
+ *   the scan judges it as one (`serverAction`: its declaring module is a `'use server'` file under the app's `src`, or
+ *   its function's body opens with `'use server'`); called, or used any other way, it is counted;
  * - a component of its OWN file that it only renders (a function declared once and never reassigned, or a `const`
  *   bound to a function literal): its text is read as part of the page, by these same rules, once each;
  * - a module it loads with `import()` only to render what it takes from it, the one shape the app guide gives a real
@@ -2704,8 +2762,10 @@ function outsideNamesOf(
         if (isAmbient(decl)) return refuse(`\`${id.text}\` is declared with \`declare\`, so its value is out of sight`)
         if (page) {
             return refuse(
-                `\`${id.text}\` is a declaration of the page's own file, which code of the file can change: render it as a ` +
-                    'component of this file (a JSX tag), or move it into a module and list the import',
+                `\`${id.text}\` is a declaration of the page's own file, which code of the file can change: write the ` +
+                    'value inline where the page uses it (a literal), render it as a component of this file (a JSX ' +
+                    "tag), or move it into a module and list the import in the page's reads-only entry (a const bound " +
+                    'to a primitive literal is already inert)',
             )
         }
         return refuse(
@@ -2793,6 +2853,16 @@ function outsideNamesOf(
                     if (members === undefined) return refuse(memberSource(imported.name, `'${imported.module}'`))
                     return memberUse(id, imported.name, members)
                 }
+                // An imported Server Action handed on by reference, a JSX attribute's whole value (`<form
+                // action={saveItem}>`, `<Form action={saveItem} />`): not called here, so nothing of it runs in the
+                // render, and the scan judges it on its own as the POST it is. Called, or used any other way, it counts.
+                if (
+                    imported?.kind === 'named' &&
+                    isJsxAttributeValue(id) &&
+                    pageResolution?.serverAction(imported.module, imported.name) === true
+                ) {
+                    return true
+                }
                 if (isJsxTagName(id)) {
                     if (imported !== undefined) {
                         // A namespace's member that PAGE_MEMBERS names (`<kit.auth.listMembers />`) is not a component.
@@ -2865,6 +2935,12 @@ function isJsxTagName(id: ts.Identifier): boolean {
     let node: ts.Node = id
     while (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) node = node.parent
     return isDirectJsxTag(node)
+}
+
+/** Whether `id` is the whole value of a JSX attribute (`action={saveItem}`): handed on, not called or read. */
+function isJsxAttributeValue(id: ts.Identifier): boolean {
+    const parent = id.parent
+    return ts.isJsxExpression(parent) && parent.expression === id && ts.isJsxAttribute(parent.parent)
 }
 
 /** Whether `node` is itself a JSX opening, closing or self-closing tag's name. */
