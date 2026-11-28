@@ -172,9 +172,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
   array), `NextResponse`, `redirect`, `permanentRedirect` and `notFound` from `next/navigation`, and SSSB's `appMode`
   and `isSimulated`, so it works only on its request, as a liveness probe does, or a CORS preflight whose headers are
-  written inline (under `src/app/api/service/` too, where any other read is wrapped by `withServiceCaller`). Any other read that is genuinely not org-scoped (a public one, a preflight whose headers object comes from a module,
+  written inline (under the `service/` prefix too, where any other read is wrapped by `withServiceCaller`). Any other read that is genuinely not org-scoped (a public one, a preflight whose headers object comes from a module,
   a provider's verification handshake) names an exemption with a `reads-only` gate,
-  `{ kind: 'reads-only', names: { corsHeaders: 'src/lib/cors.ts' } }`: the read may then name, besides those inert
+  `{ kind: 'reads-only', names: { corsHeaders: '@/lib/cors' } }`: the read may then name, besides those inert
   values, only the listed imports (by exported name; not a default import), each from the module the entry pins it to,
   so the reason covers exactly what it reads; every name listed must be in use. A pin is the specifier the import
   writes when it is not relative (`'next/headers'`, `'@sssb/kit/adapters/fake/auth'`, an alias's `'@/lib/cors'`), or
