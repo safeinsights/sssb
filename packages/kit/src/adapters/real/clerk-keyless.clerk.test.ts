@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * safeinsights/sssb#193 against Clerk's REAL `auth()` (@clerk/nextjs 7.10), offline. A request that Clerk's middleware
  * never saw (a path the app's proxy matcher skips) carries headers a caller forged: request data encrypted under
  * Clerk's published keyless key that names a secret key of the caller's choosing, a session token for someone else,
- * and that token's signature under the chosen key. Outside a production build, with keyless mode able to run, Clerk
- * accepts it (the first test, which shows the hole is real on the installed Clerk, and fails if Clerk ever closes it);
+ * and that token's signature under the chosen key. Under `next dev` (`NODE_ENV=development`), with keyless mode able to
+ * run, Clerk accepts it (the first test, which shows the hole is real on the installed Clerk, and fails if Clerk ever closes it);
  * SSSB's Clerk adapter refuses to read a session until keyless mode is disabled, and once it is, Clerk refuses the
  * forged data. Only `next/headers` is replaced, to hand `auth()` the forged request as Next would, and `server-only`
  * (which `auth()` requires, and which throws outside Next's server build) is loaded as the empty module it is there.
@@ -128,7 +128,7 @@ afterEach(() => {
     vi.unstubAllEnvs()
 })
 
-describe("a forged x-clerk-auth request, outside a production build, on a path Clerk's middleware never saw", () => {
+describe("a forged x-clerk-auth request, under next dev (NODE_ENV=development), on a path Clerk's middleware never saw", () => {
     it("is signed in by Clerk's own auth() while keyless mode is on: the hole, as Clerk ships it", async () => {
         const { auth } = await import('@clerk/nextjs/server')
         expect((await auth()).userId).toBe('user_victim')
@@ -217,7 +217,7 @@ describe('what the guard lets through is refused by Clerk itself, or ignored by 
     )
 
     it.each([['test'], ['production'], [undefined]])(
-        "with NODE_ENV %s, forged request data does not move Clerk's client: it keeps the environment's API and secret key",
+        "with NODE_ENV %s, forged request data does not move Clerk's client: nothing is sent to the forged API URL",
         async (nodeEnv) => {
             vi.stubEnv('NODE_ENV', nodeEnv)
             h.headers = new Headers({
