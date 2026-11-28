@@ -9076,3 +9076,198 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
 - **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
   the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
   and #267. Then a claims pass over the prose.
+
+## Common page shapes pass, and a reads-only name is pinned to its module (2026-11-27, `fix/review-page-shapes`)
+
+The whole-branch review of the authorization changes before 0.10.0 (findings Z1, Z2, Z4, and the doc drift of Z8 and
+Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its module"; the calls it did not settle:
+
+- **Seen failing first.** The reviewer's scratch app with four everyday pages failed four times at `cfe96f2`: a sync
+  page's `use(params)` ("it names `use`"), a page calling `getLocale()` and `headers()`, a page handing
+  `<Form action={saveItem} />` an imported Server Action, and a module-level `const LINKS = [...]`. After: the sync page
+  and the action pass, `getLocale` passes, and `headers()` and the `const` still fail by decision, each with its way
+  through (an entry pinning `headers` to `next/headers`; the value inline or in a module).
+- **The page allow-list, two more entries** (pages only; routes keep INERT_IMPORTS), each named in PAGE_IMPORTS with
+  its reason:
+    - `use` (`react`): next-intl's documented sync page, `const { locale } = use(params)`. `use` only unwraps the
+      promise or context it is handed; what it is handed is the page's own parameter or another name, judged where the
+      page writes it.
+    - `getLocale` (`next-intl/server`): the request's locale. The pages entry above left it out because neither app
+      needed it; an adopter's page does.
+    - **Not `headers` or `cookies`** (`next/headers`). The first draft allowed `headers`; review dropped it:
+      `headers()` returns the Cookie and Authorization headers, the session's credential, so a page could render the
+      token into its HTML with a green scan. No page of either app needs either; a page that does names it in its entry,
+      `names: { headers: 'next/headers' }`, with a reason.
+- **A Server Action handed on by reference.** Only as the whole value of a JSX attribute (`action={saveItem}`,
+  `formAction={…}`, any attribute), by a named or default import, when the module that declares it (followed through
+  re-exports, the client-component walk reused as `declaringBinding`) is a file under the app's `src`, not through a
+  `node_modules` (the tree the Server Action walk judges), and its prologue is `'use server'` or the exported function's
+  own body opens with `'use server'`. Counted, as before: a call, `saveItem.bind(null, id)` (a member read: a later
+  allowance could take `.bind` with judged arguments, not taken here), a parenthesized or spread value, an action
+  outside `src` or in a package, a `'use server'` file's re-export of a plain module's function (followed to the plain
+  module, which is no action), and any non-action import handed on as a prop (`load={load}` may run in the render).
+- **The module-level `const` stays refused.** Code of the file can change an object or array there, as four rounds of
+  the reads review showed. Its message now says: write the value inline where the page uses it, render it as a
+  component of the file, or move it into a module and list the import (a primitive `const` is already inert).
+- **Z4: reads-nothing before a required gate.** `judge` asked `service/`'s `withServiceCaller` gate before the
+  reads-nothing pass, so an inline-headers preflight there had no way through. Moved, for route handlers only:
+  `judgePage` keeps its order, since a page cannot be the wrapper's call and the pages changeset refuses an unwrapped
+  page under `service/` as before.
+- **Z2: the pin, and its format.** `names` changes from `['corsHeaders']` to `{ corsHeaders: 'src/lib/cors.ts' }`, before
+  0.10.0 ships, so no released app wrote the list. Decided:
+    - **What a pin matches** (`pinsOf`, computed when the facts are, so `gateHolds` stays a pure check): the import's
+      specifier when it is not relative and resolves from the app's directory to the same file (packages and aliases;
+      a nearer `node_modules` cannot swap the module); and the app-relative path of the file it resolves to and of the
+      file that declares the export. Both the resolved and the declaring file are accepted: a barrel is a module the
+      reason can name, as a package is, and the declaring file is where the value is written.
+    - **A path carries its extension.** `'src/lib/cors.ts'`, never `'src/lib/cors'` or `'src/seed'` for an `index.ts`:
+      a pin names one file, and the failure prints the exact path to copy. Rejected: matching an extensionless path,
+      which would be a second resolution with its own corner cases (`cors.ts` beside `cors/index.ts`).
+    - **Never a pin:** a relative specifier (another module from each file), a path with `.` or `..`, a leading `/` or
+      `./`, a file through a `node_modules` or outside the app (named by its specifier instead). `isGate` refuses the
+      malformed ones with an entry problem that shows the format.
+    - **Both sides fail.** A read importing a listed name from another module fails, and the entry gets a problem
+      naming both modules; the old "more than one module among governed reads" check is gone, since the pin is stricter.
+    - The apps' entries: the starter pins its seed reads to `src/seed/index.ts` and `listAllPeople` to
+      `@sssb/kit/adapters/fake/auth`; the showcase pins `@app/seed`, `@sssb/kit/theme`, the fake auth adapter and
+      `src/app-config/actors.ts`.
+- **Docs.** The pages changeset now shows both entries an app from an earlier generator needs (its layouts' seed reads
+  and its sign-in page, pinned), checked by scanning the reviewer's 0.9.1-generated app with them (0 failures,
+  0 problems), and repeats the may-reach limit beside its self-only advice (Z8). The reads changeset names
+  `withStandardWebhookSignature` (Z9); `/sssb:pre-pr` looks for a read, page or Server Action without `authorize`;
+  `judgeServerAction`'s message names the always-rethrow exception the guide has.
+- **Proofs.** `route-scan.test.ts` ("the page shapes the authorization review found failing") and
+  `app-exemptions.test.ts` (the pin's matching rules, a nearer `node_modules`, the malformed formats, a page handing on
+  an unauthorized action that still fails as an action). Each new guard was mutated and seen red: each of the two
+  allow-list entries, and putting `headers` and `cookies` back; the attribute-value test and its attribute parent; the
+  `src`, `node_modules`, prologue, body and missing-export checks of the action test, and the raw-text directive match;
+  the reads-nothing order (and narrowing it to reads); the pin check (ignored, `some` for `every`, an unplaced source
+  passing, an inherited key, in the gate and in the entry's problem); each source of a pin (the specifier resolved from
+  the app and from the file, an unresolved one, one spelled as an app file's path, a `node_modules` path, the resolved
+  file, and the declaring file under the listed name); each of `isGate`'s and `isPin`'s refusals; and the entry's pin
+  and unused-name problems. Five checks that turned out equivalent were dropped rather than kept untested, each
+  because another check already refuses what it would: `isGate`'s refusal of an array of names (an array's keys are
+  never identifiers), `isPin`'s refusals of an empty pin and of a leading `/` (each has an empty segment), and
+  `pinsOf`'s refusals of a relative and of an absolute specifier as a specifier pin (no pin with a `.`, `..` or empty
+  segment can be written to match one).
+- **Review round (an Opus round and a Fable pass, no realistic bypass), fixed here:**
+    - The declaring-file pin ignored which export it was: a barrel's `export { secretRows as corsHeaders } from './cors'`
+      (or the import-then-export form) passed `names: { corsHeaders: 'src/lib/cors.ts' }`. `declaringBinding` now
+      returns the name at the end of the re-export chain, and the declaring file answers only when it is the name
+      listed; a plain re-export and the file's own local rename still hold.
+    - An escaped directive, `'use\x20server'`, counted for the by-reference check (the AST's value) while the Server
+      Action walk's text pre-filter skipped the file, so a page could hand on an action nobody judged. Directives are now
+      matched by their raw source text everywhere (`'use client'` too), as ECMAScript matches `'use strict'`, and the
+      pre-filter agrees.
+    - Specifier and path pins shared one namespace: with `paths: { "src/*": ["./evil/*"] }`, the specifier
+      `'src/lib/cors.ts'` answered to the path pin of the real file. A string that is the path of a file in the app is
+      now a path pin only.
+    - An unresolved bare specifier answered to its own text (`undefined === undefined`); a specifier pin now requires it
+      to resolve.
+    - Two mutants had survived: the under-`src` check (its tests' apps had no `src`, so a missing directory refused the
+      action) and the attribute-parent check (no JSX-child case). Both have cases now.
+- **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
+  gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
+  filed separately.
+
+## The keyless guard refuses what Clerk leaves open, and no more (2026-11-27, `fix/review-keyless-guard`)
+
+Finding A3 of the whole-branch review of `int-fixes`, against safeinsights/sssb#193's fix (the entry "The Clerk adapter:
+one read per render, the keyless fallback closed, a client sign-out"). That cut refused the adapter in every process that
+was not a production Next build, before every session read and every Backend API call, so a plain `node` process (an
+adopter's CodeBuild job program, an ops script, the auth contract suite) threw "...wherever real mode runs under next
+dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMembers`, would have failed on upgrade.
+
+- **The rule is now Clerk's own two conditions, re-read in @clerk/nextjs 7.10** (`decryptClerkRequestData`,
+  `canUseKeyless`, `createAuthOptions`): the keyless key is Clerk's FIRST key only when neither `CLERK_ENCRYPTION_KEY` nor
+  `CLERK_SECRET_KEY` is set (the dummy key when `NODE_ENV` is not `production`, an empty passphrase in a production
+  build, which a forger has just as well); it is the FALLBACK, after the real key fails, only when
+  `NODE_ENV` is `development`, it is not CI, and the disable flag is unset. And a forged token is checked against
+  `CLERK_SECRET_KEY`, empty when unset, in every `NODE_ENV`. So the guard refuses when `CLERK_SECRET_KEY` is unset, and when
+  `NODE_ENV` is `development` and the flag is not `1` or `true`; a process with the secret key set and `NODE_ENV` unset,
+  `test` or `production` is let through, and the real-Clerk test shows Clerk itself refuses a forgery there (it fails to
+  decrypt). Stricter than Clerk in one place on purpose, as before: it ignores the CI exemption.
+- **A missing secret key is refused in production too**, which the review's wording left out ("outside production").
+  A production process with no key checks a forged token against an empty key (shown against real Clerk in the same
+  test), `assertRealEnv` already refuses to boot without the key, and no process that calls Clerk can work without it, so
+  nothing legitimate loses. Rejected: refusing only outside production, which would leave that one case to boot alone.
+- **`check-real-env` reports it two ways.** `assertRealEnv` now throws the guard's problem as a cutover item on `auth-dev`
+  (so `createRealPorts` stops at boot too, instead of failing every request), which sees the process's own `NODE_ENV`; and
+  `realEnvNotices` prints what `next dev` would do with the environment when this process is not `next dev` (the preflight
+  of `dev:real` runs before it, with no `NODE_ENV=development`), computed by the guard itself with `NODE_ENV`
+  `development`, so the two cannot disagree. A notice, not a failure: an adopter who sets the flag only on `next dev` is
+  right, if less helped. The showcase's `dev:real` now exports the flag first, so the notice stays quiet there. Rejected:
+  forcing `NODE_ENV=development` in the preflight, which would fail every script that follows the earlier changeset's
+  advice to set the flag on `next dev` alone.
+- **Considered in review, and not done.** (1) Refusing when the RUNTIME `NODE_ENV` says `development` as well as the
+  inlined one, against the case where an adopter puts `@clerk/nextjs` in `serverExternalPackages` (so Clerk reads the
+  runtime value) and runs a production build with `NODE_ENV=development` preset. It needs two unusual choices at once, and
+  would refuse every request of a production build merely started with a preset `NODE_ENV=development` (Clerk's bundled
+  copy is inlined as `production` there and safe): the outage class finding A3 was about, for the opposite combination.
+  The literal reads, which agree with the bundled Clerk, are pinned by a source assertion because no run can tell them
+  from the whole-environment read. (2) Validating the secret key's shape (`sk_live_…`): it would refuse only a deployment
+  already broken (every Backend API call and sign-in fails), and a format check can refuse a legitimate key. (3) A notice
+  from a preflight run with `NODE_ENV=production` that is then followed by `next dev`: it fails closed on the first
+  request, and a production-looking preflight is not the `dev:real` this notice speaks for.
+
+## A drain lists for half its window; a retry that may have started is left to the sweep (2026-11-28, `fix/review-drains-and-retry-start`)
+
+Two findings of the whole-branch review of `int-fixes` before 0.10.0, both where #217's bounded drains, #238's retries
+and #248/#268's CodeBuild sweep meet.
+
+- **J1 (HIGH): past a tenant count, a drain started nothing, every tick.** `drainFairly` listed every tenant (one
+  `withTenant` each, even a tenant with nothing due) before it ran any row, and both phases shared one deadline. Once
+  listing every tenant took longer than what was left of the window, the drain listed until the deadline and started
+  nothing, every tick, with `stoppedBy: 'time'` the only sign. The reviewer's case: 1,000 tenants at 5 ms a listing, the
+  schedules' drain starting 2 s into its 6 s window, listed 800 and ran 0. 0.9.1's unbounded drains made progress for
+  the same deployment.
+    - **The fix, for this release:** under a deadline the drain works in passes over one shuffled order. Each pass
+      lists for at most `LISTING_SHARE` (half) of what is left of the window, then runs what it listed; a pass that
+      finishes its rows with time to spare lists on from where the last stopped. `maxItems` counts across the passes.
+      The tenants are still shuffled afresh each tick, so the ones a tick does not reach are a different random set each
+      time: every tenant with due work is reached in time, though at a large enough count not every tick.
+    - **The full fix is next release's:** the due hints of safeinsights/sssb#202 (PR #263, held for after 0.10.0) list
+      only the tenants with work due, which removes the per-tenant listing cost instead of rationing it.
+    - Rejected: interleaving listing and running (list a tenant, run its first row, and so on), which is the larger
+      change to the fairness argument #217 rests on (one shuffled order for listing and turns), too late for this
+      release; and a fixed number of tenants listed per tick, which needs a per-transport cost the drain cannot know.
+    - **Why passes:** review found that the first version, one listing share and no second pass, made a mid-sized
+      drain worse: one that finished its listed rows early left the window unused and the rest of its tenants unlisted,
+      which the old code would have reached (the reviewer's probe: 100 tenants at 10 ms, 75 listed, 675 ms unused).
+    - Accepted: a pass's turns go round only the tenants it listed, so a tenant reached by a later pass takes its turns
+      after the earlier pass's tenants; the shuffle decides which pass a tenant falls in, so no tenant is favoured across
+      ticks.
+- **J3 (MEDIUM): a retry whose StartBuild may have started a build was failed at once.** `startRetry`'s catch failed
+  the attempt on any error from `start`, which armed the next attempt. The CodeBuild adapter treats a non-client fault
+  (a timeout, a server fault) as one that may have started a build and leaves the row `starting` for the sweep;
+  `submitJob` and a schedule's spawn honour that (neither catches), a retry did not. A build that had started then ran
+  beside the next attempt, its `completed` webhook met a failed row (409) and its result was dropped, and on the last
+  attempt the job was notified failed though it had succeeded.
+    - **The fix:** `start`'s error says so. The CodeBuild adapter marks a non-client fault `mayHaveStarted: true`
+      (`markMayHaveStarted`), and `startRetry`, on such an error from a port with a `startingRef` and a `sweep`, leaves
+      the claimed
+      row as the claim wrote it (queued, `starting`, no `run_after`) and notifies nothing; the sweep fails it after the
+      hour (`CODEBUILD_STARTING_LOST_AFTER_MS`), which arms the next attempt then. The helper `mayHaveStarted` is in
+      `ports/jobs.ts`, and `JobsPort.start`'s doc states the contract.
+    - The `startingRef` and `sweep` condition: a port without both has nothing that judges a row left as it is (a
+      CodeBuild port built by the public `createRealPorts` without its `failLostJob` hook, has no sweep), so its marked error
+      still fails the attempt, rather than leave a row nothing will ever look at. Review found the first version checked
+      only `startingRef`.
+    - Rejected: reading the row's `runner_ref` after the failure (`refused` versus still `starting`) to tell the two
+      apart, which works for CodeBuild only by its storage convention and takes a `refused` whose own write failed for
+      an unsure start.
+    - The drain still counts such a retry in `failed` (it did not start, as far as anyone knows).
+- **Proofs.**
+    - `db/drain-budget.test.ts`: the review's shape (1,000 tenants at 5 ms, the drain 2 s into a 6 s window, 50 ms a
+      row) lists 400 and runs 40; the reviewer's probe (100 tenants at 10 ms) lists and runs all 100; `maxItems` counts
+      across passes; listing stops at its share and the rest runs; a drain begun past its deadline lists nothing.
+    - `db/job-retries.test.ts`: a marked error from a port with a starting ref leaves the retry `starting`, unfailed and
+      unnotified; from a port with no starting ref, or with no sweep, it fails the attempt and arms the next.
+    - `adapters/real/jobs.test.ts`, against the fake CodeBuild: a server fault on a retry's StartBuild leaves it
+      `starting` with no next attempt, the sweep leaves it alone at 30 minutes and fails it after the hour, arming
+      attempt 3; a client fault fails it at once.
+    - Removing the listing share, the second pass, the count across passes, the leave-it branch, its `startingRef` or
+      its `sweep` condition, or the adapter's mark each turns the named tests red.
+- **Review.** One Opus round: the MEDIUM (passes) and the LOW (the `sweep` condition) above, both fixed. Then a claims
+  pass. The release-notes findings J8 (the schedules' window stated as 8 s) and J2 (a paused cluster's first tick) are
+  fixed in `bounded-tick-drains.md` and `job-retries.md` on the same branch.

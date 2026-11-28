@@ -23,6 +23,11 @@
 
 ## Deploy sequence
 
+0. ⛔ When the release changes the stack (`@sssb/cdk`), deploy it first (`cdk deploy` of `apps/<app>/infra/`), before
+   any step below ships new code: the server's environment comes from the stack and its code from this pipeline, and a
+   new release's code may need a setting only its stack sets. A release that needs this order says so in its notes
+   (0.10.0's pg TLS: new code under the old stack's environment verifies the database's certificate against Node's own
+   roots and every connection fails).
 1. ⛔ Pipeline builds `pnpm build` (real mode env), zips the app's `.next/standalone` + static assets
    (build outputs live under the app — `apps/showcase/` today). Monorepo caveat: Next nests the
    standalone output under the app's path relative to the workspace root, so `server.js` is NOT at the

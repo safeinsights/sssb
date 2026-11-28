@@ -13,6 +13,7 @@ import {
     isPageFileName,
     isReadVerb,
     isUnroutedSegment,
+    describeSource,
     judge,
     judgeServerAction,
     scanPages,
@@ -49,7 +50,8 @@ import {
  * route group's `(name)` and a slot's `@name` segment are dropped from every key, as from a route's path, and two keys
  * for one route are both refused; one `reads-only` file entry may sit under the framework's `webhooks/` prefix (the
  * one overlap allowed, for reads only); a `reads-only` entry is stale without a read handler it governs, and each name
- * it lists must be one such a read uses.
+ * it lists must be one such a read uses. Each name is pinned to a module (`names: { corsHeaders: 'src/lib/cors.ts' }`),
+ * and a governed read that imports it from any other module fails the entry and the read.
  *
  * Since safeinsights/sssb#221: pages, layouts and metadata routes are judged as reads, so an `outsideApi.files` key may
  * name one of them (`[locale]/signin/page.tsx`), and a page's export is a read handler for staleness and unused names.
@@ -157,6 +159,22 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
             const { reason, mustMatch } = (entry ?? {}) as { reason?: unknown; mustMatch?: unknown }
             if (typeof reason !== 'string' || reason.trim() === '') {
                 problems.push(`${where} needs a non-empty reason`)
+                continue
+            }
+            if (
+                !isGate(mustMatch) &&
+                typeof mustMatch === 'object' &&
+                mustMatch !== null &&
+                'kind' in mustMatch &&
+                mustMatch.kind === 'reads-only'
+            ) {
+                problems.push(
+                    `${where} has a reads-only gate whose \`names\` is not a map of each import's exported name to the ` +
+                        "module it must come from, as in `names: { corsHeaders: 'src/lib/cors.ts' }`: a specifier that " +
+                        "is not relative (`'next/headers'`, `'@acme/ui'`), or the app-relative path of the file, with its " +
+                        'extension (no `.` or `..` segment, and no leading `/` or `./`). It pins the module, so a ' +
+                        'same-named export of another module is not covered by the reason.',
+                )
                 continue
             }
             if (!isGate(mustMatch)) {
@@ -292,8 +310,8 @@ function staleAppExemptions(
     const handler = (exemption: Exemption) =>
         exemption.mustMatch.kind === 'reads-only' ? 'read handler' : 'route handler'
     /**
-     * A reads-only entry's names that no read handler it covers names: a name nobody reads would pre-approve it for the
-     * next edit, so each one listed has to be in use.
+     * A reads-only entry's names that no read handler it covers names (a name nobody reads would pre-approve it for the
+     * next edit, so each one listed has to be in use), and each import of a listed name from another module than its pin.
      */
     const unused = (kind: string, rel: string, exemption: Exemption, matches: (r: string) => boolean): string[] => {
         const gate = exemption.mustMatch
@@ -318,25 +336,40 @@ function staleAppExemptions(
                 .flatMap((route) => route.handlers.filter((h) => governs(route, h)))
                 .flatMap((h) => [...(h.facts?.outsideNames ?? [])]),
         )
-        // One name, one module: a listed name the governed reads import from two modules would let the second module
-        // inherit an entry whose reason was written for the first.
-        const from = new Map<string, Set<string>>()
+        // The pin: a listed name a governed read imports from another module than the one the entry pins it to is
+        // not what the reason was written for, so the entry fails for it (the read fails beside it, by the gate).
+        const shown = (route: ScannedRoute) => {
+            const written = route.written ?? route.rel
+            return outside(written) ? `src/app/${written.slice(OUTSIDE_API.length)}` : `src/app/api/${written}`
+        }
+        const elsewhere = new Map<string, string>()
         for (const route of judged.filter((r) => matches(r.rel))) {
             for (const h of route.handlers.filter((h) => governs(route, h))) {
-                for (const [n, source] of h.facts?.outsideSources ?? [])
-                    from.set(n, (from.get(n) ?? new Set()).add(source))
+                for (const [n, sources] of h.facts?.outsideSources ?? []) {
+                    const pin = Object.hasOwn(gate.names, n) ? gate.names[n] : undefined
+                    if (pin === undefined) continue
+                    for (const source of sources.filter((s) => !s.pins.includes(pin))) {
+                        const at = `${n}\0${source.specifier}\0${route.file}`
+                        if (elsewhere.has(at)) continue
+                        // A pin that is the import's own specifier, unresolved: the module is missing, not another one.
+                        const missing = !source.resolves && source.specifier === pin
+                        elsewhere.set(
+                            at,
+                            `${label}: ${key(kind, rel)} pins \`${n}\` to ${pin}, but ${shown(route)} imports it from ` +
+                                `${describeSource(source)}` +
+                                (missing
+                                    ? ', so it cannot answer to its pin'
+                                    : ": the entry's reason was written for the module it pins, so it does not cover " +
+                                      `another. Import the name from ${pin}, or, only if the reason covers the module ` +
+                                      'the read imports, pin that one'),
+                        )
+                    }
+                }
             }
         }
-        const split = [...from]
-            .filter(([n, sources]) => gate.names.includes(n) && sources.size > 1)
-            .map(
-                ([n, sources]) =>
-                    `${label}: ${key(kind, rel)} lists \`${n}\`, which the reads it covers import from more than one ` +
-                    `module (${[...sources].map((f) => path.basename(f)).join(', ')}); each listed name must come from one`,
-            )
         return [
-            ...split,
-            ...gate.names
+            ...elsewhere.values(),
+            ...Object.keys(gate.names)
                 .filter((n) => !read.has(n))
                 .map(
                     (n) =>

@@ -610,6 +610,69 @@ describe('the CodeBuild jobs runner: the sweep for lost builds (safeinsights/sss
         expect(codebuild.batchCalls.flat().length).toBeGreaterThanOrEqual(101)
     })
 
+    test('a retry whose StartBuild may have started a build stays `starting`, and the sweep judges it after the hour (J3)', async () => {
+        const { fakeDb } = await world()
+        const { jobs, notified } = await runner()
+        const { runDueRetries } = await import('../../db/jobs')
+        const id = await submitted(jobs, 'flaky-dockets', 30 * MINUTE)
+        codebuild.builds.set((await row(id)).runner_ref!, {
+            buildStatus: 'FAULT',
+            endTime: new Date(Date.now() - 20 * MINUTE),
+        })
+        expect(await jobs.sweep!(new Date())).toBe(1) // attempt 1 lost: attempt 2 armed
+        const retryOf = (attempt: number) =>
+            fakeDb
+                .getDb()
+                .selectFrom('jobs')
+                .select(['id', 'status', 'runner_ref', 'run_after'])
+                .where('retry_of', '=', id)
+                .where('attempt', '=', attempt)
+                .executeTakeFirst()
+        const ended: string[] = []
+        const onFailed = async (input: { jobId: string }) => void ended.push(input.jobId)
+
+        codebuild.startFault = 'server' // a fault after which CodeBuild may have started the build
+        const due = new Date(Date.now() + 2 * MINUTE)
+        expect(await runDueRetries(fakeDb, jobs, due, undefined, onFailed)).toMatchObject({ started: 0, failed: 1 })
+        expect(await retryOf(2)).toMatchObject({ status: 'queued', runner_ref: 'starting', run_after: null })
+        expect(await retryOf(3), 'no next attempt beside a build that may be running').toBeUndefined()
+        expect(ended).toEqual([])
+
+        // Not judged before the hour; after it, failed as never recorded started, which arms attempt 3.
+        expect(await jobs.sweep!(new Date(Date.now() + 30 * MINUTE))).toBe(0)
+        expect(await jobs.sweep!(new Date(Date.now() + 61 * MINUTE))).toBe(1)
+        expect((await row((await retryOf(2))!.id)).error).toBe(
+            'lost: its CodeBuild build was never recorded as started',
+        )
+        expect(await retryOf(3)).toMatchObject({ status: 'queued' })
+        expect(notified).toHaveLength(2)
+    })
+
+    test('a retry whose StartBuild CodeBuild refused is failed at once, arming the next attempt (J3)', async () => {
+        const { fakeDb } = await world()
+        const { jobs } = await runner()
+        const { runDueRetries } = await import('../../db/jobs')
+        const id = await submitted(jobs, 'flaky-dockets', 30 * MINUTE)
+        codebuild.builds.set((await row(id)).runner_ref!, {
+            buildStatus: 'FAULT',
+            endTime: new Date(Date.now() - 20 * MINUTE),
+        })
+        await jobs.sweep!(new Date())
+        codebuild.startFault = 'client'
+        await runDueRetries(fakeDb, jobs, new Date(Date.now() + 2 * MINUTE))
+        const attempts = await fakeDb
+            .getDb()
+            .selectFrom('jobs')
+            .select(['attempt', 'status', 'runner_ref'])
+            .where('retry_of', '=', id)
+            .orderBy('attempt', 'asc')
+            .execute()
+        expect(attempts.map((a) => [a.attempt, a.status])).toEqual([
+            [2, 'failed'],
+            [3, 'queued'],
+        ])
+    })
+
     test('a lost build of a kind that retries arms its next attempt, which a new build completes', async () => {
         const { fakeDb, tenantId } = await world()
         const { jobs, notified } = await runner()

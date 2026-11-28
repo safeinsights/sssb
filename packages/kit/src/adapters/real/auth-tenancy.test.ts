@@ -60,7 +60,8 @@ beforeEach(() => {
     h.accounts = {}
     h.membershipCalls = 0
     h.membershipRole = 'member'
-    // What the adapter requires before it reads a session outside a production build (./clerk-keyless.ts).
+    // What the adapter requires before it reads a session under next dev, and in any process without a secret key
+    // (./clerk-keyless.ts).
     vi.stubEnv('CLERK_SECRET_KEY', 'sk_test_1')
     vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '1')
 })

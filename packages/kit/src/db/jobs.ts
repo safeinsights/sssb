@@ -3,7 +3,7 @@ import { exportKeyPrefix, jobRetryFor, type JobStatus, jobStatusMachine, retryDe
 import { InvalidTransitionError } from '../core/state-machine'
 import type { DbPort } from '../ports/db'
 import { NotFoundError } from '../ports/errors'
-import type { JobsPort } from '../ports/jobs'
+import { type JobsPort, mayHaveStarted } from '../ports/jobs'
 import {
     beforeDeadline,
     type DrainBudget,
@@ -301,7 +301,11 @@ async function startRetry(
             firstJobId: claimed.retry_of ?? jobId,
         })
     } catch (error) {
-        // The runner refused it (CodeBuild's StartBuild failed, say): this attempt failed, which arms the next one.
+        // A start that may have started the work anyway (a timeout, a server fault) leaves the claimed row as it is,
+        // `startingRef`, for the runner's sweep to judge, as `submitJob` and a schedule's spawn do: failing it here
+        // would arm the next attempt beside a build that may be running, and drop that build's result.
+        if (jobs.startingRef !== undefined && jobs.sweep !== undefined && mayHaveStarted(error)) throw error
+        // The runner refused it (CodeBuild's StartBuild refused, say): this attempt failed, which arms the next one.
         await recordJobStatus(db, tenantId, jobId, 'failed', {
             error: `the jobs runner did not start it: ${error instanceof Error ? error.message : String(error)}`,
             now,

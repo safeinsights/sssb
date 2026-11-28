@@ -20,6 +20,7 @@ import {
     scanPages,
     scanRoutes,
 } from './route-scan'
+import { FRAMEWORK_POLICY } from './route-policy'
 
 /**
  * The analyser's own cases: which export forms it reads, what counts as a handler's path, what it refuses.
@@ -63,6 +64,22 @@ function expectVerdicts(actual: Record<string, string>, expected: Record<string,
     for (const [verb, want] of Object.entries(expected)) {
         if (want instanceof RegExp) expect(actual[verb], verb).toMatch(want)
         else expect(actual[verb], verb).toBe(want)
+    }
+}
+
+/**
+ * The `outsideNames` and `outsideSources` of a read that names each key of `names`, imported from the module its value
+ * names (written as the specifier, and the one pin it answers to), or from each of several.
+ */
+function reading(names: Record<string, string | string[]>): Pick<HandlerFacts, 'outsideNames' | 'outsideSources'> {
+    return {
+        outsideNames: new Set(Object.keys(names)),
+        outsideSources: new Map(
+            Object.entries(names).map(([name, modules]) => [
+                name,
+                [modules].flat().map((module) => ({ specifier: module, resolves: true, pins: [module] })),
+            ]),
+        ),
     }
 }
 
@@ -2211,7 +2228,10 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
             "import { corsHeaders } from './cors'\nexport function GET() { return Response.json(corsHeaders) }",
             'GET',
         )
-        expect([...(facts.outsideSources ?? [])]).toEqual([['corsHeaders', './cors']])
+        // './cors' does not resolve here, so the import answers to no pin: a relative specifier is never one.
+        expect([...(facts.outsideSources ?? [])]).toEqual([
+            ['corsHeaders', [{ specifier: './cors', resolves: false, pins: [] }]],
+        ])
         expect(
             names("export function GET() { const { ['constructor']: F } = () => 1; return Response.json(F) }"),
         ).toBeNull()
@@ -2315,12 +2335,25 @@ describe('judging a handler against a policy', () => {
         )
     })
 
-    it('a read that reads nothing passes under an exemption whose gate it misses, but not a required gate', () => {
+    it('a read that reads nothing passes under an exemption whose gate it misses, and under a required gate', () => {
         expect(
             judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
         ).toBeUndefined()
+        // It reads no data, so the caller-verifying wrapper has no actor to build for it (an inline-headers preflight).
         expect(
-            judge(route('svc/jobs/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
+            judge(route('svc/jobs/route.ts'), { verb: 'OPTIONS', facts: facts({ readsNothing: true }) }, policy),
+        ).toBeUndefined()
+        // A read that reads something there still needs the wrapper, authorized or not.
+        expect(
+            judge(
+                route('svc/jobs/route.ts'),
+                { verb: 'GET', facts: facts({ reachesAuthorize: true, outsideNames: new Set(['load']) }) },
+                policy,
+            ),
+        ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
+        // And a mutation that reads nothing is no read: it needs the wrapper and authorize.
+        expect(
+            judge(route('svc/jobs/route.ts'), { verb: 'POST', facts: facts({ readsNothing: true }) }, policy),
         ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
         expect(
             judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, policy),
@@ -2388,18 +2421,54 @@ describe('judging a handler against a policy', () => {
     })
 
     it('a reads-only gate holds for a read that names only the listed names, and never for a mutation', () => {
-        const gate: Gate = { kind: 'reads-only', names: ['corsHeaders', 'params'] }
-        const listed = facts({ outsideNames: new Set(['corsHeaders']) })
+        const gate: Gate = { kind: 'reads-only', names: { corsHeaders: 'src/cors.ts', params: 'config/params' } }
+        const listed = facts(reading({ corsHeaders: 'src/cors.ts' }))
         expect(gateHolds(gate, listed, 'GET')).toBe(true)
         expect(gateHolds(gate, listed, 'OPTIONS')).toBe(true)
         expect(gateHolds(gate, facts({ outsideNames: new Set() }), 'HEAD')).toBe(true)
         expect(gateHolds(gate, listed, 'POST')).toBe(false)
         expect(gateHolds(gate, listed)).toBe(false)
-        expect(gateHolds(gate, facts({ outsideNames: new Set(['corsHeaders', 'load']) }), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts(reading({ corsHeaders: 'src/cors.ts', load: 'src/cors.ts' })), 'GET')).toBe(false)
         expect(gateHolds(gate, facts({ outsideNames: null }), 'GET')).toBe(false)
         expect(describeGate(gate)).toMatch(
-            /a read \(GET, HEAD or OPTIONS, or a page's export\) that names nothing from outside itself but inert values and `corsHeaders`, `params`/,
+            /a read \(GET, HEAD or OPTIONS, or a page's export\) that names nothing from outside itself but inert values and `corsHeaders` from src\/cors\.ts, `params` from config\/params/,
         )
+    })
+
+    it('a reads-only gate pins each name to its module: another module, or a source it cannot place, fails', () => {
+        const gate: Gate = { kind: 'reads-only', names: { corsHeaders: 'src/cors.ts' } }
+        expect(gateHolds(gate, facts(reading({ corsHeaders: 'src/other.ts' })), 'GET')).toBe(false)
+        // Every import of the name must be from the pin (a page and a component of its file may import it twice).
+        expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/other.ts'] })), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/cors.ts'] })), 'GET')).toBe(true)
+        // A pin is matched against what the import answers to, any one of them.
+        const answers = { specifier: '@/cors', resolves: true, pins: ['@/cors', 'src/cors.ts', 'src/lib/cors.ts'] }
+        expect(
+            gateHolds(
+                gate,
+                facts({
+                    outsideNames: new Set(['corsHeaders']),
+                    outsideSources: new Map([['corsHeaders', [answers]]]),
+                }),
+                'GET',
+            ),
+        ).toBe(true)
+        // A name with no source recorded, or none at all, is not placed, so it is not covered.
+        for (const outsideSources of [null, new Map(), new Map([['corsHeaders', []]])]) {
+            expect(gateHolds(gate, facts({ outsideNames: new Set(['corsHeaders']), outsideSources }), 'GET')).toBe(
+                false,
+            )
+        }
+        // A key the map inherits is no listed name, and the failure says it is not listed.
+        const inherited = facts(reading({ toString: 'src/cors.ts' }))
+        expect(gateHolds(gate, inherited, 'GET')).toBe(false)
+        expect(
+            judge(
+                { root: 'r', rel: 'cors/route.ts', file: '/x/cors/route.ts', handlers: [] },
+                { verb: 'GET', facts: inherited },
+                { ...policy, exemptFiles: { 'cors/route.ts': { reason: 'cors', mustMatch: gate } } },
+            ),
+        ).toMatch(/It names `toString`, which the gate does not list\./)
     })
 
     it('a reads-only exact entry applies to reads; a mutation at its path falls to the prefix it sits under', () => {
@@ -2407,12 +2476,15 @@ describe('judging a handler against a policy', () => {
             ...policy,
             exemptFiles: {
                 ...policy.exemptFiles,
-                'hooks/meta/route.ts': { reason: 'handshake', mustMatch: { kind: 'reads-only', names: ['params'] } },
+                'hooks/meta/route.ts': {
+                    reason: 'handshake',
+                    mustMatch: { kind: 'reads-only', names: { params: 'config/params.ts' } },
+                },
             },
         }
         expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'GET')?.reason).toBe('handshake')
         expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'POST')?.reason).toBe('machine caller')
-        const read = facts({ outsideNames: new Set(['params']) })
+        const read = facts(reading({ params: 'config/params.ts' }))
         expect(judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: read }, withEntry)).toBeUndefined()
         expect(judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: read }, withEntry)).toMatch(
             /holds only when the handler is itself a call to an imported withSecret/,
@@ -2429,15 +2501,40 @@ describe('judging a handler against a policy', () => {
     it('names, in the failure, what a reads-only read named or did that its gate does not allow', () => {
         const withEntry: ScanPolicy = {
             ...policy,
-            exemptFiles: { 'feed/route.ts': { reason: 'feed', mustMatch: { kind: 'reads-only', names: ['posts'] } } },
+            exemptFiles: {
+                'feed/route.ts': {
+                    reason: 'feed',
+                    mustMatch: { kind: 'reads-only', names: { posts: 'src/posts.ts' } },
+                },
+            },
         }
         expect(
             judge(
                 route('feed/route.ts'),
-                { verb: 'GET', facts: facts({ outsideNames: new Set(['posts', 'db']) }) },
+                { verb: 'GET', facts: facts(reading({ posts: 'src/posts.ts', db: 'src/db.ts' })) },
                 withEntry,
             ),
         ).toMatch(/It names `db`, which the gate does not list\./)
+        // A listed name from another module than its pin is named with the module it came from, and the pin.
+        const elsewhere = { specifier: '@/lib/posts', resolves: true, pins: ['@/lib/posts', 'src/lib/posts.ts'] }
+        expect(
+            judge(
+                route('feed/route.ts'),
+                {
+                    verb: 'GET',
+                    facts: facts({
+                        outsideNames: new Set(['posts', 'db']),
+                        outsideSources: new Map([
+                            ['posts', [elsewhere]],
+                            ['db', [elsewhere]],
+                        ]),
+                    }),
+                },
+                withEntry,
+            ),
+        ).toMatch(
+            /It names `db`, which the gate does not list; and it imports `posts` from '@\/lib\/posts' \(src\/lib\/posts\.ts\), which the gate pins to src\/posts\.ts\./,
+        )
         expect(
             judge(
                 route('feed/route.ts'),
@@ -3388,7 +3485,7 @@ describe('components a page renders (safeinsights/sssb#221)', () => {
             wrapper('return <Glue rows={await db.rows()}>{children}</Glue>', `${GLUE}import { db } from './db'\n`),
         ).toBe('names: db')
         expect(wrapper('return cache.get("x")', 'const cache = new Map()\n')).toBe(
-            "refusal: `cache` is a declaration of the page's own file, which code of the file can change: render it as a component of this file (a JSX tag), or move it into a module and list the import",
+            "refusal: `cache` is a declaration of the page's own file, which code of the file can change: write the value inline where the page uses it (a literal), render it as a component of this file (a JSX tag), or move it into a module and list the import in the page's reads-only entry (a const bound to a primitive literal is already inert)",
         )
         const arrow = pageDefault(
             `${GLUE}const Shell = () => <Glue />\nexport default function P() { return <Shell /> }\n`,
@@ -3479,8 +3576,7 @@ describe('judging a page against a policy (safeinsights/sssb#221)', () => {
         wrappedBy: null,
         calls: new Set(),
         opensWithSimulated404: false,
-        outsideNames: new Set(['findTenant']),
-        outsideSources: new Map(),
+        ...reading({ findTenant: 'src/seed.ts' }),
         outsideRefusal: null,
         readsNothing: false,
         ...overrides,
@@ -3529,17 +3625,26 @@ describe('judging a page against a policy (safeinsights/sssb#221)', () => {
     })
 
     it('applies a reads-only entry to a page, and names what it reads beyond the gate', () => {
-        const gate: Gate = { kind: 'reads-only', names: ['findTenant'] }
+        const gate: Gate = { kind: 'reads-only', names: { findTenant: 'src/seed.ts' } }
         expect(
             judge(page('../x/page.tsx'), { verb: 'default', facts: facts({}) }, policy({ '../x/page.tsx': gate })),
         ).toBeUndefined()
         const more = judge(
             page('../x/page.tsx'),
-            { verb: 'generateMetadata', facts: facts({ outsideNames: new Set(['findTenant', 'db']) }) },
+            { verb: 'generateMetadata', facts: facts(reading({ findTenant: 'src/seed.ts', db: 'src/db.ts' })) },
             policy({ '../x/page.tsx': gate }),
         )
         expect(more).toMatch(/generateMetadata is a page export \(a read\) under an exemption that holds only when/)
-        expect(more).toMatch(/: it names `db`\. List only what the page reads/)
+        expect(more).toMatch(/: it names `db`, which the gate does not list\. List only what the page reads/)
+        // The same name from another module than its pin: refused, the module named.
+        const elsewhere = judge(
+            page('../x/page.tsx'),
+            { verb: 'default', facts: facts(reading({ findTenant: 'src/other.ts' })) },
+            policy({ '../x/page.tsx': gate }),
+        )
+        expect(elsewhere).toMatch(
+            /: it imports `findTenant` from 'src\/other\.ts', which the gate pins to src\/seed\.ts\./,
+        )
     })
 
     it('applies no other gate kind to a page: a route-shaped gate proves nothing about a render', () => {
@@ -3701,8 +3806,8 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
             { exemptPrefixes: {}, exemptFiles: {}, requiredAlongside: {} },
         )
         expect(why).toContain(
-            'the inert values a read route may name, `getMessages`, `getTranslations`, `setRequestLocale` (next-intl/server), ' +
-                '`hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
+            'the inert values a read route may name, `getLocale`, `getMessages`, `getTranslations`, `setRequestLocale` ' +
+                '(next-intl/server), `use` (react), `hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
                 '(@sssb/kit/adapters/index), `sameOriginPath` (@sssb/kit/core/same-origin-path), `getTenantTheme` ' +
                 '(@sssb/kit/theme), `mantineHtmlProps` (@mantine/core), `auth.getCurrentUser()`, `auth.listMyOrgs()`, ' +
                 '`auth.refusal()`, `auth.requireUser()`, `auth.signInPath()` (@sssb/kit/adapters/index; `auth` itself, or ' +
@@ -3806,7 +3911,9 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
         }
         const policy: ScanPolicy = {
             exemptPrefixes: {},
-            exemptFiles: { '../(.)x/page.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } } },
+            exemptFiles: {
+                '../(.)x/page.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } } },
+            },
             requiredAlongside: {},
         }
         const facts = (overrides: Partial<HandlerFacts>): HandlerFacts => ({
@@ -3814,8 +3921,7 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
             wrappedBy: null,
             calls: new Set(),
             opensWithSimulated404: false,
-            outsideNames: new Set(['x']),
-            outsideSources: new Map(),
+            ...reading({ x: 'src/x.ts' }),
             outsideRefusal: null,
             readsNothing: false,
             ...overrides,
@@ -4215,5 +4321,207 @@ describe('round-3 review of the page scan: asset and package allowances narrowed
             'app/page.tsx': renders('@sssb/kit/screen'),
         }
         expect(scan(outside, { 'app/node_modules/@sssb/kit': '../../../kit' }, 'app')).toBe('reads nothing')
+    })
+})
+
+describe('the page shapes the authorization review found failing (Z1), and a preflight under service/ (Z4)', () => {
+    it('passes React `use` and `getLocale`: request-scoped readers that carry no org data', () => {
+        expect(
+            pageDefault(
+                "import { use } from 'react'\nimport { useTranslations } from 'next-intl'\n" +
+                    "import { setRequestLocale } from 'next-intl/server'\n" +
+                    'export default function P({ params }: { params: Promise<{ locale: string }> }) {\n' +
+                    '  const { locale } = use(params)\n  setRequestLocale(locale)\n  const t = useTranslations("x")\n' +
+                    '  return <h1>{t("title")}</h1>\n}\n',
+            ),
+        ).toBe('reads nothing')
+        expect(
+            pageDefault(
+                "import { getLocale } from 'next-intl/server'\n" +
+                    'export default async function P() { const l = await getLocale()\n  return <p>{l}</p> }\n',
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('counts `headers()` and `cookies()`: the request headers carry the Cookie and Authorization credential', () => {
+        expect(
+            pageDefault(
+                "import { headers } from 'next/headers'\n" +
+                    'export default async function P() { return <p>{(await headers()).get("cookie")}</p> }\n',
+            ),
+        ).toBe('names: headers')
+    })
+
+    it('holds each to its module and name: `cookies` (the session) and a look-alike `use` are counted', () => {
+        expect(
+            pageDefault(
+                "import { cookies } from 'next/headers'\nexport default async function P() { return (await cookies()).size }\n",
+            ),
+        ).toBe('names: cookies')
+        expect(
+            pageDefault("import { use } from './hooks'\nexport default function P(p: never) { return use(p) }\n"),
+        ).toBe('names: use')
+        expect(
+            pageDefault("import { use as u } from 'react'\nexport default function P(p: never) { return u(p) }\n"),
+        ).toBe('refusal: `u` is an import under another name than its exported `use`')
+    })
+
+    const ACTION = "'use server'\nexport async function saveItem(form: FormData) { return form }\n"
+    const handsOn = (specifier: string, jsx = '<form action={saveItem} />', name = 'saveItem') =>
+        `import { ${name} } from '${specifier}'\nimport { Glue } from './glue'\n` +
+        `export default function P() { return <div><Glue x={1} />${jsx}</div> }\n`
+
+    it("passes an imported Server Action handed on by reference, a JSX attribute's whole value", () => {
+        expect(pageDefault(handsOn('./src/actions'), { 'src/actions.ts': ACTION })).toBe('reads nothing')
+        expect(pageDefault(handsOn('./src/actions', '<Glue action={saveItem} />'), { 'src/actions.ts': ACTION })).toBe(
+            'reads nothing',
+        )
+        expect(
+            pageDefault(handsOn('./src/actions', '<button formAction={saveItem} />'), { 'src/actions.ts': ACTION }),
+        ).toBe('reads nothing')
+        // Through a barrel's re-export, to the 'use server' module that declares it.
+        expect(
+            pageDefault(handsOn('./src/index'), {
+                'src/actions.ts': ACTION,
+                'src/index.ts': "export { saveItem } from './actions'\n",
+            }),
+        ).toBe('reads nothing')
+        // A function whose own body opens with 'use server', in a module that does not.
+        expect(
+            pageDefault(handsOn('./src/inline'), {
+                'src/inline.ts': "export async function saveItem() { 'use server'\n  return 1 }\n",
+            }),
+        ).toBe('reads nothing')
+        expect(
+            pageDefault(handsOn('./src/inline'), {
+                'src/inline.ts': "export const saveItem = async () => { 'use server'\n  return 1 }\n",
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it('counts a Server Action the page calls or uses any other way, and anything else handed on as a prop', () => {
+        const files = { 'src/actions.ts': ACTION }
+        for (const jsx of [
+            '{saveItem(null as never)}',
+            '<form action={saveItem.bind(null, 1)} />',
+            '<form action={(saveItem)} />',
+            '{String(saveItem)}',
+            '<Glue {...{ action: saveItem }} />',
+            '<Glue action={[saveItem]} />',
+            // A JSX child is no attribute: rendered, not handed on.
+            '<div>{saveItem}</div>',
+        ]) {
+            expect(pageDefault(handsOn('./src/actions', `<form action={saveItem} />${jsx}`), files), jsx).toBe(
+                'names: saveItem',
+            )
+        }
+        // A plain module's function handed on as a prop may run in the render: counted.
+        expect(
+            pageDefault(handsOn('./src/data', '<Glue load={saveItem} />'), {
+                'src/data.ts': 'export async function saveItem() { return [] }\n',
+            }),
+        ).toBe('names: saveItem')
+        // An inline action beside a plain export: only the action is one.
+        expect(
+            pageDefault(handsOn('./src/mixed', '<Glue load={load} />', 'load'), {
+                'src/mixed.ts':
+                    "export async function saveItem() { 'use server'\n  return 1 }\nexport async function load() { return [] }\n",
+            }),
+        ).toBe('names: load')
+    })
+
+    it("counts an action the Server Action walk does not judge: outside src, a package's, or a plain re-export", () => {
+        // The app has a src (so the check is the file's place, not a missing directory): an action beside it, and a
+        // workspace package's outside the app's directory, are actions the Server Action walk never reads.
+        const SRC = { 'src/keep.ts': 'export {}\n' }
+        expect(pageDefault(handsOn('./lib/actions'), { ...SRC, 'lib/actions.ts': ACTION })).toBe('names: saveItem')
+        expect(
+            pageDefault(handsOn('../workspace-actions/actions'), {
+                ...SRC,
+                '../workspace-actions/actions.ts': ACTION,
+            }),
+        ).toBe('names: saveItem')
+        expect(pageDefault(handsOn('./src/node_modules/acts'), { 'src/node_modules/acts/index.ts': ACTION })).toBe(
+            'names: saveItem',
+        )
+        expect(
+            pageDefault(handsOn('acts'), {
+                'node_modules/acts/package.json': JSON.stringify({ name: 'acts', main: 'index.js' }),
+                'node_modules/acts/index.js': ACTION,
+            }),
+        ).toBe('names: saveItem')
+        // A 'use server' file re-exporting a plain module's function: followed to the plain module, which is no action.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': "'use server'\nexport { saveItem } from './plain'\n",
+                'src/plain.ts': 'export async function saveItem() { return [] }\n',
+            }),
+        ).toBe('names: saveItem')
+        expect(pageDefault(handsOn('./src/missing'))).toBe('names: saveItem')
+        // A 'use server' module that has no such export: nothing is judged under the name.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': "'use server'\nexport async function other() { return 1 }\n",
+            }),
+        ).toBe('names: saveItem')
+    })
+
+    it("matches 'use server' by its source text: an escaped one is no directive, so no action to hand on", () => {
+        for (const escaped of ["'use\\x20server'", '"use\\u0020server"', "'use \\\nserver'"]) {
+            const files = { 'src/actions.ts': `${escaped}\nexport async function saveItem() { return 1 }\n` }
+            expect(pageDefault(handsOn('./src/actions'), files), escaped).toBe('names: saveItem')
+            const inline = {
+                'src/inline.ts': `export async function saveItem() { ${escaped}\n  return 1 }\n`,
+            }
+            expect(pageDefault(handsOn('./src/inline'), inline), escaped).toBe('names: saveItem')
+        }
+        // Double quotes are the directive too.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': '"use server"\nexport async function saveItem() { return 1 }\n',
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it("matches 'use client' by its source text too: an escaped one leaves a server component, which is counted", () => {
+        expect(
+            pageDefault("import { Card } from './card'\nexport default function P() { return <Card /> }\n", {
+                'card.tsx': "'use\\x20client'\nexport async function Card() { return null }\n",
+            }),
+        ).toBe('names: Card')
+        expect(
+            pageDefault("import { Card } from './card'\nexport default function P() { return <Card /> }\n", {
+                'card.tsx': '"use client"\nexport function Card() { return null }\n',
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it('keeps refusing a module-level const of the page file, and names the ways through', () => {
+        const state = pageDefault(
+            "const LINKS = [{ href: '/a' }]\nexport default function P() { return <ul>{LINKS.map((l) => <li key={l.href}>{l.href}</li>)}</ul> }\n",
+        )
+        expect(state).toMatch(/^refusal: `LINKS` is a declaration of the page's own file/)
+        expect(state).toMatch(/write the value inline where the page uses it/)
+        expect(state).toMatch(/move it into a module and list the import in the page's reads-only entry/)
+        // Inlined, it is a literal.
+        expect(
+            pageDefault(
+                "export default function P() { return <ul>{[{ href: '/a' }].map((l) => <li key={l.href}>{l.href}</li>)}</ul> }\n",
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('passes a read under service/ that reads nothing, and still requires withServiceCaller of one that reads', () => {
+        const [route] = scanTree({
+            'service/jobs/route.ts':
+                "import { authorize } from '@sssb/kit/authz/authorize'\nimport { load } from './load'\n" +
+                "export function OPTIONS() { return new Response(null, { status: 204, headers: { allow: 'GET' } }) }\n" +
+                'export async function GET() { authorize({} as never, "read", {} as never); return Response.json(await load()) }\n',
+        })
+        const verdict = Object.fromEntries(route!.handlers.map((h) => [h.verb, judge(route!, h, FRAMEWORK_POLICY)]))
+        expect(verdict['OPTIONS']).toBeUndefined()
+        expect(verdict['GET']).toMatch(
+            /must also satisfy: the handler is itself a call to an imported withServiceCaller/,
+        )
     })
 })
