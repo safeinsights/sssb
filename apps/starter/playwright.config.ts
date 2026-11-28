@@ -34,7 +34,10 @@ export default defineConfig({
     // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
     // warm-up pass to inherit, so the budget is raised rather than left to flake.
     timeout: 60_000,
-    expect: { timeout: 15_000 },
+    // On a production build nothing compiles while a test runs, so the budgets only cover the app's own work: measured
+    // in five CI runs (2026-11-28), the slowest test took 3.6 s and the slowest assertion 2.3 s, so an assertion gets
+    // 10 s and a test 15 s (set on the project below), each over four times that. Under `next dev` they are as above.
+    expect: { timeout: E2E_BUILD ? 10_000 : 15_000 },
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 2 : 1,
     // One worker, on CI too — this app's whole suite is a few short specs, so parallelism buys little here,
@@ -46,7 +49,7 @@ export default defineConfig({
         baseURL: BASE_URL,
         trace: 'on-first-retry',
     },
-    projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+    projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] }, timeout: E2E_BUILD ? 15_000 : 60_000 }],
     webServer: {
         command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
         url: BASE_URL,

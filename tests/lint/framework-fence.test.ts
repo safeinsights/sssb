@@ -272,7 +272,10 @@ describe('the two halves of the vendor ban read the list the same way', () => {
 
     describe.each(files)('%s', (file) => {
         it.each(VENDOR_ROWS)('%s', async (specifier, vendor) => {
-            const at = JSON.stringify(specifier)
+            // The table is constants: a specifier of this charset (a space included, for ' pg') needs no escaping, so
+            // single quotes write it as source.
+            expect(specifier).toMatch(/^[\w@./ -]+$/)
+            const at = `'${specifier}'`
             const declared = fired(await lint(file, `import x from ${at}\nexport { x }\n`), VENDOR_STATIC)
             const loaded = fired(await lint(file, `export const load = () => import(${at})\n`), VENDOR_DYNAMIC)
             const required = fired(await lint(file, `export const load = () => require(${at})\n`), VENDOR_DYNAMIC)

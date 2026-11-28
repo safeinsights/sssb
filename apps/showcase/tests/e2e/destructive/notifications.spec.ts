@@ -6,6 +6,7 @@ import { pickOrg } from '../support/org-switcher'
 import { untilNewDocument } from '../support/new-document'
 import { reachDashboard } from '../support/people'
 import { worldPath } from '../support/worlds'
+import { coldRoute } from '../support/budgets'
 
 /**
  * Notifications, end to end against real routes + RLS on pglite. Destructive because it writes
@@ -72,7 +73,7 @@ async function createRequest(page: Page, targetName: string, subject: string) {
         await page.getByTestId('escalation-subject').fill(subject, { timeout: 2_000 })
         await page.getByTestId('escalation-body').fill('please collaborate', { timeout: 2_000 })
         await expect(page.getByTestId('escalation-create')).toBeEnabled({ timeout: 1_000 })
-    }).toPass({ timeout: 45_000 })
+    }).toPass({ timeout: coldRoute(45_000) })
     await page.getByTestId('escalation-create').click()
     await expect(page.getByTestId('escalations-sent-list')).toContainText(subject)
 }
