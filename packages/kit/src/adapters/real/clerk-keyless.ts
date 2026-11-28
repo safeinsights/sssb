@@ -3,7 +3,8 @@
  * data its middleware hands a route (`x-clerk-request-data`) with a key it publishes (`clerk_keyless_dummy_key`) in two
  * cases (@clerk/nextjs 7.10, `decryptClerkRequestData`, `canUseKeyless`):
  *
- * - FIRST, when it holds neither `CLERK_ENCRYPTION_KEY` nor `CLERK_SECRET_KEY` and `NODE_ENV` is not `production`;
+ * - FIRST, when it holds neither `CLERK_ENCRYPTION_KEY` nor `CLERK_SECRET_KEY`: the dummy key when `NODE_ENV` is not
+ *   `production`, and in a production build an empty passphrase, which a forger has just as well;
  * - AS A FALLBACK, after the real key fails, when `NODE_ENV` is `development`, it is not a CI run, and
  *   `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` is not set (Next sets `NODE_ENV=development` under `next dev`).
  *
@@ -12,7 +13,8 @@
  * whether or not an encryption key is set. So on a path the app's proxy matcher skips, where Clerk's middleware never
  * writes its own headers over a client's, a caller who sends the request data, a token and its signature, all under keys
  * of its own choosing, is signed in as anyone. Nothing else opens it: with the secret key set and `NODE_ENV` unset,
- * `test` or `production`, a forgery under the dummy key fails to decrypt.
+ * `test` or `production`, a forgery under the dummy key fails to decrypt, and Clerk's client ignores request data it
+ * cannot decrypt.
  *
  * So the Clerk adapter (./auth.ts), before every read of the session and before building Clerk's Backend API client
  * (which decrypts the same data), refuses in exactly two cases:
@@ -24,7 +26,7 @@
  *    sets the variable.
  *
  * A process outside `next dev` with the secret key set, a job program on CodeBuild, an ops script, a test run, needs
- * nothing: it has no `NODE_ENV=development` and nothing to forge. (An earlier cut refused everything but a production
+ * nothing: it has no `NODE_ENV=development`, and a forgery there fails without the real key. (An earlier cut refused everything but a production
  * build, which broke exactly those: safeinsights/sssb#222's review, finding A3.)
  *
  * Clerk reads `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` with its own `isTruthy` (`true` in any case, untrimmed, or a positive
@@ -46,7 +48,7 @@ export function clerkKeylessProblem(env: Readonly<Record<string, string | undefi
     const disabled = env['NEXT_PUBLIC_CLERK_KEYLESS_DISABLED']
     if (env['NODE_ENV'] === 'development' && disabled !== '1' && disabled !== 'true') {
         return (
-            "Clerk's keyless mode is enabled under NODE_ENV=development (next dev): on a path the proxy skips, a " +
+            "Clerk's keyless mode is enabled under NODE_ENV=development (which next dev sets): on a path the proxy skips, a " +
             'forged x-clerk-auth header could sign anyone in (safeinsights/sssb#193). Set ' +
             'NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1 wherever real mode runs under next dev'
         )

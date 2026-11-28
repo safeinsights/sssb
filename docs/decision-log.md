@@ -9062,7 +9062,8 @@ dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMemb
 
 - **The rule is now Clerk's own two conditions, re-read in @clerk/nextjs 7.10** (`decryptClerkRequestData`,
   `canUseKeyless`, `createAuthOptions`): the keyless key is Clerk's FIRST key only when neither `CLERK_ENCRYPTION_KEY` nor
-  `CLERK_SECRET_KEY` is set and `NODE_ENV` is not `production`; it is the FALLBACK, after the real key fails, only when
+  `CLERK_SECRET_KEY` is set (the dummy key when `NODE_ENV` is not `production`, an empty passphrase in a production
+  build, which a forger has just as well); it is the FALLBACK, after the real key fails, only when
   `NODE_ENV` is `development`, it is not CI, and the disable flag is unset. And a forged token is checked against
   `CLERK_SECRET_KEY`, empty when unset, in every `NODE_ENV`. So the guard refuses when `CLERK_SECRET_KEY` is unset, and when
   `NODE_ENV` is `development` and the flag is not `1` or `true`; a process with the secret key set and `NODE_ENV` unset,
@@ -9080,3 +9081,13 @@ dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMemb
   right, if less helped. The showcase's `dev:real` now exports the flag first, so the notice stays quiet there. Rejected:
   forcing `NODE_ENV=development` in the preflight, which would fail every script that follows the earlier changeset's
   advice to set the flag on `next dev` alone.
+- **Considered in review, and not done.** (1) Refusing when the RUNTIME `NODE_ENV` says `development` as well as the
+  inlined one, against the case where an adopter puts `@clerk/nextjs` in `serverExternalPackages` (so Clerk reads the
+  runtime value) and runs a production build with `NODE_ENV=development` preset. It needs two unusual choices at once, and
+  would refuse every request of a production build merely started with a preset `NODE_ENV=development` (Clerk's bundled
+  copy is inlined as `production` there and safe): the outage class finding A3 was about, for the opposite combination.
+  The literal reads, which agree with the bundled Clerk, are pinned by a source assertion because no run can tell them
+  from the whole-environment read. (2) Validating the secret key's shape (`sk_live_…`): it would refuse only a deployment
+  already broken (every Backend API call and sign-in fails), and a format check can refuse a legitimate key. (3) A notice
+  from a preflight run with `NODE_ENV=production` that is then followed by `next dev`: it fails closed on the first
+  request, and a production-looking preflight is not the `dev:real` this notice speaks for.

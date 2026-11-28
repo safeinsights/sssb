@@ -201,7 +201,7 @@ describe("forged request data on a request that reads no session: Clerk's Backen
 
 // safeinsights/sssb#222's review, A3: the guard refuses what Clerk leaves open and no more. What it lets through, a job
 // program or an ops script or a test run with the secret key set, is a process Clerk itself refuses the same forgeries in.
-describe('what the guard lets through is refused by Clerk itself: the secret key set, and not NODE_ENV=development', () => {
+describe('what the guard lets through is refused by Clerk itself, or ignored by it: the secret key set, not NODE_ENV=development', () => {
     it.each([['test'], ['production'], [undefined]])(
         'with NODE_ENV %s and the flag unset, a forgery under the keyless key fails to decrypt: Clerk throws, SSSB does not stand in the way',
         async (nodeEnv) => {
@@ -213,6 +213,23 @@ describe('what the guard lets through is refused by Clerk itself: the secret key
             // The adapter reaches Clerk, whose own refusal is what answers (not the guard's).
             const { realAuth } = await import('./auth')
             await expect(realAuth.getCurrentUser()).rejects.toThrow(/encryption key/i)
+        },
+    )
+
+    it.each([['test'], ['production'], [undefined]])(
+        "with NODE_ENV %s, forged request data does not move Clerk's client: it keeps the environment's API and secret key",
+        async (nodeEnv) => {
+            vi.stubEnv('NODE_ENV', nodeEnv)
+            h.headers = new Headers({
+                'x-clerk-request-data': cryptoJsEncrypt(
+                    JSON.stringify({ publishableKey: 'pk_test_forged', apiUrl: 'https://forged.example' }),
+                    KEYLESS_KEY,
+                ),
+            })
+            const { realAuth } = await import('./auth')
+            await realAuth.listMembers('depot').catch(() => undefined)
+            expect(sent.length).toBeGreaterThan(0)
+            expect(sent.some((url) => url.includes('forged.example'))).toBe(false)
         },
     )
 

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { clerkKeylessProblem } from './clerk-keyless'
 
@@ -48,4 +50,15 @@ describe('clerkKeylessProblem', () => {
             }
         },
     )
+
+    // Next inlines `process.env.NODE_ENV` and every `NEXT_PUBLIC_` variable in the literal form, in Clerk's bundled copy and
+    // in this module alike; reading only `process.env` as a whole would see the runtime values instead, and part from
+    // Clerk's under `NODE_ENV=production next dev` (a self-inflicted outage) or the reverse. Nothing observable in a test
+    // run tells the two apart, so the source is held to it.
+    it('reads NODE_ENV and the flag in the literal form Next inlines, beside the whole environment', () => {
+        const source = readFileSync(path.join(__dirname, 'clerk-keyless.ts'), 'utf8')
+        const body = source.slice(source.indexOf('export function currentClerkKeylessProblem'))
+        expect(body).toContain('NODE_ENV: process.env.NODE_ENV,')
+        expect(body).toContain('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: process.env.NEXT_PUBLIC_CLERK_KEYLESS_DISABLED,')
+    })
 })
