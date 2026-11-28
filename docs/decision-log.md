@@ -9271,3 +9271,11 @@ and #248/#268's CodeBuild sweep meet.
 - **Review.** One Opus round: the MEDIUM (passes) and the LOW (the `sweep` condition) above, both fixed. Then a claims
   pass. The release-notes findings J8 (the schedules' window stated as 8 s) and J2 (a paused cluster's first tick) are
   fixed in `bounded-tick-drains.md` and `job-retries.md` on the same branch.
+
+## The due hints are withdrawn from 0.11.0 and ship separately (2026-11-28, `revert/due-hints`)
+
+The tick listing's due hints (#263: migration 0022, `due_hints`, the scheduled tick listing due tenants first) and
+its review fix (#311) are reverted on `int-followups`, both merges, newest first, so 0.11.0 does not carry them. The
+work is kept, not dropped: it ships in a release of its own, and the history of both PRs stays in this log and in git.
+The revert restores the drain at 0.10.0's `LISTING_SHARE` passes, the migrations index at 0021, `SECURITY.md` and
+the changesets as they were before #263; nothing of the hints is left in `packages/` or `apps/`.
