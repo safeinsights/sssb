@@ -1,5 +1,193 @@
 # @sssb/create
 
+## 0.10.0
+
+### Minor Changes
+
+- b1aaea2: ### The authorization check judges read handlers too
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** The conformance suite's `authz-mutations` check now judges every exported route handler, GET, HEAD
+    and OPTIONS as well as POST, PUT, PATCH and DELETE, by the same rules: it reaches `authorize(...)` on its own path, or
+    its route has an exemption whose gate it passes. A read handler may also pass by reading nothing: it names nothing from
+    outside itself but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (a
+    string, number, boolean or `null`; not an object or array), `NextResponse` (`next/server`), `redirect`,
+    `permanentRedirect` and `notFound` (`next/navigation`), and `appMode` and `isSimulated`, as a liveness probe does, or a
+    CORS preflight whose headers are written inline; one that names `fetch`, `process.env` or any other import authorizes
+    or names an exemption. Such a read passes under `src/app/api/service/` too, without `withServiceCaller`: it reads no
+    data, so the wrapper that builds the caller's actor has nothing to add (any other read there, and every mutation, is
+    still wrapped by it). Before, a GET that
+    read org-scoped data without `authorize` passed, and showed a signed-in person with no standing (the role `none`) their
+    org's rows. The check keeps its id, so an `optOut` naming it still applies; its title and its test's name changed. The
+    framework exempts one more route, `storage/[...key]/route.ts`, the simulated-mode download twin of
+    `storage-upload/route.ts`, when it opens with the simulated-mode 404. The SSSB plugin's `/sssb:new-slice` and
+    `/sssb:new-entity` say so, and `/sssb:pre-pr`'s review checklist looks for a read, a page or a Server Action without
+    `authorize(...)`, not only a mutating route.
+
+    **To adopt.** Run the conformance suite (`pnpm test:unit`). For each read handler it names, authorize the read where the
+    org is known, as the generated app's `src/app/api/items/route.ts` GET does:
+
+    ```ts
+    authorize(user, orgId, 'read', { type: 'Item', orgId })
+    ```
+
+    A read of the caller's own things authorizes its self-only subject, `authorize(user, user.orgSlug, 'read', { type:
+'Notification', ownerId: user.id })` (or `NotificationPref`), and a service route its machine actor,
+    `authorize(ctx.actor, 'read', { type: 'Job', orgId: ctx.identity.orgId })`. A read that is genuinely not org-scoped (a
+    public one) names an entry in the app's `authz-exemptions.mjs`, with its reason and a `mustMatch` gate it passes; an
+    existing entry now also covers a GET at the path it names, which passes its gate, authorizes, or reads nothing.
+
+    A GET under `src/app/api/webhooks/` that neither authorizes nor reads nothing passes only when it is wrapped by the
+    webhook guard (`withWebhookSecret`, `withMailgunSignature` or `withStandardWebhookSignature`), the gate of SSSB's
+    `webhooks/` exemption. An app's own
+    entry cannot replace that gate, but for one: a provider's verification handshake (a GET that checks a token and
+    echoes a challenge) that is not wrapped can have a `reads-only` entry for its own file, mapping each import it reads to its module
+    (see the reads-only gate's entry in these notes). A public read outside `src/app/api` (a feed, a sitemap route) can
+    have one too, under the exemptions file's `outsideApi` key.
+
+- 9694e30: ### The cron route's test checks the tick's answer by the fields it needs
+
+    **Kind.** scaffold
+
+    **Action.** required
+
+    **What changed.** The scheduled tick's answer gains fields in this release (`deferred`, `stoppedBy`, a `retries` part, and
+    `deferred` and `stoppedBy` under `deliveries`). A workspace generated before it has a test,
+    `apps/<app>/src/app/api/webhooks/cron/route.test.ts`, that compares that answer whole with `toEqual`, so it fails once
+    the packages are upgraded, and with it `pnpm test:unit`, `pnpm verify` and the workspace's `sssb / lint-typecheck-unit`
+    check. The starter's test now compares it with `toMatchObject`, by the fields the test relies on, so a field a later
+    release adds no longer fails it.
+
+    **To adopt.** In that file, in the test named "with the shared secret it runs SSSB's tick and says what it did", change
+    the one `toEqual` that checks the response body to `toMatchObject`:
+
+    ```ts
+    expect(await response.json()).toMatchObject({
+        ok: true,
+        spawned: expect.any(Number),
+        failed: 0,
+        deliveries: { delivered: expect.any(Number), failed: expect.any(Number), dead: expect.any(Number) },
+    })
+    ```
+
+    Leave the other test's `toEqual({ error: 'unauthorized' })` as it is: that answer is meant to stay exactly that.
+
+    **Now deletable.** A hand-edited expected object kept up to date with each release's tick fields.
+
+### Patch Changes
+
+- aa98b12: ### The header's sign-out ends the session in the browser too, in real mode
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** In real mode the user menu's sign-out revoked the session on Clerk's server only, so the browser kept
+    its short-lived session token and the page reached next could still show the person signed in for up to a minute. The
+    starter's protected layout and header glue now use the kit's new real-mode menu, `RealUserMenu` (its own entry, "A
+    real-mode user menu that signs out in the browser", says what it does), in real mode, and keep the existing menu in
+    simulated mode.
+
+    **To adopt.** In `src/app/[locale]/(protected)/layout.tsx`, load the menu in real mode and hand it to the header glue:
+
+    ```tsx
+    let userMenu: ReactNode = null
+    if (!isSimulated) {
+        const { RealUserMenu } = await import('@sssb/kit/adapters/real/user-menu')
+        userMenu = <RealUserMenu user={menuUser} signedOutHref={`/${locale}`} />
+    }
+    ```
+
+    Pass `profileHref` too if your menu offers a profile page. In the header glue, take a `userMenu?: ReactNode` prop and
+    render `{userMenu ?? <UserMenu ... />}`, keeping the existing menu for simulated mode.
+
+- 895c5d3: ### The secret scan reads a pull request's own commits, not every branch
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** The generated `checks.yml`'s `secret-scan` job passed gitleaks no range, so it read every branch on the
+    remote: one branch's secret-like string failed the scan on every other open pull request. It now reads a pull request's
+    own commits (a commit it added and deleted again included) and, on a push to `main`, `main`'s whole history. A new root
+    file, `.github/scripts/secret-scan-range.sh`, picks the range from the event.
+
+    **To adopt.** Copy `.github/scripts/secret-scan-range.sh` from SSSB's repository at this release into the same path in
+    your workspace, then change the `gitleaks` step of your `checks.yml`'s `secret-scan` job to hand gitleaks the range:
+
+    ```yaml
+    - name: gitleaks (pinned binary; gitleaks-action requires a license key for organization repositories)
+      env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+          # ... the download, the digest check and the unpack, as before ...
+          range=$(bash .github/scripts/secret-scan-range.sh)
+          ./gitleaks git --redact --config .gitleaks.toml --log-opts="${range:?}"
+    ```
+
+    Keep the `range=` line on its own: a failed script then stops the step, where inside the gitleaks command it would not
+    and gitleaks would run with no range. The script refuses any event but `pull_request` and `push`; if your workflow runs on
+    another, add its range to the script.
+
+    **Now deletable.** An allowlist entry in `.gitleaks.toml` that exists only to silence a finding on another branch.
+
+- 913c4ed: ### A generated app's e2e runs against a production build on CI
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** SSSB's reusable workflow sets `E2E_BUILD=1` on its e2e job, but the app the generator writes ignored
+    it and ran its e2e against `next dev`, so CI never ran `next build` for it: a change that breaks the production build
+    (a client-only hook in a server component, say) passed every check. The generated app now has `build:e2e` and
+    `start:e2e` scripts, and its `playwright.config.ts` builds and serves the production build when `E2E_BUILD=1`, with a
+    longer server start-up budget for the build. Locally, with the flag unset, the suite stays on `next dev`.
+
+    **To adopt.** In an existing workspace, add two scripts to `apps/<app>/package.json`, under its `"scripts"`:
+
+    ```json
+    {
+        "scripts": {
+            "build:e2e": "NEXT_TELEMETRY_DISABLED=1 E2E_BUILD=1 APP_MODE=simulated next build",
+            "start:e2e": "E2E_BUILD=1 APP_MODE=simulated sssb serve-standalone"
+        }
+    }
+    ```
+
+    and in `apps/<app>/playwright.config.ts`, branch the web server on the flag:
+
+    ```ts
+    const E2E_BUILD = process.env['E2E_BUILD'] === '1'
+    // in webServer:
+    command: E2E_BUILD ? 'pnpm run build:e2e && pnpm run start:e2e' : 'pnpm dev',
+    timeout: E2E_BUILD ? 180_000 : 120_000,
+    ```
+
+- 148ce42: ### `withPortErrors` answers an LLM provider that is unavailable for now with a 503
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** The starter's `src/app/api/respond.ts` maps `LlmUnavailableError` (a provider rate limit, an overloaded provider, or an LLM call past its deadline) to a 503 with `Retry-After`, instead of rethrowing it as a 500.
+
+    **To adopt.** In your `withPortErrors`, before the final `throw error`, importing `LlmUnavailableError` from `@sssb/kit/ports/errors`:
+
+    ```ts
+    if (error instanceof LlmUnavailableError) {
+        console.warn(`llm unavailable (${error.reason}): ${error.message}`)
+        return Response.json(
+            { error: 'llm-unavailable', reason: error.reason },
+            { status: 503, headers: { 'retry-after': String(error.retryAfterSeconds) } },
+        )
+    }
+    ```
+
 ## 0.9.1
 
 No changes in this release.

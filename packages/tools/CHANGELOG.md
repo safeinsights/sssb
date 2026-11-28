@@ -1,5 +1,97 @@
 # @sssb/tools
 
+## 0.10.0
+
+### Patch Changes
+
+- b026b89: ### A scheduled tick is bounded, and fair across tenants
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `runScheduledTick` (`@sssb/kit/server-lib/scheduled-tick`) used to drain every due schedule and
+    every due webhook delivery of every tenant, one tenant's backlog after another's, so a long backlog or a slow endpoint
+    could run the cron route past the server's limit and leave later tenants waiting. A tick now spawns at most 100 due
+    schedules, none after its first 6 seconds (of which the first 2 are the lost-job sweep's), and attempts at most 100 due deliveries, none after 16, taking each
+    tenant's due rows in turn, the tenants in a fresh random order every tick. What a tick leaves stays due for the next one,
+    untouched. The route's JSON gains `deferred` and `stoppedBy`, for schedules and inside `deliveries`; `runDueSchedules`
+    and `runDueDeliveries` take an optional budget as a last argument (called without one they still drain every due
+    row), and `runScheduledTick` takes optional `{ budget }` for a server whose limit differs. `pnpm tick` and the dev
+    ticker say when a tick stopped on its bound and what it left.
+
+    A drain lists tenants for at most half of what is left of its window, then runs what it listed, and lists on if it
+    finishes with time to spare. With more
+    tenants than that half can list (each a transaction of its own: about four calls on the RDS
+    Data API), each tick serves a fresh random set of them, and the others wait for a later tick.
+
+    On an RDS Data API stack whose Aurora cluster can pause (minimum capacity 0, `SssbApp`'s default outside production),
+    the tick that wakes the cluster first waits for it to resume, 12 to 14 seconds when measured. Every window runs from
+    the tick's start, so that tick may judge no lost jobs, spawn no schedules and start no retries; the next tick, on a running cluster, does.
+
+- 3eddf36: ### A job kind can opt in to retries with backoff
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** A job used to be tried once: a failure, or a job the in-process runner lost, ended it `failed` for
+    good. A kind may now say, in the seam's optional `jobRetry` export (`@sssb/app-config/jobs`, beside `jobNotify`), how
+    many attempts it allows (at most 10) and the delays between them (each at most 30 days; an entry past either limit is
+    ignored and the kind runs once). Each attempt is a job row of its own: the failed one
+    stays `failed`, and the next is queued until its delay has passed. The scheduled tick then starts it, so the tick's
+    period is the floor under every delay. A handler is told `ctx.attempt` and `ctx.firstJobId`, a key that stays the same
+    across attempts. Only the last attempt's outcome notifies, and a failure after several attempts says how many. A kind
+    that says nothing runs once, as before. The tick gains a third drain, between schedules and deliveries: it starts at
+    most 100 due retries, none after the tick's first 10 seconds (schedules start none after 6, deliveries none after 16),
+    and the cron route's JSON gains a `retries` part. `runScheduledTick`'s budget
+    takes `maxRetries` and `retriesWindowMs`. The job views carry `attempt` and `retryOf`, and a service caller's job list
+    (`listServiceJobs`) leaves out a retry still waiting. `pnpm tick` reports retries.
+
+    **To adopt.** For a kind whose handler is idempotent, add to `src/app-config/jobs.ts`:
+    `export const jobRetry: Partial<Record<AppJobKind, JobRetry>> = { 'sweep-items': { attempts: 3, delaysMs: [60_000, 600_000] } }`,
+    with `JobRetry` from `@sssb/kit/core/jobs`. Key the handler's side effects on `ctx.firstJobId`. If the static demo
+    starts the kind, pass the same map as `useDemoWorld`'s `jobRetry`.
+
+    **Now deletable.** A kind's own resume-at-the-next-scheduled-run discipline, kept only so that a failed or cut-off run
+    was picked up an hour later.
+
+- 71f299e: ### The dev-ticker marker is written whole and cleared without a gap, and a failing default fixture entry always fails typed
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `@sssb/tools`: the dev ticker's marker is written to a name beside it and renamed onto it, so a Playwright config loading at that instant never reads half of it and passes over a ticking dev server; and a stale marker is moved aside and judged from the copy before it is deleted, so a marker another wrapper writes at the same moment is not removed with it. `@sssb/kit`: a default fixture entry with a `failure` and no answer to replay (`response: null`, no `conversation`) now throws `LlmUnavailableError` from the fake adapter's `complete`, `stream` and `runToolLoop`, as the static demo's replay already did; it threw a plain "no default entry" error.
+
+    **Now deletable.** An `response: ""` written only so that a failing default entry would fail typed.
+
+- cc6d105: ### `sssb check-real-env` says when `CLERK_AUTHORIZED_PARTIES` is unset
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** `CLERK_AUTHORIZED_PARTIES` is optional, and unset it leaves a deployment accepting a Clerk session
+    token minted for any origin its instance signed. Nothing told an operator the check was off. After a passing
+    `sssb check-real-env` prints `real-mode env complete`, it now prints a `notice:` line when the variable is unset, and one
+    for any variable spelled like it and not it (`CLERK_AUTHORISED_PARTIES`), which does nothing though a value looks set. The exit code is unchanged: unset is a supported setting, so a notice is advice, never a failure. The lines come
+    from `realEnvNotices()` in `@sssb/kit/adapters/real/index`, which `check-real-env` calls if the framework has it. It
+    reads the environment the command runs in, so it speaks for your server only when run with the server's.
+
+    **To adopt.** Nothing is required. Read the notice, and set `CLERK_AUTHORIZED_PARTIES` on the server to the origins it is
+    served from if you meant to (SSSB's adopting reference, `docs/adopting-reference.md` in SSSB's repository, "Name the origins whose session tokens your app accepts").
+
+- 71cafa0: ### A reused pid no longer keeps a stale dev-ticker marker alive, and the vendor ban reads its list one way
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** The dev ticker's marker (`dev-ticker.json`) now carries a token for the start of the process that wrote it, and is stale, ignored and cleared, when the process now at its pid has another one (a wrapper killed with SIGKILL leaves the marker, and the OS may give its pid to an unrelated process, which made the e2e configs refuse to load until the file was deleted by hand); the token is the kernel's record of the start, not a date, so a wall clock stepped later does not make a live ticker's marker stale, and a marker that cannot be judged (no token, Windows, no `ps`) stays live as before. `@sssb/tools/ticker-marker` also exports `processStartToken`. In `@sssb/eslint-plugin`, the vendor ban's two halves (`sssb/no-vendor-import` and `sssb/no-dynamic-vendor-import`) now read one list through one matcher, with its bare names anchored: a local `./pg` or `some/dir/pg` is no longer a vendor SDK to either half (it was to the declaration half), and a vendor specifier is matched without regard to case in both (`@CLERK/nextjs` was a vendor to the declaration half only). An app's own bare `sssb.vendors` entries are anchored the same way.
+
+    **Now deletable.** A hand-deleted `dev-ticker.json` after a killed ticker, and an `eslint-disable` for the vendor ban on a local file named like a vendor SDK.
+
 ## 0.9.1
 
 No changes in this release.
