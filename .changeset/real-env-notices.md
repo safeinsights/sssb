@@ -17,4 +17,4 @@ from `realEnvNotices()` in `@sssb/kit/adapters/real/index`, which `check-real-en
 reads the environment the command runs in, so it speaks for your server only when run with the server's.
 
 **To adopt.** Nothing is required. Read the notice, and set `CLERK_AUTHORIZED_PARTIES` on the server to the origins it is
-served from if you meant to (`docs/adopting-reference.md`, "Name the origins whose session tokens your app accepts").
+served from if you meant to (SSSB's adopting reference, `docs/adopting-reference.md` in SSSB's repository, "Name the origins whose session tokens your app accepts").
