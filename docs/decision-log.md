@@ -8525,6 +8525,40 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
   (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
 
+## The ticker marker is written whole and cleared without a gap; a failing default fixture always fails typed (2026-11-27, `fix/marker-atomic-and-fake-failure`)
+
+`safeinsights/sssb#258`, `#257` and `#249`: three leftovers of the `#146` and `#145` work.
+
+- **`#258`: the marker is written to a name beside it and renamed onto it** (`writeTickerMarker`; `<file>.<pid>.<random>.tmp`),
+  so a Playwright config that loads in that instant reads the marker that was there or the whole new one, never half of
+  it (a half-written file read as "no marker", and the config passed over a ticking dev server). A process killed between
+  the write and the rename leaves the `.tmp` file, which nothing reads. Pinned by standing inside the write
+  (`tests/tooling/ticker-marker-atomic.test.ts`): `writeFileSync` is wrapped to write half of its data, look at the marker as
+  a reader would, then write the rest; written straight onto the marker the reader sees half of a JSON document
+  (checked by making the write direct). Rejected: a stress test with a child process writing in a loop and the parent
+  reading, which can pass for a long time on the code it is meant to catch. Left as it was, and open in the issue: an
+  unparseable marker (damaged by anything else) still reads as no marker, not as "a ticker may be starting".
+- **`#257`: the stale marker is moved aside, and judged from the copy** (`clearStaleMarker`). Read-then-`rm` left a gap in
+  which a wrapper's new marker could be written and then removed. A rename is atomic and takes whatever file is there at
+  that instant: if it is the stale one it is deleted; if it is a newer one (written between the judgment and the move)
+  it is put back with `link`, which fails rather than overwrite, so a still newer marker written meanwhile wins and the
+  copy is dropped; a marker written after the move finds the name free and is never touched. Where a file system has no
+  hard links the put-back is a copy that fails rather than overwrite. **What it costs, found in review and filed as
+  `safeinsights/sssb#260`:** in that race a reader that looks while the newer marker is out of place sees none (a stress
+  run of one writer and four clearers spinning found the marker absent most of the time, which no real use approaches: a
+  clearer runs only after a marker was judged stale); a ticker that stops in that instant has its marker put back
+  (fails safe: the config refuses until the process exits); and two clearers meeting a newer and a newer-still marker
+  may leave the older. A write that fails now leaves no `.tmp` beside the marker. `clearStaleMarker` is exported, with a `hooks.afterClaim` seam, for its tests, which interleave a
+  writer at each step. Not changed: `removeTickerMarker` (the owner removing its own, by pid) has the same read-then-remove
+  shape, but only another wrapper's write into the same data directory in those microseconds could be lost, and the
+  token logic cannot tell one live ticker from two. `ps`'s start is to the second on macOS, so two processes born in the
+  same second share a token; a pid reused in the second it was released is not a case.
+- **`#249`: a default entry with a `failure` (one with a `reason`; `{}` is none) fails typed whatever answer it has, and every method reads the same default entry,** in `complete`, `stream` and
+  `runToolLoop`: `response: null` and no `conversation` (or an empty one) used to end in the plain "no default entry"
+  `Error`, which hid the failure the person wrote the entry to see. A default entry with no answer and no failure still
+  throws that error. (`response: null` is the recorder's "to record" marker and the recorder skips failing entries, so the
+  fixture is not rewritten.)
+
 ## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
 
 safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind

@@ -148,11 +148,13 @@ function lookup(request: LlmRequest, fixturesDir?: string): Answer {
             if (entryHash === hash) return { text: entry.response, failure: entry.failure?.reason }
         }
     }
-    const fallback = fixture.entries.find((e) => e.request === null && e.response !== null)
-    // An empty answer is a real one for a failing entry: a call that fails before its first word.
-    if (fallback && typeof fallback.response === 'string') {
-        return { text: fallback.response, failure: fallback.failure?.reason }
-    }
+    // A default entry with a `failure` fails whatever answer it has, none included (`safeinsights/sssb#249`): it is the
+    // entry the person wrote to see the failure, and a plain "no default entry" error would hide it. An empty answer is a
+    // real one for it too: a call that fails before its first word.
+    const fallback = fixture.entries.find(
+        (e) => e.request === null && (typeof e.response === 'string' || e.failure?.reason),
+    )
+    if (fallback) return { text: fallback.response ?? '', failure: fallback.failure?.reason }
     throw new Error(
         `no matching llm fixture in ${fixturePath(request.purpose, fixturesDir)} (hash ${hash.slice(0, 12)}…) and no default entry`,
     )
@@ -174,7 +176,10 @@ function lookupToolLoop(
             }
         }
     }
-    const fallback = fixture.entries.find((e) => e.request === null)
+    // The same default entry `lookup` picks, with a recorded conversation counting as an answer too.
+    const fallback = fixture.entries.find(
+        (e) => e.request === null && (typeof e.response === 'string' || e.conversation?.length || e.failure?.reason),
+    )
     const failure = fallback?.failure?.reason
     if (fallback?.conversation && fallback.conversation.length > 0) {
         return { conversation: fallback.conversation, failure }
@@ -182,6 +187,8 @@ function lookupToolLoop(
     if (fallback && typeof fallback.response === 'string') {
         return { conversation: [{ role: 'assistant', content: [{ type: 'text', text: fallback.response }] }], failure }
     }
+    // A failing default entry with no answer to replay still fails (`safeinsights/sssb#249`), after no turns.
+    if (failure) return { conversation: [], failure }
     throw new Error(
         `no matching llm tool-loop fixture in ${fixturePath(request.purpose, fixturesDir)} (hash ${hash.slice(0, 12)}…) and no default entry`,
     )
