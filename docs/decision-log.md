@@ -8631,6 +8631,7 @@ Membership` on the active org before `listMembers`, anchored on its slug as the 
 - **Found on the way:** following `export *` for a page's `default`, as the lookups follow it for a verb, would have
   taken a default JavaScript never re-exports through one; both lookups now skip it. The check keeps its id `authz-mutations`; its title
   and second test name now say pages.
+
 ## The ticker marker is written whole and cleared without a gap; a failing default fixture always fails typed (2026-11-27, `fix/marker-atomic-and-fake-failure`)
 
 `safeinsights/sssb#258`, `#257` and `#249`: three leftovers of the `#146` and `#145` work.
