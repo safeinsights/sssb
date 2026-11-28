@@ -155,9 +155,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
   (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
   The role `none` (a fixed org source gives it to every signed-in user by default: `params.auth`) is placed in the home
-  org with no standing in it. The check enforces it for route handlers (a screen and a metadata route such as
-  `sitemap.ts` or `opengraph-image.tsx` are kept by hand), and does not guess which reads are org-scoped: a read
-  handler that names an import (other than those below), a helper, `fetch` or `process.env` authorizes. A
+  org with no standing in it. The check enforces it for route handlers and pages (the next rule), and does not guess
+  which reads are org-scoped: a read handler that names an import (other than those below), a helper, `fetch` or
+  `process.env` authorizes. A
   read of the caller's own things authorizes its self-only subject (`Notification`, `NotificationPref`), and a service
   caller its machine actor. A read handler that reads nothing passes without it: it names nothing from outside itself
   but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
@@ -177,6 +177,25 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   (`[locale]/feed.xml/route.ts`), and a route group's `(name)` or a slot's `@name` is not part of it, as it is not
   part of the URL. A route under an
   intercepting segment (`(.)x`, `(..)x`) fails the check: serve the handler from a route that does not intercept.
+- A page is a read too. Every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `forbidden` and
+  `unauthorized` file under `src/app`, and every metadata route (`sitemap`, `robots`, `manifest`, `opengraph-image`,
+  `twitter-image`, `icon`, `apple-icon`), with a route's extensions: its `default` export, `generateMetadata`,
+  `generateImageMetadata` and `generateSitemaps` are each judged as a read handler is, and fail the check the same way.
+  A `'use client'` file is not judged: it reaches data only through routes. Besides the inert values above, a page reads
+  nothing when it names only the session (`auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`,
+  `auth.refusal()` and `auth.listMyOrgs()`, never `auth` itself or another member of it: `auth.listMembers` is a team's
+  member list), its copy and locale (`setRequestLocale`, `getTranslations` and `getMessages` from `next-intl/server`,
+  `hasLocale` from `next-intl`, `routing.locales`), `canInActiveOrg`, `isDemoMode`, `sameOriginPath`, `getTenantTheme`
+  and Mantine's `mantineHtmlProps`; a component it only renders as a JSX tag; a component of its own file it only renders,
+  which is read as part of it; and a real adapter's component it loads with `const { Form } = await import('…')` (alone,
+  or in an awaited `Promise.all`) only to render it. Anything else it names (the seed, a port, a data helper, `auth`
+  used any other way) means it authorizes, as `src/app/[locale]/(protected)/dashboard/page.tsx` would before reading
+  the team's data, or, only if it reads nothing org-scoped, has a `reads-only` entry under `outsideApi` keyed by its
+  file, as `authz-exemptions.mjs` names the sign-in page's. A route group is dropped from the key, so a group's layout
+  shares its parent's (`[locale]/layout.tsx`). An intercepting page fails, as an intercepting route does.
+- A component a page renders is out of the check's sight, as a helper in another module is: one that loads its own data
+  passes unseen. Load the data in the page, authorize there, and hand the component the rows. A person the page's
+  `authorize` refuses gets its `ForbiddenError` instead of the page.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.

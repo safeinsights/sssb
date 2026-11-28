@@ -8473,3 +8473,62 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   had it got through. The parity table (`tests/lint/framework-fence.test.ts`) now has a vendor block: 27 specifiers,
   three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
   (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
+
+## Pages, layouts and metadata routes are judged as reads (2026-11-27, `fix/authz-pages`)
+
+safeinsights/sssb#221 and #259. The design and what it accepts are ADR-0012's last 2026-11-27 addendum; the calls it
+did not settle:
+
+- **Seen failing first.** With the scan change alone, the showcase's conformance check went red on eight pages, the
+  dashboard first: "showcase: ../[locale]/dashboard/page.tsx (at ../[locale]/(protected)/dashboard/page.tsx) default is
+  a page export, rendered on the server for every request, that does not reach authorize(...) on its own path, and
+  reads something: `auth.listMembers` is used, and a page may use `auth` only as `auth.getCurrentUser()`, …". The org
+  page failed the same way (a second copy of the #259 leak, its member list with emails and roles), and the starter
+  three times (its layouts and sign-in page reading the seed). A starter dashboard that called `auth.listMembers`, and
+  one that imported `findTenant` from the seed, each turned the starter's check red, and passed again restored.
+- **The page allow-list, entry by entry** (each pages only; routes keep INERT_IMPORTS):
+    - `setRequestLocale`, `getTranslations`, `getMessages` (`next-intl/server`): the catalog and the locale, on every
+      page; `getMessages` is next-intl's layout pattern. `getLocale` is left out: neither app needs it.
+    - `hasLocale` (`next-intl`) and `routing.locales` (`@sssb/kit/i18n/routing`, the member only): the locale layout's
+      segment check.
+    - `canInActiveOrg` (`@sssb/kit/authz/authorize`): a UI ability check of the caller's own abilities, never a read.
+    - `isDemoMode` (`@sssb/kit/adapters/index`): the run mode beside `appMode` and `isSimulated`, the demo badge.
+    - `sameOriginPath` (`@sssb/kit/core/same-origin-path`): the sign-in page's `returnTo` normaliser, a pure function.
+    - `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`): the locale layout's theme and
+      document shell, branding and constants.
+    - `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()`, `auth.listMyOrgs()`: the
+      caller's own session and placements (the header's org switcher), each only called. `auth` itself and every other
+      member are refused outright, `auth.listMembers` first.
+    - An imported component used only as a JSX tag; a same-file component only rendered (read as part of the page); a
+      real adapter's component loaded with `import()` only to render it (the guide's own shape for real mode).
+- **Narrower than the issue's sketch.** `redirect` and `notFound` were already inert. Not listed: `analytics.isFlagEnabled`
+  (the showcase's two flag reads sit in pages that authorize now), `next/og`'s `ImageResponse` (no app has an image
+  route; one names it in its app's entry), `DEFAULT_TENANT_SLUG` (the showcase alone uses it).
+- **What each app names instead, and why there.** Seed and simulated-world reads are the app's, so they are app
+  entries, where an adopter sees them: the starter now ships `authz-exemptions.mjs` with `[locale]/layout.tsx`
+  (`tenants`, `findTenant`: the locale layout's theme fallback and the protected layout's tenant name; groups are
+  dropped, so the two layouts share one key and one reason) and `[locale]/signin/page.tsx` (`listAllPeople`,
+  `findTenant`: the simulated-mode picker). The showcase names the same sign-in reads, `DEFAULT_TENANT_SLUG` in its locale
+  layout, `findInvite` and `findOrg` on its accept-invite page (authorized by possession of the invite token, as the
+  framework's `auth/accept-invite/route.ts` exemption says), and `isActorId` on the Simulator's actor frame. Pages that
+  read the caller's own records authorize them instead of being named: the profile page and the protected layout read
+  the caller's acceptances and authorize the self-only `AgreementAcceptance` (the layout's `listAgreementsForTenant` and
+  feature flag ride on that authorize, as a route's other reads ride on its own). Rejected: an exemption listing `db`,
+  `tenantIdForSlug`, the agreement readers and seven pure gate functions, a list that described the layout but excused
+  `db` whole.
+- **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
+Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
+  (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only
+  when `canInActiveOrg(user, 'read', 'Membership')` and authorizing inside that branch, which the scan would pass but the
+  guide's rule (authorize on a path every request takes) forbids. So a person without standing gets the page's
+  `ForbiddenError`; every card on the dashboard already 403s for them. Pinned by
+  `apps/showcase/src/app/[locale]/(protected)/dashboard/page.test.tsx` and its org twin (real abilities, faked
+  adapters: a member gets the active members, `none` is refused and `listMembers` never runs). A no-standing screen in
+  the protected layout, as the agreement gate renders in place, is a follow-up.
+- **Matched by URL, as routes.** A route group's layout and its parent's share a key, which a reviewer may find
+  surprising: one entry, each layout judged by it alone. An intercepting page is refused, as an intercepting route is,
+  though intercepted pages (a modal) are Next's main use of interception; a page there that authorizes is refused too.
+  Left as the issue's brief said; revisit if an adopter needs one.
+- **Found on the way:** `export *` was followed for every judged name, and a page's `default` would have come through
+  one, which JavaScript never re-exports; both lookups now skip it. The check keeps its id `authz-mutations`; its title
+  and second test name now say pages.

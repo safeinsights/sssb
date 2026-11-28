@@ -195,7 +195,10 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   exported name, so a local look-alike or an alias is not the gate —
   entries are matched by relative path in every root (by URL: route groups and slots dropped), so a gateless one would exempt an adopter's same-named route from
   authorization entirely. It proves the route is the KIND the reason describes, never the reason's whole claim;
-  ADR-0012 states the limit.
+  ADR-0012 states the limit. **Pages** (`scanPages`: pages, layouts, metadata routes, safeinsights/sssb#221) are
+  judged only in each app's scan, since the fixture renders none: their cases are `route-scan.test.ts`'s and
+  `app-exemptions.test.ts`'s, and the page allow-list (`PAGE_IMPORTS`, `PAGE_MEMBERS` in `route-scan.ts`) grows only by a
+  case the decision log names.
 - A `knip.json` entry is justified in `docs/build-notes.md`. CI additionally runs coverage reporting, jscpd
   duplication, gitleaks secret scanning and the licence scan (`scripts/licence-scan.mjs` against
   `.github/licence-policy.json`: a new copyleft, source-available or unknown licence in the installed closure fails
