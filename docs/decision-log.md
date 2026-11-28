@@ -9519,3 +9519,37 @@ listing share" above). Migration 0022 has not shipped, so it is edited in place.
       visible, so never deleted: cost only), #310 (a non-inheriting, settable membership of `app_user` is outside every
       gate; predates this branch). Accepted: a tenant deleted between a read and its settle fails that 200-tenant chunk
       for one tick, whose tenants are listed again.
+
+## The due-hint read in one pass and bounded; a pile cleared in proportion (2026-11-28, `fix/review-hint-read`)
+
+A fresh review of the redesign above ("Due-hint writes append; the tick alone sets hints") found a HIGH in the read.
+
+- **N1: once statistics knew the past-due events belonged to few tenants, the read checked the events once per
+  tenant.** `readDueHints` asked `OR EXISTS (… due_hint_events e WHERE e.tenant_id = t.id …)`; after ANALYZE, Postgres
+  ran it as a correlated SubPlan with a scan of the events table, for every idle tenant: 1,500 tenants beside one
+  100,000-event pile read in 11 ms before ANALYZE and 8,655 ms after (the review's probe; 8,555 ms reproduced here,
+  `due-hints.contract.test.ts`, before the fix). Linear in tenants times events, it could starve every drain and, past
+  the 30 s limit, never settle, so the pile never shrank.
+    - **(a) One pass.** The read joins tenants to `SELECT DISTINCT tenant_id FROM due_hint_events WHERE drain = … AND
+due <= now`, a range of a new index on `(drain, due) INCLUDE (tenant_id)` (or one scan of the table, if the
+      planner prefers): the events are read once whatever the plan. The test checks the plan (`EXPLAIN`: no SubPlan,
+      one scan node over the events).
+    - **(b) Bounded.** The read runs in a transaction of its own that sets `statement_timeout` to half of what is left
+      of the drain's window (at least 50 ms, at most 5 s). A read that cannot finish (a bad plan, a lock) gives up and
+      the drain lists every tenant, as before the hints, bounded by the listing share. On the Data API an idle drain now
+      costs four calls (Begin, the timeout, the read, Commit) where it cost one: still the read alone, whatever the
+      number of tenants (`rds-data.contract.test.ts` pins it). Rejected: setting the timeout in the read's own statement
+      (Postgres arms it when a statement starts).
+    - **(c) In proportion.** The settle's first statement sets the hints and deletes up to 10,000 of the settled
+      tenants' visible events; while the drain's window lasts it deletes on, 10,000 a statement (at most 100 more), so a
+      pile is cleared in proportion to its size and no statement is long. This replaces the flat 500 a tenant a tick.
+      The contract test: the 100,000-event pile is cleared inside a drain's 2 s window; the 2M-event test still starts
+      the next drain's work in its window.
+- **Proofs.** `due-hints.contract.test.ts`, a database of its own with 1,500 tenants and ANALYZE: the read under a
+  second with the pile, its plan; a pile cleared in one drain inside its window; a read blocked by a lock giving up
+  inside its bound and listing every tenant. Mutations, each red: the per-tenant EXISTS (the read took 5.5 s, its bound
+  fired, every tenant listed); no timeout (the blocked read waited 3 s); no clearing loop (90,000 events left).
+- **Filed** (P3): safeinsights/sssb#312 (N2: the settle can wait on an owner-side lock of a tenant row, through its
+  foreign-key check), #313 (N3: MAINTAIN and `pg_maintain` are outside 0022's refusal, the proofs and `schemaOf`; not a
+  one-line fix, since `has_table_privilege(…, 'MAINTAIN')` raises before Postgres 17 and SssbApp deploys 16), #314 (N4:
+  the RLS proofs pin one of the six triggers).

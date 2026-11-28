@@ -10,11 +10,13 @@ import { family } from './family'
  *
  * A drain that uses them reads, in one query (`tenantsToList`), the tenants with no hint, a hint that has come, a hint
  * further off than `MAX_SKIP_MS` (a simulated world whose clock was moved back), or an event that has come, and the
- * snapshot that read was taken in. It lists those. Then, in one statement a drain (`settleHints`, one per 200 tenants), it
- * sets each listed tenant's hint: to the epoch when it had rows due (so it is listed again, whatever a Simulator's clock
- * does next), else to its next due time, at most `MAX_SKIP_MS` on; and deletes up to `EVENTS_SETTLED_PER_TENANT` of that
- * tenant's events the snapshot could see, which its listing has accounted for (any more stay, and it is listed again). An
- * event committed after the read stays, so its tenant is listed again: no write is lost to a tick that read before it.
+ * snapshot that read was taken in. The events are read in one pass, never once per tenant, and the read gives up after
+ * half of what is left of the drain's window (the drain then lists every tenant). It lists those. Then (`settleHints`,
+ * one statement per 200 tenants) it sets each listed tenant's hint: to the epoch when it had rows due (so it is listed
+ * again, whatever a Simulator's clock does next), else to its next due time, at most `MAX_SKIP_MS` on; and deletes the
+ * events of those tenants that the snapshot could see, which their listing accounted for, `EVENTS_PER_STATEMENT` a
+ * statement for as long as the drain's window lasts, so a pile is cleared in proportion to its size (what a window
+ * leaves stays, and its tenant is listed again). An event committed after the read stays, so its tenant is listed again: no write is lost to a tick that read before it.
  * The hint is set by compare-and-set on its version, so of two overlapping ticks only one sets it; the other deletes
  * nothing, and its tenants are listed again.
  *
