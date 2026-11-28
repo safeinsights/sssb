@@ -266,6 +266,20 @@ describe("an app's own vendors (package.json sssb.vendors)", () => {
         expect(await problemsOf(appDir)).toEqual([])
     })
 
+    it("anchors the app's bare names too: a local ./stripe is not the vendor, in either half", async () => {
+        const appDir = withVendors(STRIPE)
+        const code =
+            "import local from './stripe'\nexport { local }\nexport const load = () => import('./stripe')\n" +
+            "import nested from 'some/dir/stripe'\nexport { nested }\n"
+        const found = (await lintIn(appDir, 'src/domain/billing.ts', code)).filter((rule) => rule?.includes('vendor'))
+        expect(found).toEqual([])
+        // ...while the package, a subpath and the other half of the same reading still are
+        const vendor = "import s from 'stripe'\nexport { s }\nexport const load = () => require('stripe/lib/x')\n"
+        const rules = await lintIn(appDir, 'src/domain/billing.ts', vendor)
+        expect(rules).toContain('sssb/no-vendor-import')
+        expect(rules).toContain('sssb/no-dynamic-vendor-import')
+    })
+
     it("keeps SSSB's own list whatever the app names", async () => {
         for (const vendors of [STRIPE, []]) {
             const code = "import { S3Client } from '@aws-sdk/client-s3'\nexport { S3Client }\n"

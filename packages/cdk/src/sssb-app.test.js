@@ -318,6 +318,28 @@ function functionUrlOriginProblems(all, assembly) {
 /** @param {Resources} all @param {string} type */
 const count = (all, type) => Object.values(all).filter((r) => r.Type === type).length
 
+/**
+ * What the framework's `databaseSsl` makes of a function's environment, with only that environment's TLS variables set.
+ * @param {() => unknown} databaseSsl
+ * @param {Record<string, unknown>} env
+ */
+function sslReadFrom(databaseSsl, env) {
+    const names = ['DATABASE_SSL_MODE', 'DATABASE_SSL_ROOT_CERT']
+    const saved = names.map((name) => process.env[name])
+    try {
+        for (const name of names) {
+            if (typeof env[name] === 'string') process.env[name] = /** @type {string} */ (env[name])
+            else delete process.env[name]
+        }
+        return databaseSsl()
+    } finally {
+        names.forEach((name, i) => {
+            if (saved[i] === undefined) delete process.env[name]
+            else process.env[name] = saved[i]
+        })
+    }
+}
+
 /** The variables each transport requires, from the framework the app itself resolves (its boot check's list). */
 /** @param {string} appDir @returns {Promise<Record<Transport, Record<string, string>>>} */
 async function databaseEnvOf(appDir) {
@@ -451,6 +473,11 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
                 }
                 expect(server.env).not.toHaveProperty(['DATABASE_URL'])
                 expect(migrator.env).not.toHaveProperty(['DATABASE_URL'])
+                // The Data API speaks HTTPS through the SDK: the pg transport's TLS settings would only mislead.
+                for (const fn of [server, migrator]) {
+                    expect(fn.env).not.toHaveProperty(['DATABASE_SSL_MODE'])
+                    expect(fn.env).not.toHaveProperty(['DATABASE_SSL_ROOT_CERT'])
+                }
                 expect(server.inVpc || migrator.inVpc).toBe(false)
                 expect(cluster['EnableHttpEndpoint']).toBe(true)
                 expect(count(all, 'AWS::EC2::NatGateway')).toBe(0)
@@ -458,6 +485,23 @@ describe.each(APPS)('the %s app, synthesized through SssbApp', (name) => {
                 expect(dataApiShapeProblems(all)).toEqual([])
             } else {
                 expect(migrator.env).toHaveProperty(['DB_SECRET_ARN'])
+                // Both connect with TLS that checks the cluster's certificate against the Amazon CA bundle of the
+                // runtime they run on, read as the framework the app resolves reads it (its `databaseSsl`).
+                const { databaseSsl } = await import(
+                    pathToFileURL(path.join(kitDirOf(appDir), 'src/adapters/real/database-transport.ts')).href
+                )
+                for (const [name, fn] of /** @type {const} */ ([
+                    ['server', server],
+                    ['migrator', migrator],
+                ])) {
+                    expect(sslReadFrom(databaseSsl, fn.env), `the ${name}'s TLS`).toEqual({
+                        mode: 'verify-full',
+                        rootCert: '/var/runtime/ca-cert.pem',
+                    })
+                    expect(all[fn.id]?.Properties?.['Runtime'], `the ${name} runs where that bundle is`).toBe(
+                        'nodejs22.x',
+                    )
+                }
                 expect(server.inVpc && migrator.inVpc).toBe(true)
                 expect(cluster).not.toHaveProperty(['EnableHttpEndpoint'])
                 expect(count(all, 'AWS::EC2::NatGateway')).toBe(1)

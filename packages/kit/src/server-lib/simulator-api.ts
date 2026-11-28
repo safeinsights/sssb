@@ -39,7 +39,9 @@ import { WORLD_START_NAME_PATTERN } from '../core/presets'
 import { sameOriginPath } from '../core/same-origin-path'
 import { WEBHOOK_SIGNATURE_HEADER } from '../core/webhook-signing'
 import { listInboundForWorld } from '../db/inbound-email'
+import { runDueRetries } from '../db/jobs'
 import { listOrgsForWorld } from '../db/org-lookup'
+import { notifyRetryEnd } from './scheduled-tick'
 import { listSchedulesForWorld, runDueSchedules } from '../db/schedules'
 import { listDeliveriesForWorld, listEndpointsForWorld, runDueDeliveries } from '../db/webhooks'
 import { inboundHandlers } from '../inbound-email/handlers'
@@ -377,14 +379,15 @@ async function schedules(): Promise<Response> {
 }
 
 /**
- * Due schedules and due webhook deliveries, run at the world's "now": what moving the clock past a schedule's next
- * run, or past a retry's backoff, makes happen at once.
+ * Due schedules, due job retries and due webhook deliveries, run at the world's "now": what moving the clock past a
+ * schedule's next run, or past a retry's backoff, makes happen at once.
  */
 async function runDueAtWorldNow() {
     const now = worldNow()
     const { spawned, failed } = await runDueSchedules(db, jobs, now)
+    const retries = await runDueRetries(db, jobs, now, undefined, notifyRetryEnd)
     const deliveries = await runDueDeliveries(db, now, dispatchWebhook)
-    return { spawned, failed, deliveries }
+    return { spawned, failed, retries, deliveries }
 }
 
 /** POST `clock` `{ action: 'advance', deltaMs }` or `{ action: 'reset' }`, then runs what is due. */

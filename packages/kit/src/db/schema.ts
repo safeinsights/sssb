@@ -32,6 +32,14 @@ interface JobsTable {
     error: string | null
     /** The user id of the person who submitted it; null for a scheduled or service job (0017_job_requester). */
     requested_by: Generated<string | null>
+    /** Which attempt this row is, from 1 (0019_job_attempts). */
+    attempt: Generated<number>
+    /** The first attempt's id on a retry; null on attempt 1 (0019_job_attempts). */
+    retry_of: Generated<string | null>
+    /** When a retry waiting out its backoff may run; null on every other row (0019_job_attempts). */
+    run_after: Generated<Date | string | null>
+    /** The runner's own id for the run (a CodeBuild build id, or `starting`); null when none recorded one (0020). */
+    runner_ref: Generated<string | null>
     created_at: Generated<string>
     updated_at: Generated<string>
 }
@@ -84,6 +92,10 @@ interface JobSchedulesTable {
      *  ISO string, reads back as a Date on both engines (normalised via toIso / new Date()). */
     next_run_at: Date | string
     enabled: Generated<boolean>
+    /** Spawns in a row that failed inside the spawn transaction; 0 once one commits (0021_schedule_failures). */
+    failure_count: Generated<number>
+    /** The latest such failure's message; null once a spawn commits again (0021_schedule_failures). */
+    last_error: Generated<string | null>
     /** Opaque creator id (no users table) — same convention as jobs / service_keys. */
     created_by: string
     created_at: Generated<string>

@@ -64,7 +64,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   deleting the showcase with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 147 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 148 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it). Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
   publish it; add the `exports` line deliberately, and never widen the map to silence the rule.
@@ -188,12 +188,17 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   is `packages/kit/src/authz/app-exemptions.ts`, which applies the app's own exemptions. The FRAMEWORK's exemption map is
   `packages/kit/src/authz/route-policy.ts`, and its staleness is measured against the FIXTURE tree, so a new framework
   exemption needs a file there to demonstrate it; the fixture's routes are scanned, never served. An app's entry that
-  overlaps a framework one, or a prefix nested in another of the app's, fails. **Every exemption's `mustMatch`** is
-  checked on each verb (the handler IS the guard's call, reaches a port call, or opens with the simulated-mode 404),
-  every name in it a value import kept under its exported name, so a local look-alike or an alias is not the gate —
-  entries are matched by relative path in every root, so a gateless one would exempt an adopter's same-named route from
+  overlaps a framework one, or a prefix nested in another of the app's, fails, but for a `reads-only` entry for one
+  file under the framework's `webhooks/` prefix, which applies to reads only. **Every exemption's `mustMatch`** is
+  checked on each verb (the handler IS the guard's call, reaches a port call, opens with the simulated-mode 404, or
+  is a read that names nothing but inert values and the gate's names), every name in it a value import kept under its
+  exported name, so a local look-alike or an alias is not the gate —
+  entries are matched by relative path in every root (by URL: route groups and slots dropped), so a gateless one would exempt an adopter's same-named route from
   authorization entirely. It proves the route is the KIND the reason describes, never the reason's whole claim;
-  ADR-0012 states the limit.
+  ADR-0012 states the limit. **Pages** (`scanPages`: pages, layouts, metadata routes, safeinsights/sssb#221) are
+  judged only in each app's scan, since the fixture renders none: their cases are `route-scan.test.ts`'s and
+  `app-exemptions.test.ts`'s, and the page allow-list (`PAGE_IMPORTS`, `PAGE_MEMBERS` in `route-scan.ts`) grows only by a
+  case the decision log names.
 - A `knip.json` entry is justified in `docs/build-notes.md`. CI additionally runs coverage reporting, jscpd
   duplication, gitleaks secret scanning and the licence scan (`scripts/licence-scan.mjs` against
   `.github/licence-policy.json`: a new copyleft, source-available or unknown licence in the installed closure fails
@@ -220,9 +225,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - **Scratch directories in this repo's tests**: `tests/support/tmp-dir.ts` re-exports `@sssb/tools/testing/tmp-dir`,
   and the framework's own tests use its copy, `packages/kit/src/testing/tmp-dir.ts`; `sssb/no-direct-mkdtemp` bans the
   raw calls in test files, and `test:unit`, `test:coverage` and `test:contract` run through `sssb check-tmpdir-leak`.
-- **E2E `workers` stays 1** (the old "10GB VM / OOM" reason was wrong; measured). Parallelism belongs where the worlds
-  are separate: across apps locally, across CI shards. Read
-  [safeinsights/sssb#99](https://github.com/safeinsights/sssb/issues/99) before raising it.
+- **E2E `workers` is 1 by default, and can be raised only on a production build.** In the showcase, `E2E_BUILD=1
+E2E_WORKERS=<n>` gives each Playwright worker a server and a world of its own (`apps/showcase/tests/e2e/support/worlds.ts`;
+  `next dev` allows one server per app directory, so under it there is one worker). It stays 1 on CI because it does not
+  pay there: measured 2026-11-27, two workers take the showcase's shards from 1.5-2.0 to 1.1-1.4 min of tests, four no
+  further, and a pull request waits on `lint-typecheck-unit` (6 to 10 min) whatever the e2e shards do. The starter has no
+  per-worker worlds: its `workers` stays 1, as the guide says for an adopter's app. Read
+  [safeinsights/sssb#99](https://github.com/safeinsights/sssb/issues/99) and the decision log before raising either.
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **The dev ticker** (the guide's dev loop) is `@sssb/tools/ticker` (start, stop, status), policy-free; all of it
   lives in `packages/tools/src/tick`. Here `pnpm tick` ticks the showcase and `pnpm tick:starter` the starter, and

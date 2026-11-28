@@ -9,11 +9,29 @@ import type { AnalyticsPort } from '../../ports/analytics'
 export const CAPTURE_TIMEOUT_MS = 2_000
 
 /**
+ * How long a feature-flag read waits for PostHog before it answers the default (safeinsights/sssb#104). The protected
+ * layout awaits a flag read on every authenticated render, so a slow PostHog costs every page this much, once: a second
+ * is what a page can afford, and shorter than a capture (which no render awaits for its own sake) because a flag read
+ * is on the way to the person's page. Without it the client's own bound is three seconds, with one retry after a
+ * delay (posthog-node 5.73, which builds on @posthog/core's stateless client): six seconds and more per page in an
+ * outage. The client is told the same bound with no retries, so the request is aborted rather than left running, and
+ * the adapter holds to it whatever the client does.
+ */
+export const FLAG_TIMEOUT_MS = 1_000
+
+/**
  * AUTHORED — CUTOVER (`analytics`): typechecked, never run against a real project. Enabled in
  * staging/prod only (ADR-0010): a real deployment without a key gets the no-op (./no-analytics.ts).
  */
 export function createRealAnalytics(apiKey: string, host: string): AnalyticsPort {
-    const client = new PostHog(apiKey, { host, flushAt: 1, flushInterval: 5_000, requestTimeout: CAPTURE_TIMEOUT_MS })
+    const client = new PostHog(apiKey, {
+        host,
+        flushAt: 1,
+        flushInterval: 5_000,
+        requestTimeout: CAPTURE_TIMEOUT_MS,
+        featureFlagsRequestTimeoutMs: FLAG_TIMEOUT_MS,
+        featureFlagsRequestMaxRetries: 0,
+    })
 
     return {
         // An event is never load-bearing either: a send that fails or outruns CAPTURE_TIMEOUT_MS is logged and dropped.
@@ -41,14 +59,21 @@ export function createRealAnalytics(apiKey: string, host: string): AnalyticsPort
         },
 
         async isFlagEnabled(flag, defaultValue = false) {
-            // A flag read is never load-bearing: a PostHog outage degrades to the default rather
-            // than throwing into whatever screen asked (the protected layout reads flags on every
-            // authenticated render).
+            // A flag read is never load-bearing: a PostHog outage, or one that outruns FLAG_TIMEOUT_MS, degrades to the
+            // default rather than throwing into, or holding up, whatever screen asked (the protected layout reads
+            // flags on every authenticated render).
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const timedOut = new Promise<'timed out'>((resolve) => {
+                timer = setTimeout(() => resolve('timed out'), FLAG_TIMEOUT_MS)
+            })
             try {
-                const enabled = await client.isFeatureEnabled(flag, 'server')
-                return enabled ?? defaultValue
+                // Once the bound has passed, the read's own answer or failure is nobody's: the race has handled it.
+                const enabled = await Promise.race([client.isFeatureEnabled(flag, 'server'), timedOut])
+                return enabled === 'timed out' ? defaultValue : (enabled ?? defaultValue)
             } catch {
                 return defaultValue
+            } finally {
+                clearTimeout(timer)
             }
         },
     }

@@ -1,7 +1,7 @@
 import { setRequestLocale } from 'next-intl/server'
 import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { auth } from '@sssb/kit/adapters/index'
+import { auth, isSimulated } from '@sssb/kit/adapters/index'
 import { findTenant } from '@/seed'
 import { HeaderGlue } from './header-glue'
 
@@ -27,11 +27,20 @@ export default async function ProtectedLayout({
 
     const orgs = await auth.listMyOrgs()
     const tenantName = findTenant(user.tenantSlug)?.name ?? user.tenantSlug
+    const menuUser = { name: user.name, email: user.email }
+    // Real mode signs out through the provider's client, which also clears the session token the next page would
+    // otherwise still see; simulated mode through the app's sign-out route (the glue's own menu).
+    let userMenu: ReactNode = null
+    if (!isSimulated) {
+        const { RealUserMenu } = await import('@sssb/kit/adapters/real/user-menu')
+        userMenu = <RealUserMenu user={menuUser} signedOutHref={`/${locale}`} />
+    }
 
     return (
         <>
             <HeaderGlue
-                user={{ name: user.name, email: user.email }}
+                user={menuUser}
+                userMenu={userMenu}
                 orgs={orgs}
                 activeSlug={user.orgSlug}
                 tenantName={tenantName}

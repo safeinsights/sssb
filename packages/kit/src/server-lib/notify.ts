@@ -254,11 +254,19 @@ export async function notifyJobTerminal(
     try {
         const job = await jobKindAndOrg(deps.db, input.tenantId, input.jobId)
         if (!job || job.orgId === null || !NOTIFIED_JOB_KINDS.has(job.kind)) return
+        // A failure that armed a retry is not the job's end (safeinsights/sssb#135): its timeline says so, and the last
+        // attempt's outcome is what notifies, so `failure` means a failure with no attempts left.
+        if (input.status === 'failed' && job.retried) return
         if (!notifiesOn(notifyModeFor(job.kind), input.status)) return
         const org = await orgForId(deps.db, job.orgId)
         if (!org) return
         const members = await authPort.listMembers(org.slug)
-        const payload = { jobId: input.jobId, jobKind: job.kind, status: input.status }
+        const payload = {
+            jobId: input.jobId,
+            jobKind: job.kind,
+            status: input.status,
+            ...(job.attempt > 1 && { attempts: job.attempt }),
+        }
         if (members.some((m) => m.status === 'active' && canManageOrg(m.role as Role))) {
             await notifyAdmins(deps, {
                 members,

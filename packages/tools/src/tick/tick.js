@@ -268,36 +268,72 @@ function count(value) {
 
 /**
  * What a tick did, in one line. `failed` is a schedule whose spawn failed, and a delivery that failed or died: shown,
- * but it is the tick reporting work that went wrong, not the tick failing. A failed schedule is retried by the next tick
- * only when the failure was inside the spawn transaction (it rolled back); after that transaction commits, the job is
- * left queued and the schedule has moved on (the in-process runner's sweep fails the job after five minutes; see
- * `@sssb/kit/db/schedules`).
+ * but it is the tick reporting work that went wrong, not the tick failing. A schedule whose spawn failed inside its
+ * transaction (it rolled back) is tried again after a backoff, or turned off when its spec does not parse; after that
+ * transaction commits, the job is left queued and the schedule has moved on (the in-process runner's sweep fails the
+ * job after five minutes; see `@sssb/kit/db/schedules`).
  *
- * @param {Record<string, unknown>} body the route's JSON: `{ ok, spawned, failed, deliveries: { delivered, failed, dead } }`
+ * A tick is bounded (`@sssb/kit/server-lib/scheduled-tick`), so it may leave due work for the next one: then the line
+ * ends with how much, as the route's `deferred` counts say it (a lower bound), whenever either drain's `stoppedBy` is set
+ * or either counts work left.
+ *
+ * @param {Record<string, unknown>} body the route's JSON:
+ *   `{ ok, spawned, failed, deferred, stoppedBy, retries: { started, failed, deferred, stoppedBy },
+ *   deliveries: { delivered, failed, dead, deferred, stoppedBy } }` (`retries` absent from an older route)
  */
 export function summarizeTick(body) {
-    const deliveries =
-        body.deliveries && typeof body.deliveries === 'object'
-            ? /** @type {Record<string, unknown>} */ (body.deliveries)
-            : {}
+    const deliveries = section(body.deliveries)
+    // The job-retry drain's part (safeinsights/sssb#135), shown when the route reports one.
+    const retries = body.retries && typeof body.retries === 'object' ? section(body.retries) : null
+    // A drain that stopped on its bound says so even with nothing counted as left: one whose window had passed before it
+    // began listed nothing, so its `deferred` is 0.
+    const stopped = [body.stoppedBy, retries?.stoppedBy, deliveries.stoppedBy].some(
+        (reason) => reason === 'items' || reason === 'time',
+    )
+    const leftRetries = retries ? `, ${count(retries.deferred)} job retry(ies)` : ''
+    const left =
+        stopped || count(body.deferred) > 0 || count(retries?.deferred) > 0 || count(deliveries.deferred) > 0
+            ? `; stopped on its bound, left for the next tick: at least ${count(body.deferred)} schedule(s)${leftRetries}, ${count(deliveries.deferred)} delivery(ies)`
+            : ''
+    const retried = retries
+        ? `job retries: ${count(retries.started)} started, ${count(retries.failed)} failed to start; `
+        : ''
     return (
         `ticked: ${count(body.spawned)} job(s) spawned from due schedules, ${count(body.failed)} schedule(s) failed; ` +
-        `webhook deliveries: ${count(deliveries.delivered)} delivered, ${count(deliveries.failed)} failed, ${count(deliveries.dead)} dead`
+        retried +
+        `webhook deliveries: ${count(deliveries.delivered)} delivered, ${count(deliveries.failed)} failed, ${count(deliveries.dead)} dead` +
+        left
     )
 }
 
+/** @param {unknown} value one drain's part of the route's JSON, or `{}` when it is not an object */
+function section(value) {
+    return value && typeof value === 'object' ? /** @type {Record<string, unknown>} */ (value) : {}
+}
+
 /**
- * Whether a tick moved anything at all, for a caller that only wants to speak when something happened.
+ * Whether a tick moved anything at all, or stopped on its bound with work left, for a caller that only wants to speak
+ * when something happened.
  *
  * @param {Record<string, unknown>} body
  */
 export function tickDidWork(body) {
-    const deliveries =
-        body.deliveries && typeof body.deliveries === 'object'
-            ? /** @type {Record<string, unknown>} */ (body.deliveries)
-            : {}
-    return [body.spawned, body.failed, deliveries.delivered, deliveries.failed, deliveries.dead].some(
-        (n) => count(n) > 0,
+    const deliveries = section(body.deliveries)
+    const retries = section(body.retries)
+    const stopped = [body.stoppedBy, retries.stoppedBy, deliveries.stoppedBy].some(
+        (reason) => reason === 'items' || reason === 'time',
+    )
+    return (
+        stopped ||
+        [
+            body.spawned,
+            body.failed,
+            retries.started,
+            retries.failed,
+            deliveries.delivered,
+            deliveries.failed,
+            deliveries.dead,
+        ].some((n) => count(n) > 0)
     )
 }
 

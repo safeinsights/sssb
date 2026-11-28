@@ -6422,6 +6422,9 @@ Decisions, each with the alternative rejected:
   for a kit with no stamp, one of the two causes of a refusal), a candidate's notes still name the commit (`sha`), and `docs/adopting.md`'s step 4
   says the same. `docs/releases/v0.2.0.md`, a dated record, still carries the hand edit. Rejected: keeping the hand edit
   beside the command, which would be two ways to do it in every release's notes.
+- **At the new budgets**, five more runs of the destructive shard on CI (one push and four reruns, 2026-11-27): 16 passed
+  each time, in 1.5 to 1.9 min, none flaky. Locally under `next dev` at load ~330, the destructive project passed 16 of
+  16 in 5.8 min.
 - **Not done here:** the generator's own text in a workspace's `README.md` and `CLAUDE.md` (`packages/create/src/files.js`,
   "Raise the pin when you upgrade") still says to raise the pins without naming the command; it stays true, and changing it
   changes what `@sssb/create` writes, so it is a separate change.
@@ -7590,6 +7593,1079 @@ standing rule for these sessions: decide, and record the rejected alternative.
 - **`@sssb/kit` minor** (a new setting, as the brief for #185 asked), Action optional: nothing breaks for a deployment
   that does not set it.
 
+## The authorization scan judges reads (2026-11-27, `fix/authz-scan-get`)
+
+safeinsights/sssb#103. The design is ADR-0012's 2026-11-27 addendum; the calls it did not settle:
+
+- **Every read handler is judged, deny by default.** Rejected: **the issue's trigger** (judge a GET only when it calls
+  `orgIdForSlug`, the app's org resolver, or a tenant-scoped db call with an org id). It fails open on a helper in
+  another module, which the framework cannot name in an adopter's tree; the showcase's service job poll read an org's
+  jobs through such a helper and would have stayed unjudged.
+- **"Reads nothing" is an analyser fact, not a gate kind.** A gate has to be named in an entry, so every adopter's
+  health route would need an exemption for a property the scan can check by itself. Its test is lexical over the whole
+  handler (nested functions, defaults and dead branches count): every name declared outside the handler must be on an
+  allow-list (inert globals, a primitive `const` of the file, `NextResponse`, `next/navigation`'s `redirect`,
+  `permanentRedirect` and `notFound`, SSSB's `appMode` and `isSimulated`). Then only inert values and the request are in
+  reach, so calls on locals and parameters are allowed (`new URL(request.url).searchParams.get`). Rejected: **a check on
+  call heads** (any call whose head is a global the file does not declare), the first version: review found it passed
+  `fetch` to an upstream service, a `declare global` client, and an import in any argument but a bare one
+  (`{ dockets: store }`). Rejected: **an object or array `const`** as inert: `const` fixes the binding, and the file
+  can fill it (`cache[org] = await load(org)`). `fetch` is out: a probe of an upstream service authorizes or names an
+  exemption. It excuses reads only; a mutation that reads nothing still authorizes, as before.
+- **Any `authorize` call counts on a read**, not only `'read'`: the scan does not evaluate the action argument, and a
+  read that checks a stronger action is correct.
+- **OPTIONS is judged** with GET and HEAD, which closes an OPTIONS that reads: a preflight that builds its headers
+  inline from literals (or primitive consts) reads nothing and passes; one that shares a headers object or reads
+  `process.env` authorizes or names an exemption (safeinsights/sssb#220).
+- **The showcase's three unauthorized reads authorize** rather than being exempted: the notification feed (`read
+Notification`, self-only), the preferences (`read NotificationPref`, self-only) and the service job poll (`read Job`,
+  its machine actor). Each subject's rule already granted the read; behaviour for a caller is unchanged.
+- **`storage/[...key]/route.ts` is a framework exemption**, not the showcase's: it is the download twin of the
+  framework's `storage-upload/route.ts`, and an app's exemption key cannot hold `[`, which the app file reads as a glob.
+- **The check keeps its id**, `authz-mutations`, since an app's `optOut` names it; its title says "route
+  handler", and its test "every handler reaches authorize(...), reads nothing, or passes its exemption's gate".
+- **safeinsights/sssb#137 is not in this change.** It reorders five mutating `[id]` routes in the showcase so a person
+  who may not act cannot tell an existing id from a missing one; the scan does not judge order, so it does not fall out
+  of this fix.
+
+## A bounded, fair scheduled tick (2026-11-27, `fix/bounded-drains`)
+
+safeinsights/sssb#97: `runDueSchedules` and `runDueDeliveries` drained every due row of every tenant in one tick, one
+tenant's list after another's, with no bound. A webhook POST may take 10 seconds (`WEBHOOK_TIMEOUT_MS`) and the server
+that runs the cron route has 30 (`SssbApp`, `packages/cdk/src/sssb-app.js:526`), so three slow deliveries could end the tick, and a tenant listed late
+waited behind every other tenant's backlog. Both drains now go through `packages/kit/src/db/drain-budget.ts`.
+
+- **The unit is both rows and time, and it bounds what is STARTED.** A drain starts at most `maxItems` rows (100 by
+  default) and none after its deadline on the wall clock. The time bound is what protects the server's limit; the row
+  bound caps a tick's database work and lets a caller ask for less. Work already started always finishes: cutting a
+  delivery off mid-POST would only turn it into an at-least-once resend. So the deadline leaves room for one more item
+  after it. The deadline is also checked before each tenant's listing query, so a drain out of time lists no further
+  tenant. Rejected: **rows alone**, which cannot keep a tick of slow endpoints under 30 seconds (three of them do not
+  fit); **time alone**, which leaves a caller no way to ask for a small tick and lets a fast backlog run to its window.
+- **The windows run from the tick's start: schedules may start for 8 seconds, deliveries until 16.** Deliveries get a
+  window of their own, so a run of schedules cannot spend the whole tick; a delivery started at 16 seconds has 10 for its
+  POST and about four for its claim, record and audit transactions, a listing query begun just before the deadline, and
+  the response. A schedule's spawn is a few statements, unless the in-process runner runs the job inside `jobs.start`,
+  which no window bounds (that runner already says such work belongs on CodeBuild). Rejected: **one shared deadline**,
+  in which schedules first could leave deliveries nothing. The numbers are the kit's defaults, written beside the
+  arithmetic in `drain-budget.ts`: the kit cannot read `@sssb/cdk`'s 30 seconds, so a change to the server's timeout has
+  to change them too.
+- **Configured as an argument, not a parameter.** `runScheduledTick({ budget })` takes any of `maxSchedules`,
+  `maxDeliveries`, `schedulesWindowMs`, `deliveriesWindowMs`, each falling back to its default when left out or given as
+  `undefined` (an unset environment value must not break the tick). Rejected: **a key in `config/params.ts`**, which
+  every app must hold (`tests/tooling/app-scaffold.test.ts` fails a drift), so it would be a required change for every
+  adopter, for a value that follows the server's limit, which SSSB's deployment fixes, rather than anything an app
+  decides. An app whose server differs changes the one line of its cron route.
+- **A drain called with no budget is unbounded, as before.** The tick always passes one. The Simulator's own controls
+  (its clock and "run due" routes) call the drains directly, run no server limit, and expect a click to run what is due,
+  so they pass none and keep the old behaviour, each tenant's rows oldest first. Rejected (the first cut): **defaults
+  for every caller**, which bounded those routes too, measured their windows from each call so a slow first
+  `db.ready()` could spend one, and dropped the new counts they do not read, so a click could leave work and say nothing.
+- **Fair means round-robin per tenant, in a fresh uniform shuffle every tick, with no per-tenant cap.** A drain takes one
+  row from each tenant in turn, so no tenant has a second turn while another with due work has had none, and one slow
+  endpoint costs each other tenant at most a turn's wait per round. The tenants are put in a uniformly random order every
+  tick (Fisher–Yates from id order, `random` injectable for tests), the same order for the listing and for the turns, so
+  a tick that can serve only some of the tenants with due work serves each with the same chance. Nothing is stored.
+  Rejected, each found wanting in review:
+    - **Tenants in order of their oldest due row** (the first cut). Serving a tenant moves its head only to its next row,
+      so two tenants with old backlogs a thousand rows deep came first every tick and kept a newer tenant out for hundreds
+      of ticks (round 1, simulated).
+    - **A random rotation of id order** (the second cut). The offset was drawn over all tenants, idle ones included, so a
+      tenant's chance of going first depended on how many idle tenants sat just before it in id order: two busy tenants
+      among ten split 1820 to 180 turns over 2000 ticks (round 2, simulated). A shuffle has no such bias.
+    - **A per-tenant cap** on its own, which idles budget while one tenant has work and the rest none; **a stored cursor**,
+      a framework migration for an order a shuffle gives without state; **weighting by time spent** (a tenant whose POSTs
+      are slow gets fewer turns), more machinery than the issue needs.
+- **Under a bound, a tenant's own listed rows are shuffled too.** A schedule whose spawn fails inside its transaction
+  keeps its `next_run_at`, stays the tenant's oldest due row, and would take that tenant's first turn every tick,
+  blocking its healthy schedules for good while the tenant gets one turn (round 2). Shuffled, it takes a turn only by
+  chance. The rows shuffled are the ones listed, the tenant's oldest `maxItems + 1`, so a tenant with more stuck rows than
+  that still never lists its healthy ones: safeinsights/sssb#215. With no bound the rows keep their oldest-first order,
+  since every row runs (a consumer would otherwise see one job's status deliveries in either order). Rejected: **backing
+  a failed schedule off**, a change to the schedule's retry behaviour that belongs with #215, not here.
+- **The remainder is never touched, so it is never lost or run twice.** A row the drain does not start gets no claim, no
+  lock and no write, and stays due; the next tick lists it again. Running twice is still prevented where it was: each
+  drain's locked re-check of the row (two overlapping ticks included). A tick reports what it left as `deferred` and
+  `stoppedBy` (`'items'`, `'time'` or null), for schedules and inside `deliveries`, which the route's JSON, the scheduled
+  tick's log line, `pnpm tick` and the dev ticker show (the ticker speaks on a stopped tick even when it started
+  nothing). `deferred` is a lower bound: each tenant is listed with a `LIMIT` of one more than `maxItems`, enough to tell
+  a drain that stopped on its bound from one that ran out, and a listing the deadline cut short leaves later tenants
+  uncounted.
+- **The listing itself is still one query per tenant per drain**, as before: a tick with many tenants spends part of its
+  windows listing. safeinsights/sssb#202.
+- **The static demo's in-browser twins of the drains are unchanged**: no server and no time limit there.
+- **Proofs.** `drain-budget.test.ts` pins the turns, both bounds, the listing cut, the shuffle's uniformity (idle tenants
+  included), the cross-tick starvation case with deep backlogs, and stuck rows across tenants and within one; the
+  schedules and webhooks tests each run a starvation case on the fake database (a busy tenant's backlog, a slow endpoint
+  whose POSTs each take ten seconds of the tick's clock, and another tenant's single row still served in the same tick,
+  with what was left served once in later ticks); `db.contract.test.ts` runs the bounded schedules drain on real
+  Postgres under RLS. Removing the round-robin, the shuffle of tenants or of rows, or the deadline check turns tests red.
+
+## An SSL mode for the pg transport (2026-11-27, `fix/pg-ssl-mode`)
+
+`safeinsights/sssb#96`: neither the server's `pg` adapter nor the Migrator set TLS, so a connection was encrypted only
+if `DATABASE_URL` asked for it (SssbApp's never did), and the URL the Migrator builds from the secret carried none. Now
+both connect with one explicit mode, read by one function (`databaseSsl` in
+`packages/kit/src/adapters/real/database-transport.ts`) and applied by `createRealDb`, whose `ssl` argument is required.
+
+- **The default is `verify-full`**, and an unset or empty `DATABASE_SSL_MODE` means it: TLS, the chain checked
+  (`rejectUnauthorized`) and the host checked against the certificate's names (Node's `checkServerIdentity`, given the
+  host by `pg`). Empty is the default here, unlike `CLERK_AUTHORIZED_PARTIES`'s, because the default is the strict
+  value: a template whose input went missing fails closed. Rejected: **`require`** as the default or a mode (TLS that
+  accepts any certificate stops a passive listener, not an active one, and the RDS roots are at hand), **`prefer`**
+  (falls back to plaintext), and **`verify-ca`** (trusts the CA and not the host, which on a public CA trusts anyone
+  it issued). The modes are `verify-full` and `disable`, nothing between.
+- **The roots are a file, `DATABASE_SSL_ROOT_CERT`** (an absolute path, libpq's `sslrootcert`): when set, its
+  certificates are the only roots that one connection trusts (`ca`); unset, Node's own (its bundled roots and
+  `NODE_EXTRA_CA_CERTS`), which suits a host whose certificate chains to a public root. Aurora's chain to Amazon RDS's
+  roots, which Node does not trust. **How the CA reaches a Lambda:** the Lambda Node.js runtime from Node 20 carries
+  the Amazon CA certificates, RDS's among them, at `/var/runtime/ca-cert.pem`, and no longer loads them (AWS Lambda's
+  guide, "Using AWS Lambda with Amazon RDS"). `SssbApp` points `DATABASE_SSL_ROOT_CERT` at that file on both Lambdas,
+  which run on `NODEJS_22_X`. Rejected: **`NODE_EXTRA_CA_CERTS`** pointing at the same file (widens every TLS
+  connection the process makes, and AWS notes that loading the whole bundle at start slows a cold start), and
+  **shipping the RDS bundle in `@sssb/kit`** (a CA file SSSB would have to track through AWS's rotations; the
+  runtime's is AWS's to keep current). A Lambda built from a container image may not have that file: an adopter on one
+  puts the RDS bundle in the image and sets the path to it.
+- **Not a `config/params.ts` key.** `SssbApp` always builds Aurora, which always offers TLS, so there is no deployment
+  of the construct that should choose anything but `verify-full` against the runtime's bundle; a key would be a choice
+  with one right answer, in every app's params and `tests/tooling/app-scaffold.test.ts`'s same-keys rule. The
+  variables are the override, for a deployment of the adopter's own (another Postgres host) and a local real-mode run;
+  `SssbApp` sets them, as it sets `DATABASE_TRANSPORT`. Rejected: **an optional `params.database.ssl`**, which no
+  `SssbApp` deployment could set to anything else safely.
+- **The URL may not carry TLS of its own.** `pg` merges what it parses from the URL over the config it is given, so
+  `?sslmode=disable` (or `no-verify`, or an `sslrootcert`) would silently replace the mode. `createRealDb` refuses a
+  URL with any parameter named `ssl*` or `uselibpqcompat`, read as `pg-connection-string` reads it, and names the
+  parameters, never the URL. Rejected: **stripping them**, which answers a URL that asked for something with something
+  else, and **honouring the URL when the variable is unset**, which is the implicit default the issue is about. A
+  `DATABASE_URL` of an adopter's own that sets `sslmode` fails at boot after the upgrade, with the fix in the message;
+  the changeset says so.
+- **Local and contract runs use `disable`.** `pnpm dev` is simulated (pglite, no `pg` at all), so it is untouched. The
+  contract runner's embedded Postgres and CI's service container have no TLS, so `startContractServer` connects with
+  `{ mode: 'disable' }` (`CONTRACT_SSL`); a `CONTRACT_DATABASE_URL` carrying `sslmode` is now refused like any other
+  URL (a contract server that requires TLS would need a mode of its own, which nobody has asked for). TLS itself is
+  proven by `packages/kit/src/adapters/real/db-tls.contract.test.ts`, which starts an embedded Postgres of its own
+  with a certificate it makes with `openssl`, answering TCP only over TLS: `verify-full` migrates and serves
+  (`pg_stat_ssl.ssl` is true), `disable` is refused, and an untrusted root or a host the certificate does not name is
+  refused. Breaking the mode's verification turns two of its cases red.
+- **The Data API is unaffected**: it speaks HTTPS through the AWS SDK, which checks AWS's certificate. `assertRealEnv`
+  checks on `pg` only (row `db-tls`, a `CutoverPendingError`) the variables' shape and a `DATABASE_URL` that would
+  override them, and reads no file, since the path SssbApp sets exists only on Lambda and `sssb check-real-env` runs
+  anywhere; SssbApp sets neither variable on `data-api`.
+- **Required environment unchanged** (both variables are optional), so no release snapshot moves. The changeset still
+  files `minor`, Action required: a deployment of the adopter's own whose host has no TLS, or whose certificate chains
+  to a root Node does not trust, breaks until it sets the variables.
+- **Not done here: forcing TLS on the cluster** (`rds.force_ssl` in a cluster parameter group SssbApp would add). It
+  is the server-side half, and it changes a stateful resource of every deployed stack; filed as
+  `safeinsights/sssb#207`.
+- **Refused as well, from review**: a root file holding no PEM certificate (Node takes an empty `ca` as none and
+  trusts its own roots, so an empty or truncated bundle would quietly widen trust), and `NODE_PG_FORCE_NATIVE` (`pg`'s
+  native client passes libpq only `sslmode` and file keys from the `ssl` option, so every mode would reach it as
+  libpq's default, `prefer`). Rejected: **a warning when `disable` names a host that is not loopback** (a reviewer's
+  suggestion): a compose network's `db` is not loopback either, and the docs and the cutover row already confine
+  `disable` to a server with no TLS.
+
+## The Clerk adapter: one read per render, the keyless fallback closed, a client sign-out (2026-11-27, `fix/clerk-adapter`)
+
+safeinsights/sssb#200, #193 and #180, together because all three are SSSB's real Clerk adapter.
+
+- **#200: a per-render memo, not a cross-request cache or session claims.** `getCurrentUser` and `listMyOrgs` share
+  two reads (the account, the memberships) through React's `cache`, which gives each server render its own store and
+  is a pass-through anywhere else. So reading the signed-in person costs a page render at most two Backend API calls
+  (a page per 100 orgs more; other calls, such as a team's members, are not shared),
+  and nothing outlives the request: a role change, a removal or a ban shows on the next one, with no bound to
+  document beyond that. Writes the adapter makes (`updateProfile`, `setActiveOrg`) drop the person's reads, so the rest
+  of the render sees them. Rejected: **a time-bounded cache per user**, which on a deployment of several server
+  instances serves a stale org right after a switch (the switcher reloads the page; another instance answers it) and
+  cannot be invalidated across instances; and **custom session claims** (the role and metadata in the token), which
+  need a Clerk dashboard change per instance, SSSB's role lives on the membership rather than in Clerk's active-org
+  claim, and the claims lag a switch until the token refreshes. Both need a live measurement first: filed as safeinsights/sssb#214.
+  Route handlers are not memoized (React's `cache` has no store there), and read on each call. Proven
+  with React's `cache` simulated in `auth.test.ts`, never in a real Next render.
+- **#193: the adapter refuses to read a session while Clerk's keyless fallback can be reached.** Clerk decrypts the
+  request data its middleware writes under a published key outside a production build (when no secret key is set, or,
+  in keyless mode, after the real key fails) and then trusts the secret key that data names to check the token header.
+  On a path the proxy skips, nothing overwrites a caller's headers, so anyone could be signed in. `clerk-keyless.ts`
+  is asked before every `auth()` and `clerkClient()` in `auth.ts` (Clerk's client decrypts the same data and takes
+  its API URL from it): outside `NODE_ENV=production` it requires `CLERK_SECRET_KEY` itself (with an encryption key
+  alone, Clerk checks the token header against an empty key) and `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED` `1` or `true`, a subset of what Clerk's `isTruthy` reads as set. Stricter
+  than Clerk on purpose: it ignores Clerk's CI exemption and holds under `NODE_ENV=test`, so it copies none of Clerk's
+  environment lists. The showcase's `dev:real` sets the variable. `clerk-keyless.clerk.test.ts` drives Clerk's real
+  `auth()` with forged headers: signed in as Clerk ships, refused by the adapter, and refused by Clerk once the variable
+  is set. Rejected: **only setting the variable in scripts**, which an adopter's own `next dev` would miss silently;
+  **re-checking the token header's HMAC against `CLERK_SECRET_KEY` in the adapter**, which copies Clerk's header names
+  and signature scheme; **a marker header from `withClerk`**, which needs a secret shared between the proxy and the
+  route and breaks where the proxy runs apart from the server; and **guarding `withAuthProxy`**, which a skipped path
+  never reaches. The matcher's dot rule stays (the guide says a page path has none); this closes the hole whatever the
+  matcher skips.
+- **#180: `RealUserMenu`, rendered by the server layout and handed to the client header glue.** The layout loads it by
+  `import()` in real mode, as the sign-in page loads `RealSignInForm`, and passes it as a `userMenu` node; its props are
+  plain data (`profileHref`, `signedOutHref`) because a function cannot cross from a server component. It signs out
+  through Clerk's client by session id, and falls back to the sign-out route (the framework's `auth/signout`, which
+  revokes the server-read session alone) until Clerk has loaded or if Clerk's sign-out fails, rather than signing
+  nobody out as `RealAccountRefused` does: a menu has no place to say so. Added to the `real-auth-provider` check's forms.
+
+## The secret scan reads the commits it is asked about, not every branch (2026-11-27, `fix/secret-scan-scope`)
+
+`safeinsights/sssb#106`: `secret-scan` ran `gitleaks git` with no `--log-opts`, which gitleaks 8.30.1 turns into
+`git log -p -U0 --full-history --all`, and the `fetch-depth: 0` checkout puts every branch of the remote in the clone.
+One branch's secret-like string failed the scan on every other open pull request. The range is now picked by
+`.github/scripts/secret-scan-range.sh` from the event, and the generator's workflow and root files carry both.
+
+- **The range.** `pull_request`: `<base sha>..<head sha>` from the event payload, so a commit the pull request added and
+  deleted again is still read. `push` (only `main` triggers `checks.yml`): `HEAD`, the pushed branch's full history, so
+  what reaches `main` is scanned in full. Any other event exits non-zero with no output: a new trigger decides its range
+  in review. Rejected: **a default of `HEAD`**, which would scan a `workflow_dispatch` or merge-queue run's whole
+  history under a name that says it scanned the change; **no default**, which is the bug. Rejected: **the merge
+  commit's parents (`HEAD^1..HEAD^2`)**, which `docs-only.sh` uses and which names the base tip at the time the run
+  started rather than at the event; the issue's design reads the event's shas, and a base that moved on makes the range
+  larger (the commits the branch merged in that the stale base does not reach), never smaller, so it fails toward
+  scanning more. A re-run reads the same payload.
+- **Quoting.** gitleaks splits `--log-opts` on spaces and warns about a value with quotes in it, so the script prints one
+  space-free line and the step passes it as `--log-opts="$range"`, the shell removing the quotes. The step takes the range
+  in a statement of its own (`range=$(...)`): a failed command substitution inside another command's arguments does not
+  stop a `bash -e` step, and gitleaks would run with an empty value, which is `--all` again. `${range:?}` is the second
+  guard. The shas arrive as environment variables, never interpolated into the script text, and the script accepts only
+  a full 40 or 64 digit id that is a commit in the clone (a ref name, an option or a range would otherwise reach
+  `git log` as one).
+- **Scope of the copy.** A generated workspace's `checks.yml` had the same job, so the generator writes the same step and
+  copies the script as it is (`ROOT_FILES`); a changeset for `@sssb/create` (Kind scaffold, optional: the old scan keeps
+  working, with the old bug) says how an existing workspace takes it. `app-checks.yml` and `sssb ci` have no scan.
+- **What is no longer scanned early.** A commit pushed straight to a branch that is not `main` (an `int-*` branch, say)
+  used to fail every pull request's scan; now it is read when it reaches `main`, in the pull request into `main` and
+  then the push. A pull request into that branch does not read it either: it is reachable from the base. With
+  `--log-opts` set, gitleaks 8.30.1 drops its own `--full-history` and `--diff-filter=tuxdb` (debug output:
+  `git log -p -U0 HEAD`, against `git log -p -U0 --full-history --all --diff-filter=tuxdb` without it); a pull request
+  that deletes a file holding a secret already on its base still reports nothing, as before (throwaway repository).
+- **Not done here.** The scan on a push to a branch other than `main` (none triggers it today), and gitleaks'
+  stopword behaviour (named out of scope in the issue).
+
+## Job retries with backoff, a new row per attempt (2026-11-27, `fix/job-retries`)
+
+safeinsights/sssb#135: a job was tried once, and `failed` ended it for good, whether the handler threw, a build failed
+or the in-process runner lost it. A kind may now opt in to retries. The issue listed its open questions in order; each
+is answered here.
+
+- **A retry is a new job row, not the same row.** The issue asked for the new-row sketch to be tried first, and it was
+  kept. Framework migration `0019_job_attempts` gives `jobs` an `attempt` (from 1), a `retry_of` (the FIRST attempt's
+  id, so every attempt points at one key) and a `run_after` (set only while a retry waits out its delay). `failed` stays
+  terminal: `jobStatusMachine` is unchanged, and so is the idempotency `recordWebhookCompletion` stands on. A
+  redelivered failure finds the row already `failed`, answers `idempotent`, and arms nothing more. Each attempt keeps its
+  own timeline, and the first attempt's error is never overwritten by a later one. The cost is several rows for one piece
+  of work in a job list; the views now carry `attempt` and `retryOf` so a screen can group them. Rejected: **the same
+  row going `failed -> queued`**, or a new `retrying` status. That loosens the one rule the webhook's idempotency and the
+  timeline's meaning rest on, and leaves a status a dashboard and a service poller would both have to learn.
+- **Opt in per kind, default none, in the seam beside `jobNotify`.** The optional `jobRetry` export holds
+  `Partial<Record<AppJobKind, JobRetry>>`, with `JobRetry = { attempts, delaysMs? }`. It is read through the seam's
+  namespace, as `jobNotify` is, so an app without the export builds and runs every kind once.
+    - An entry SSSB will not honour (`isJobRetry`: attempts not a whole number from 1 to `MAX_JOB_ATTEMPTS`, 10, or a
+      delay that is negative or not finite) counts as absent. A typo must never become a hundred runs of a failing job.
+    - The framework's own kinds never retry.
+    - With no `delaysMs`, the delays are the webhook deliveries' backoff (`backoffDelayMs`), reusing what already exists.
+      The last delay repeats when the list is shorter than the attempts.
+- **Arming happens at the failure, in its transaction.** `recordJobStatus`, the one choke point every runner's failure
+  goes through, inserts the next attempt in the SAME transaction that records `failed`. That covers a handler's throw
+  (`runJobInProcess`), the in-process sweep's lost job, a build's failure webhook, and a start the drain could not make.
+  The new row is queued, with `run_after` set to the failure plus the delay, and copies the kind, org, payload and
+  requester. Its opening timeline entry reads `attempt N of M, after: <error>`, and the failed entry reads
+  `retry armed: …`. So no failure can happen without its retry being durable, and none can arm twice.
+    - The clock is the caller's (`extra.now`): the simulated runner passes the world clock and the sweep passes the tick's.
+      That way a demo that moved its clock reaches a retry by moving it again.
+    - Rejected: **arming in a separate step after the failure commits**, which a crash between the two would lose.
+- **The scheduled tick starts the next attempt.** A retry cannot wait inside the invocation that failed. It gets a
+  third drain, `runDueRetries`, built on #97's machinery: listed per tenant under `withTenant`, taken in fair turns, and
+  bounded by its own window, so the tick's windows are now schedules 6 s, retries 10 s and deliveries 16 s, re-divided
+  inside the same 30-second limit.
+    - It claims a row the way the delivery drain claims a delivery: lock it, check it is still waiting and due, and clear
+      `run_after`. Only after that commits does it call `jobs.start` with the attempt and the first attempt's id. From the
+      claim on, the row is an ordinary queued job, so every runner treats it as it treats a submitted one.
+    - A start that throws (StartBuild refused) records the attempt failed, which arms the next.
+    - The tick's period is the floor under any delay; the guide says so where a kind sets one.
+    - Rejected: **a timer in the process**, which a Lambda does not have; and **retrying inside the failing invocation**,
+      which shares its limit and may be what died.
+- **Idempotency is the handler's.** SSSB tells a handler `ctx.attempt` and `ctx.firstJobId`, the key it deduplicates its
+  side effects on, and passes both to a CodeBuild build as `JOB_ATTEMPT` and `JOB_FIRST_ID`. The guide states the
+  requirement.
+    - Both context fields are optional in the type, though SSSB's runners always set them. A required field would break
+      every adopter test that calls a handler with a hand-built context (the showcase's export test does).
+    - A time-budgeted handler that returns having done part of its work has succeeded, and is not retried.
+- **Lost jobs.** The in-process sweep leaves a waiting retry alone (`run_after` is set), since it is the tick's to start,
+  not lost. A job the sweep fails as lost arms its retry like any other failure.
+    - The simulated world loses no jobs and has no sweep.
+    - CodeBuild has no lost-build detection at all: a build that dies without posting its webhook is never noticed, so it
+      is never retried. Closing that gap is its own change: safeinsights/sssb#231.
+- **Notifications are about the job's end.** `notifyJobTerminal` skips a failure that armed a retry: it checks for a
+  later attempt of the same work, so every caller (the runners, the webhook route, the sweep) gets it without a
+  parameter. `jobNotify`'s `failure` therefore means a failure with no attempts left. The payload gains `attempts` when
+  the attempt is above 1, and the catalog says "did not finish after N attempts". Whether a retry writes an
+  `audit_events` row is #156's question, left with it. The timeline is the record here.
+- **The Simulator.**
+    - "Run pending jobs" and the builder actor's pool skip a retry still waiting: an operator must not jump a backoff by a
+      click.
+    - The clock advance and run-due also run `runDueRetries` (`simulator-api.ts` and the showcase's two routes). Advancing
+      past a delay is how a demo reaches a retry.
+    - The static demo's twin gets the same map through `useDemoWorld({ jobRetry })`, plus a `jobOutcome` hook, the twin
+      of a handler that throws, since it could only complete a job before.
+- **safeinsights/sssb#215 is not covered.** A schedule whose spawn fails inside its transaction creates no job row, so
+  there is nothing for a job retry to retry. What it needs is a policy for the schedule row itself (disable an
+  unparseable spec, back off a transient failure), with its own question of who sees it. It stays open.
+- **Proofs.** `db/job-retries.test.ts` runs every server runner through the issue's cases, each checking the rows, the
+  timeline, the notification and, for CodeBuild, the redelivered webhook:
+    - succeeds first time; fails then succeeds; fails every attempt; and, on the in-process runner, is lost then succeeds;
+    - a kind that does not retry;
+    - two drains racing one retry;
+    - a start that throws;
+    - the Simulator skipping a waiting retry.
+
+    Removing the arming, the notifier's skip, the sweep's or run-pending's exclusion, the drain's under-lock re-check,
+    the delay, or the first job id's hand-off each turns them red. `core/jobs.test.ts` covers the seam reader;
+    `db.contract.test.ts` arms and drains a retry on real Postgres under RLS; `demo-static/world-job-retries.test.tsx`
+    runs the twin through the same cases and holds its copy of the policy to core's answers.
+
+- **What review changed** (two review rounds on Opus, then a check of the second round's fixes as a diff).
+    - **A waiting retry is hidden from a service caller.** `listServiceJobs` lists a job a service may run, and a
+      waiting retry is not one yet; the Simulator's service actor would otherwise have run every armed retry at once.
+      `listServiceJobs` therefore leaves it out, and the twin's service driver too.
+    - **Any hop out of `queued` clears `run_after`.** A path that reached the retry anyway (a caller that knew its id, a
+      webhook) takes it out of the drain's list.
+    - **A last attempt that could not start notifies.** A start that throws is recorded failed. Before review, the drain
+      then told no one, even when that was the job's end. `runDueRetries` now takes an `onFailed`. The tick and the
+      Simulator's clock and run-due controls pass `notifyRetryEnd`, which calls `notifyJobTerminal`, and that skips a
+      failure that armed a further attempt.
+    - **A delay over 30 days (`MAX_JOB_RETRY_DELAY_MS`) is refused.** A delay past JavaScript's date range would
+      otherwise throw inside the failure's transaction and leave the job unrecordable. The twin's copy of the check
+      carries the same cap.
+    - **The twin honours the jobs-held knob** for a due retry: it is left queued for Run pending, as `fakeJobs.start`
+      holds one on the server.
+    - **The views' new fields are optional** (`JobView.attempt`, `.retryOf`, the same on `ServiceJobView`), so a story or
+      test that builds a view by hand still compiles. The list functions always set them.
+- **Limitations accepted.**
+    - **A StartBuild that throws after the build really started** records that attempt failed and arms the next. The
+      build's own `completed` webhook is then refused with a 409, `failed -> completed`, and the work may run twice.
+      `submitJob` leaves a job queued when its start throws, but the drain cannot: on CodeBuild a queued job with no build
+      is lost for good (safeinsights/sssb#231). A failure the next attempt repairs costs less.
+    - **In a simulated world, a retry armed through the jobs webhook or the service status route uses the real clock.**
+      Those routes pass no `now`. After the world clock has been moved forward, such a retry is due at once. The runners'
+      own failures and the sweep use the world clock.
+    - **The static demo's twin** delivers a webhook a retry enqueued during a clock advance at the next drain, not in the
+      same advance, as the server's tick does.
+    - **The showcase's static bundle has about 11 KB of its size budget left** after this change (`pnpm check:demo-size`
+      passes with a warning).
+
+## One answer for a missing id and a refused one (2026-11-27, `fix/id-existence-oracle`)
+
+safeinsights/sssb#137. The showcase's mutating `[id]` routes looked the row up, answered 404 when it was missing, and
+only then authorized, so a person in the active org who may not act got 403 for an id that exists and 404 for one that
+does not: one bit of existence, against the routes' own comments.
+
+- **Both of the issue's designs, each where it fits.** Where the subject's org is the active org the session resolves
+  to (tickets, attachment confirm, webhook endpoints), `authorize` moves before the lookup: a refusal is the same 403
+  for any id, and an allowed caller still gets 404 for a missing or foreign id. Where the subject's orgs come from the
+  row (the two-sided escalation, cancel and respond), the lookup has to come first, and the refusal is rethrown as
+  `NotFoundError`, the same status and body (`{ error: 'not found' }`, `withPortErrors`) as a missing row. Rejected:
+  **mapping every refusal to 404**, which would tell a restricted member who can see the queue that a ticket they are
+  looking at does not exist, where the reorder gives them an honest 403 that reveals nothing.
+- **The class, not only the five routes.** Review found the same oracle in `POST /api/escalations`, on an org slug in
+  the body: the responder org was resolved, and 404 `unknown responder org` returned, before `authorize`, so a person
+  with no standing (refused the list that shows the targets) could learn which org slugs exist. It now authorizes once
+  on the requester side before the responder is resolved (the create rule reads only that side), and again with both
+  sides after. `service/jobs/[id]/status` moves its `authorize` before the lookup too; its only callers are service
+  keys in their own org, which the framework's machine rule always grants, so nothing leaked there today, but it was
+  the example that contradicted the rule. The guide's rule is stated for any lookup keyed by request input.
+- **The escalation routes' missing row throws the same `NotFoundError` the refusal is rethrown as**, so one mapper
+  (`withPortErrors`) writes both answers rather than two literals agreeing by hand.
+- **A malformed id is still a 404 before `authorize`** (`requireUuidParam`), on every route: a refused caller gets 404
+  for a non-uuid and 403 for a uuid, which tells them only the id's shape, which they wrote.
+- **A responder-side member who may not decide gets 404 for an escalation they can see**, which is what the
+  reorder was chosen to avoid for tickets. The issue's "Done when" requires it, and the dashboard shows that member no
+  decide controls, so only a forced request meets it.
+- **Rejected for escalations: authorizing the read first**, then the action after the lookup. It hides existence from
+  anyone who may not read escalations, but a reader who may not decide would still get 403 for an existing id and 404
+  for a missing one, which the issue's "Done when" rules out.
+- **The rethrow sits in a `catch` that always throws**, so the authorization scan still counts the `authorize` call
+  (a `catch` that returns would swallow it). It is written inline in each route: a helper in another module would not
+  count.
+- **A refused attempt is not audited.** The issue asked whether the audit trail should record one; no route records a
+  refusal today, and doing so is a design of its own (an audit action per refusal, and who reads them).
+- **The starter gains no `[id]` route.** Its Items slice has none, and adding one to demonstrate the rule would grow the
+  scaffold every adopter deletes (`sssb remove-items`'s diffs with it). The rule goes in the app guide instead.
+- **No conformance check.** The authorization scan proves a handler may reach `authorize`, not the order of calls, and
+  it cannot tell which call is the row lookup in an app's own code, so an order check would be a guess about names.
+  The guide says to pin the rule with a route test, as the showcase's routes now do.
+
+## Two edges of real sign-in: before Clerk loads, and a session a failed finalize left (2026-11-27, `fix/sign-in-edges`)
+
+safeinsights/sssb#198, in `packages/kit/src/adapters/real/sign-in-form.tsx`.
+
+- **The password waits for `useClerk().loaded`**, and the button shows `loading` until then. `loaded` reads clerk-js
+  itself (`IsomorphicClerk`), and Clerk's provider re-memoizes its context on every status change, so the form
+  re-renders when clerk-js loads (@clerk/react 6.18.8, @clerk/shared 4.45.1). Rejected: **`useAuth().isLoaded`**,
+  which reads Clerk's auth state rather than clerk-js itself; and **re-reading the attempt after load**, which depends
+  on what `GET /client` returns after a reload, the issue's open question. A clerk-js that never loads leaves the
+  button busy: there is nothing to sign in with then.
+- **The form holds the session from the moment an attempt is complete** (`held`, `attempt.createdSessionId`, read
+  before `finalize`, rather than later from an attempt a failed `finalize` may have changed). That covers both routes to a
+  complete attempt: the password alone and an accepted code. While a session is held, Back from the step, or a
+  "Sign out" button on the password form (the existing `auth.signOut` copy), signs it out with Clerk's `signOut`
+  (`useClerk()`) by id, and only while `clerk.client.signedInSessions` still has it; one the client no longer holds is only forgotten. The
+  password cannot be submitted while a session is held. Under the app router Clerk navigates with the router's `push`
+  (@clerk/nextjs 7.10, `useAwaitablePush`; that `signOut`'s `redirectUrl` goes through it is clerk-js's, unread here),
+  which keeps the form, so the form resets itself, its error included, once the sign-out answers and the client no longer
+  holds the session; a sign-out that fails, or answers but leaves the session, shows the existing
+  `refusedSignOutError` copy with the button still there. A finished sign-in clears `held` and keeps the form busy
+  while the browser leaves. Rejected: **reading the session at Back time** (round-1 review: an emptied attempt signs
+  nothing out); **gating on the form's own "code accepted" flag**, which misses the password-only route; and
+  **retrying `finalize` instead**, which leaves no way to abandon a sign-in started on a shared computer.
+
+## The LLM adapter has a deadline, and the provider's limits are a port error (2026-11-27, `fix/llm-timeout`)
+
+`safeinsights/sssb#98`: `createRealLlm` built the SDK client with a key and nothing else. The SDK's timeout is ten minutes
+per attempt and it retries twice, while the app server's function has 30 s (`packages/cdk/src/sssb-app.js`), so a slow
+call ended as a killed invocation, and a provider 429 or 529 ended as the SDK's own error, a plain 500 in a route.
+
+- **One deadline per port call, enforced by an abort signal.** `complete`, `stream` and `runToolLoop` each start a timer
+  and pass its signal (and the same figure, rounded up to the integer the SDK wants, as the SDK's per-attempt `timeout`)
+  to every SDK call they make; the SDK's `timeout` alone covers one attempt, which a retry restarts. A tool loop's
+  deadline covers every turn **and the app's `execute`** between them, since a person waits through those as well:
+  `execute` takes no signal and cannot be stopped, so the loop stops _waiting_ for it when the deadline passes (the
+  tool runs on) and the call ends as `timed-out` on time; an `execute` that throws first surfaces as it threw, never as
+  an LLM error. A stream's deadline starts when it is first iterated and ends when it is left, early exit included,
+  which also aborts the request. Two places where an abort does not arrive as the SDK's `APIUserAbortError`, both
+  mapped to `timed-out`: the platform's own `AbortError` when the deadline passes while a non-streaming body is being
+  read, and a stream whose iteration the SDK ends quietly, with no error, when the deadline passes while the consumer is
+  busy between chunks (the adapter awaits the stream's `done()` after the loop, which throws what ended it, so a cut-off answer
+  never reads as a complete one: a deadline, a mid-stream overload and a dropped connection alike). Rejected: `AbortSignal.timeout`, which a fake clock does not drive.
+- **25 s by default.** The function has 30 s and a route needs a few seconds to answer; a call still waiting at 25 s ends
+  as an error the route turns into a 503, where one that waits to 30 s ends as a killed invocation.
+  Exported as `LLM_DEFAULT_TIMEOUT_MS` from `core/llm-timeout.ts`, which also holds `llmTimeoutMs`, shared with the fake
+  adapter so a bad value (`0`, `NaN`, `Infinity`, a string, more than 2^31 - 1 ms, which Node's timers fire after 1 ms)
+  is a `RangeError` in both: a timer would read `0` as "now" and `Infinity` as "never".
+- **The adapter retries, once, and the SDK does not.** The SDK's own retries are off (`maxRetries: 0`): it sleeps a
+  provider's whole `Retry-After`, so a 429 that asks for 60 s idled the call to its deadline and ended as `timed-out`
+  with the provider's figure lost. The adapter repeats a call the SDK's policy would have (408, 409, 429, 5xx, a dropped
+  connection) plus a rate limit or overload however it arrived, never one marked `x-should-retry: false`, waiting the
+  provider's `Retry-After-Ms` or `Retry-After`, else 0.5 s doubling to 8 s, **only when twice that wait is less than
+  what is left of the deadline**, so the retry gets at least as long as the wait (a provider wait that only just fit was
+  slept almost whole and then left the retry no time: found in review); otherwise it answers at once with `rate-limited` or `overloaded` and the provider's figure.
+  A stream starts again only if it has delivered no text. One retry per request to the provider (a tool loop's turns each get one; the deadline bounds the total), because a second would spend most of a 25 s
+  deadline on a provider that is not answering; `RealLlmOptions.maxRetries` changes it for an app that builds the adapter
+  itself. Rejected: the SDK's retries with a signal (the loss above); a retry loop that keeps the last provider error
+  and prefers it after a timeout, which would still idle the server for nothing.
+- **A job's call may have longer, per request, not by default.** `timeoutMs` is an optional field of `LlmRequest` and
+  `LlmToolLoopRequest`: the handler knows its work, the adapter cannot tell a job's call from a route's (both get the
+  same `llm` from the registry), and the runner's own limit differs (the in-process runner runs inside the server's invocation and shares its limit, so there 25 s stays right:
+  `packages/kit/src/adapters/real/jobs-in-process.ts:28-32` says work that may outrun it belongs on the CodeBuild runner). Rejected: a second port instance for jobs, which every
+  adopter's job context would then have to wire; an environment variable, which would change `required-env.json` for a
+  figure most deployments leave alone and could not differ between two calls of one process. An app that builds the
+  adapter itself sets the default with `createRealLlm(key, { timeoutMs })`, as `apps/showcase/scripts/llm-record.ts`
+  does (two minutes: nobody waits on a recording).
+- **`LlmUnavailableError` is a port error (`@sssb/kit/ports/errors`),** the sibling of `DatabaseUnavailableError`: a
+  `reason` in no vendor's words (`rate-limited` for a 429 or a `rate_limit_error`, `overloaded` for a 529 or an
+  `overloaded_error`, which the provider also sends mid-stream on a 200 with no status, and `timed-out` for the deadline
+  or the SDK's attempt timeout), the SDK's error as its `cause`, and a `retryAfterSeconds` that is the provider's `Retry-After-Ms` or `Retry-After`
+  (whole seconds, clamped to 1 to 120; a date or nonsense is ignored) or 10. 10, not the database's 5: a rate limit or an
+  overload does not clear in the seconds a resume takes. Every other provider error (400, 401, 500, a dropped
+  connection) is returned as the SDK threw it: they are bugs or outages a retry does not mend, and a 503 for them would
+  tell the client to ask again. Rejected: a status on the error (a vendor's number in the port), and a flag saying the
+  work did not happen: a `timed-out` call may have been billed and a tool loop may have run some tools.
+- **Both apps' `withPortErrors` answers it with a 503, `Retry-After: retryAfterSeconds`, `{ error: 'llm-unavailable',
+reason }` and a logged warning,** the shape of the database's answer. That function is the app's, so an adopter applies
+  it by hand (a scaffold changeset for `@sssb/create`). A job handler lets it propagate, which fails the job (`runJobInProcess` records the error message).
+  A stream that has begun its response cannot change the status: the error ends the iteration, and the guide says so.
+- **The fake adapter replays instantly, so it checks `timeoutMs` and nothing else.** It cannot rate-limit or time out
+  without a fixture format for failures, which would be a feature of its own; the 503 mapping is proved with the error
+  thrown by hand (`respond.test.ts`), and the adapter's mapping with the SDK's real error classes behind a stubbed
+  `fetch` (`adapters/real/llm.test.ts`: no network, the SDK's retry and abort code runs).
+- **A large `maxTokens` is no longer refused locally.** The SDK refused a non-streaming call whose `max_tokens` implies
+  more than ten minutes, but only when it chose the timeout; passing one skips that check, so `complete` and
+  `runToolLoop` with a large `maxTokens` are now sent, bounded by the deadline instead.
+- **The kit changeset is Kind seam, Action required (a `minor`).** A call that took longer than 25 s used to succeed and now
+  fails, so an app whose job runs on a runner without the server's 30 s limit (CodeBuild) breaks if it does nothing: its
+  handler passes a longer `timeoutMs`. A request-path call, and a job the in-process runner runs inside the server's
+  function, need nothing. (First written as optional; `.changeset/README.md`'s rule is that a change an adopter who does
+  nothing breaks on is required.)
+- **Not done here.** The `llm-key` cutover row still holds the live check; its verification list gains nothing, since a
+  live 429 or a slow call is not something to provoke on purpose.
+
+## The Data API emulator reads a plain literal's backslash as the Data API does (2026-11-27, `fix/emulator-backslash`)
+
+`safeinsights/sssb#201`: an app's query with `ESCAPE '\'` and a parameter after it passed the contract run, and the real
+Data API answered `syntax error at or near ":"` (seen live, 2026-11-24). Postgres, with `standard_conforming_strings` on,
+reads `'\'` as a complete literal; the Data API finds `:name` parameters with a scanner of its own, and the error says a
+`:` reached Postgres, so that scanner did not see the parameter as code.
+
+- **What the emulator does.** Its parameter scan (`toPositional`) now reads SQL with `sqlSegments(sql, { dataApiReading:
+true })`, in which a backslash escapes the next character in a plain `'…'` literal too, so `'\'` does not close and the
+  literal runs on to the next quote. A `:name` in that stretch is left in the text; Postgres is handed a bare `:kp1` and
+  answers `syntax error at or near ":"`, the message the live Data API gave; the emulator wraps it as `DatabaseErrorException`, as it does any database error. The
+  dialect keeps Postgres's rules for `$n` (`rewritePlaceholders`): it rewrites the SQL the app wrote for node-postgres.
+  A statement is refused only when a `:name` falls in the stretch where the two readings differ, which is exactly the
+  evidence. The SQL text Postgres receives is otherwise unchanged.
+- **Proven and inferred.** One live observation: a plain literal ending in a backslash, a parameter after it, that error
+  (the issue records the error and the `ESCAPE '\'`, not the statement's full text). Inferred: that the Data API treats `\'` as an escaped quote in every plain
+  literal (so the escaped-quote reading, and the way it shifts every later literal, follow from one rule); not known: a
+  statement with no parameter after the literal, or only before it, which is not refused; `E'…'`, `--` and `$$` are
+  assumed read as Postgres reads them (the runbook's step 2 checks the first two). The runbook's step 2 now ends with the
+  live check, `a` (the observed shape) and `b` (the `E'\\'` spelling), and says which line each result corrects.
+- **Rejected: rewriting `'\'` to `E'\\'` in the dialect.** It would make the statement work on both transports, but it
+  means rewriting SQL the dialect cannot parse (a literal is one thing to the Data API's scanner and another to
+  Postgres's, and the divergence is itself unconfirmed past one case), and an adopter who wrote `'\'` would never learn
+  the statement is not portable. Rejected: **refusing every plain literal that ends in a backslash**, which is broader
+  than the evidence: a parameterless statement may well be fine. Rejected: **refusing in the dialect**
+  (`unsupportedStatement`) with a clearer message: the brief and the issue ask for the emulator's refusal, and a
+  production refusal on an inferred rule is a decision for the owner; the emulator is test-only. The spellings both
+  scanners read alike are `E'\\'` and `chr(92)` for one backslash (a plain `'\\'` is two, so it is no substitute for `ESCAPE`).
+- **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
+  the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
+
+## A reads-only gate for public and inert reads (2026-11-27, `fix/authz-public-reads`)
+
+safeinsights/sssb#220. The design and what it accepts are ADR-0012's later 2026-11-27 addendum; the calls it did not
+settle:
+
+- **One gate kind for all three shapes**, not one allowance each. A public feed, a preflight sharing a headers object
+  and a handshake GET differ only in which names they read; a `reads-only` gate lists them, and the scan checks the
+  rest of the handler reads nothing. Rejected: **a second key space for any gate outside `src/app/api`** (a `calls`
+  gate proves only that one call is reached, not that a read outside `api/` does nothing else) and **app entries of
+  any kind under a framework prefix** (a mutation there must keep the framework's gate).
+- **Reads only, by the gate and by the lookup.** The gate never holds for a mutation, and `exemptionFor` skips a
+  `reads-only` entry for a mutating verb, so a POST beside a reads-only GET under `webhooks/` is still judged by
+  `withWebhookSecret`, and one outside `src/app/api` can match no exemption, as before.
+- **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
+  prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
+  a prefix's gate override every exact entry beneath it (an existing test caught it in the first draft).
+- **`names` are identifiers**, not dotted names: an import's exported name (never a default import, whose local name the author picks), never a
+  value of the route's own file (below). A namespace import is refused outright, since it names the whole module, and so is
+  an aliased one (`import { headers as cors }`), as for every gate.
+- **Narrowed in review.** The first draft let a listed declaration of the file excuse whatever it held (an alias of an
+  import, a helper reading the database, a `declare`d `fetch`): the first fix had the scan read a listed `const` or
+  function and count its names, and refuse an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
+  under `simulator/` too, which the issue did not ask for and whose 404-in-real guarantee such a read does not keep:
+  `webhooks/` only. A listed name nobody reads is a problem. The second round found a listed `const` that the file
+  fills elsewhere (`cache.set(…)` in a POST): a listed declaration used anywhere outside the read is now refused.
+  The third found the same thing through a sibling destructured binding (`const { get, set } = …`). Three rounds of
+  one shape meant following declarations of the file was the wrong tool. A fourth found a literal `const` filled
+  through the handler itself (code of the file calling `GET()` and writing to what it returns). So no value of the
+  route's own file can be listed at all, only imports; a shared headers object goes in a module. Rejected:
+  **following a listed declaration of the file and checking every write to it**, which four rounds showed cannot be
+  closed by syntax.
+  Review also found route groups and parallel-route slots escaping path-keyed rules (`api/(g)/service/…`,
+  `api/@s/service/…` past the `service/` gate), older than this change; the scan now matches by URL, and refuses an
+  intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
+- **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
+  own, in its own PR.
+
+## Lost CodeBuild builds, and schedules that keep failing (2026-11-27, `fix/lost-builds-and-failing-schedules`)
+
+Two fixes in one change. safeinsights/sssb#231: a CodeBuild job whose build died without posting its webhook stayed
+queued for ever, and since #135 a kind that retries never retried it. safeinsights/sssb#215: a schedule whose spawn
+failed inside its transaction stayed due and took a turn every tick.
+
+- **The CodeBuild runner records each build, and judges a job by its build's state, not its age.** Migration
+  `0020_job_runner_ref` adds `jobs.runner_ref`. `start` writes `starting` before it calls StartBuild, and the build's
+  id once StartBuild returns. The sweep the tick already calls (`JobsPort.sweep`) asks BatchGetBuilds, at most 100 ids a
+  call, about every job of the runner's still queued or running whose last status change is more than five minutes
+  old (`CODEBUILD_LOST_AFTER_MS`, the tick's default period, so a webhook in flight is not taken for lost). Lost means:
+    - **its build ended that long ago** with any status but IN_PROGRESS, the job still open. That includes SUCCEEDED:
+      the job's result was never recorded, so a kind that retries runs again;
+    - **CodeBuild has no record of the build** (`buildsNotFound`);
+    - **CodeBuild refused its StartBuild** (a client fault: no permission, no such project, a limit), marked `refused`;
+    - **it was left `starting` for an hour** (`CODEBUILD_STARTING_LOST_AFTER_MS`): StartBuild never returned, failed in
+      a way that may have started a build, or the build id was never written. An hour, not five minutes, because with
+      no id the sweep cannot ask CodeBuild, and a build that did start should get to report its own end first.
+
+    A build still IN_PROGRESS is never judged, however long it runs: CodeBuild's own timeout ends it, and a later sweep
+    sees the result. A lost job is failed through `recordJobStatus`, which arms a retry, and its end notifies as the jobs
+    webhook route's does. A job whose webhook lands between the sweep's read and its write is already terminal, and the
+    state machine refuses the failure.
+
+    Rejected:
+    - **An age limit alone**, as the in-process sweep uses. A CodeBuild build may wait in CodeBuild's own queue and run
+      up to the project's timeout, so no one limit fits.
+    - **An EventBridge rule on the build's state change.** It is the faster signal, but it needs infrastructure
+      (`@sssb/cdk`) and a new route, where a sweep reuses the tick and needs one IAM action.
+
+- **Failing the job is the registry's, handed in.** `createRealJobs(project, region, db, failLost)` imports no job
+  module: the real ports load it while the adapter registry is still being evaluated, and `sssb check-real-env`
+  bundles it as CommonJS, which the seam's handlers (reached through `recordJobStatus`) cannot be part of. The registry
+  supplies `failLostJobFromRegistry`, built from lazy imports as the in-process runner's notifier is. A caller that
+  builds the real ports itself without the hook gets a runner with no sweep, as before.
+- **Jobs written before 0020 are never judged.** They have no `runner_ref`. Builds in flight at the deploy that brings
+  this would otherwise be failed as never started.
+- **What only a deployment can show.** The tests drive the runner against a fake CodeBuild client
+  (`adapters/real/jobs.test.ts`), so these stay a cutover proof (row `job-runner`):
+    - that the server's role may call `codebuild:BatchGetBuilds` (without it, each tick logs that the sweep could not
+      read builds, and fails nothing);
+    - the statuses and end times CodeBuild really reports;
+    - how long a real webhook takes after its build ends.
+- **A schedule's spawn failure is counted, and either backs the schedule off or turns it off.** Migration
+  `0021_schedule_failures` adds `job_schedules.failure_count` and `last_error`. On a failure inside the spawn
+  transaction, a transaction of its own (under the row lock, and only while the schedule is still enabled and due)
+  counts it and keeps the message.
+    - **A spec that does not parse can never spawn, so the schedule is DISABLED,** with a `schedule.disabled` audit event
+      whose detail is the reason alone. The error, which echoes whatever the stored spec holds (an address or a token
+      the audit log refuses), is the schedule's `last_error`, kept to 500 code points, never half a surrogate pair.
+      Someone must fix the spec and enable it again. The Simulator's schedule view lists such a row with `spec: null`
+      rather than failing on it.
+    - **Any other failure may be passing (an insert the database refused for a moment), so the schedule BACKS OFF:**
+      `next_run_at` moves to the failure plus the webhook deliveries' backoff for that many failures in a row (one
+      minute, five, thirty, two hours, then six hours on). A schedule that fails every time therefore takes a bounded,
+      shrinking share of its tenant's turns. It stops holding the oldest due slot, so the per-tenant listing (#97) reaches
+      the healthy schedules behind it however many such rows the tenant holds.
+    - **The next spawn that commits resets both columns.** A failure after the spawn committed (the audit write, the
+      runner's start) is not a spawn failure, and is counted nowhere new.
+
+    Rejected:
+    - **Disabling after N failures of any kind**, which would turn off a schedule over an outage it would have outlived.
+    - **A notification to the org's admins.** A schedule belongs to no person, and the audit event and the Simulator's
+      schedule view (`failureCount`, `lastError`) are where an operator looks. Left open for an app that wants more.
+    - **Leaving a backed-off schedule's phase unchanged.** A weekly or daily spec finds its next slot from the time it
+      fired, so it keeps its phase. An interval spec counts from the backed-off time, a shift of at most the backoff,
+      which is accepted.
+
+- **Proofs.**
+    - `adapters/real/jobs.test.ts` covers: a build that ended unreported, for each ended status; one still running; one
+      that ended within the grace; one CodeBuild no longer knows; a start that never recorded a build, judged only after
+      the hour; a StartBuild refused (judged after five minutes) beside one that may have started a build (left for the
+      hour); a job a service caller or webhook moved to running; a job too recent to judge, one without a ref, and one
+      already reported; a webhook racing the sweep; a sweep that cannot read builds; batches of 100; and a lost build of
+      a kind that retries whose next attempt starts a new build and completes.
+    - `real/index.test.ts` pins the registry handing the runner its database and handler; `adapters/fail-lost-job.test.ts`
+      drives the registry's handler itself (fails, arms the retry, notifies; leaves a job that ended meanwhile).
+    - `db/schedules.test.ts` covers: an unparseable spec turned off with its audit event; a failing insert backed off for
+      one minute, then five, then cleared by a spawn that commits; a healthy schedule spawning beside more stuck ones than
+      the listing takes, both disabled and backed off; a failure after the commit left uncounted; a long, many-byte error
+      clipped with the audit still written and the world view listing the row; and an address-shaped spec whose audit
+      carries the reason alone.
+    - Removing the IN_PROGRESS skip, the webhook grace, the not-found or `starting` rules, the quiet filter, the batching,
+      the build id's recording, the `running` status, the hour's grace, the `refused` marker, or the handler's notify or
+      race check turns them red. So does removing the disabling, the backoff, its escalation, the reset on success, the
+      failure policy itself, the clipping, the world view's null spec, or the audit's reason-only detail.
+    - The failure recorder's re-check under the lock (a schedule another tick fired or turned off meanwhile) is argued
+      here, not tested.
+- **What review changed** (two review rounds on Opus, then a check of the second round's fixes as a diff).
+    - **The Simulator's schedule list no longer throws** on a schedule whose spec does not parse: the very rows this
+      change turns off. It shows them with `spec: null`.
+    - **A job left `starting` gets an hour**, so a build whose id went unrecorded is not failed while it runs.
+    - **A StartBuild CodeBuild refused is marked `refused`** and failed after five minutes, not the hour, since no build
+      started.
+    - **The `schedule.disabled` audit carries the reason alone**, so a spec holding an address or a token cannot get it
+      refused.
+    - **The registry's lost-job handler is its own module** (`adapters/fail-lost-job.ts`, lazy imports), tested as the
+      runner calls it.
+- **Limitations accepted.**
+    - **If the `starting` write itself fails,** `submitJob` rejects before StartBuild and the job stays queued with no
+      ref, never judged. That is the state a failed start left before this change, and the caller is told.
+    - **The sweep has no bound of its own.** It runs at the tick's start, so a mass loss spends part of the drains'
+      windows; the next tick carries on.
+
+## `check-real-env` notices, and a bound on the feature-flag read (2026-11-27, `fix/real-env-notices`)
+
+safeinsights/sssb#192 and #104, two small changes to the real adapters' edges.
+
+- **#192: `realEnvNotices(env)` beside `assertRealEnv`, printed by `sssb check-real-env` after a pass.** Advisory lines
+  returned by the framework, so the command's one reader of a deployment's environment stays the framework's, with
+  `@sssb/tools` only printing them (a `notice:` each, to stdout, exit code unchanged). The framework's list holds two
+  cases: `CLERK_AUTHORIZED_PARTIES` unset, and any variable that starts `CLERK_AUTHORI` (any case) and is not that name,
+  the issue's second comment: such a variable looks like the setting and does nothing. Not in the list: `CLERK_JWT_KEY`,
+  the issue's open question. Unset it costs Clerk API calls rather than leaves a check off, and what it costs is a
+  measurement (cutover row `auth-dev`); it is one line to add if wanted. A notice is not printed after a failure, which
+  is the whole answer then. `@sssb/tools` finds `realEnvNotices` by looking through the framework's exports by name at
+  run time, and offers none for a framework without it: esbuild warns about any static mention of a missing export,
+  `in` guard included (a test pins that no warning is printed). A notices function that throws prints a notice saying
+  so and never fails the check. Rejected: **a `--strict` flag that fails on a notice**, which nobody asked for and
+  which would make unset look unsupported; and **warning at boot**, where the server's log is nobody's checklist.
+- **#104: `FLAG_TIMEOUT_MS` = one second, no retries.** Chosen against what a page can afford: the protected layout
+  awaits a flag read before it renders, so a slow PostHog costs every authenticated page the bound, once. One second
+  rather than the capture bound (two): a capture is awaited only to get the event out of a frozen Lambda, a flag read
+  is on the way to the person's page. The client is given `featureFlagsRequestTimeoutMs` and
+  `featureFlagsRequestMaxRetries: 0` (posthog-node 5.73 builds on @posthog/core 1.67's stateless client: three
+  seconds and one retry after a delay, so six seconds and more per page in an outage; the issue's "ten seconds" is the
+  stateful client's default, which this is not), so the request is aborted, and the adapter races
+  the read against the same bound, so the page is held to it whatever the client does. Late answers and failures are
+  dropped. Not measured against a live PostHog (cutover row `analytics`).
+
+## The starter's e2e on a production build, and the destructive suite's budgets from CI's numbers (2026-11-27, `fix/e2e-prod-build`)
+
+`safeinsights/sssb#109` and `safeinsights/sssb#100`. SSSB's reusable workflow sets `E2E_BUILD=1` on every e2e shard, and
+only the showcase read it: the starter's shard ran `next dev`, so CI never ran `next build` for the app adopters get. And
+the destructive project's budgets were still the ones sized for `next dev` on a CI runner.
+
+- **The starter reads the flag** (`build:e2e`, `start:e2e`, and the `webServer` branch in its `playwright.config.ts`),
+  as the showcase does, and a generated app inherits both through the template; nothing in `app-checks.yml` or
+  `sssb ci` changes. Seen to fail: a server component that calls `useState`, on a route no spec visits, failed the
+  suite under `E2E_BUILD=1` at `next build` ("You're importing a module that depends on `useState` into a React Server
+  Component module") and passed it under `next dev` (4 passed). Rejected: **a shared Playwright preset** for the two
+  configs, to state the branch once: jscpd reads only `src` (`.jscpd.json`), so the two copies trip no gate, the
+  starter's config is copied into every adopter's tree, where a preset would be one more thing to pin, and the branch is
+  three lines.
+- **Measured on CI, not locally** (this machine's load average was 60 to 300 that day). A temporary reporter printed
+  each test's duration and its four slowest waits; five runs of the destructive shard on PR #233 (one push and four
+  reruns, 80 test runs, no retry, no failure): slowest test 16.0 to 16.3 s (`actors.spec.ts`, the autonomous drain,
+  paced by the actors' 3 s timer), then 9.7 to 10.9 s (`simulator-snapshots.spec.ts`, save/restore/reset), every other
+  under 9 s; the shard 90 to 115 s in all. Twenty earlier green runs of the shard, under the old budgets: 16 passed in
+  1.5 to 2.0 min each, none flaky. Build and start: the showcase 26 to 39 s, the starter 28 s. The starter's shard, by Playwright's own total
+  (server start included): 45.0 s on `next dev` (an earlier run of the same day), 34.9 s with the production build (its 4 tests in 6.4 s
+  after a 28 s build, where under `next dev` they took 35 s compiling as they went).
+- **The budgets** (`apps/showcase/tests/e2e/support/budgets.ts`, read by the config and the specs): on a production
+  build a destructive test gets 60 s (3.7x the slowest) and an assertion 10 s (every wait over 2.1 s has a budget of its
+  own but one, a tour resuming after a preset load, 2.3 s, now on the default through `coldRoute`; the slowest action, a
+  click, took 6.1 s, inside the test's budget); the web server 180 s in both apps (4.6x the
+  slowest build and start). Under `next dev` every budget is what it was (120 s, 15 s, 180 s for the presets test), since
+  a loaded local machine has been measured near a CI runner's dev numbers (`docs/build-notes.md`, "A cold dev server at
+  load ~250"). Removed: the nine `test.setTimeout(120_000)` calls, which only restated the project's dev budget and would
+  have overridden the production one, and the three 90 s `page.goto` caps, which bound nothing a test's own budget does
+  not. The six 60 s waits right after a navigation become `coldRoute(60_000)`, the project's assertion budget on a
+  production build. Kept as they are, because they wait for the app's own work and are 5 to 13 times what it took: the
+  actor polls (30 and 60 s; the actors back off to 15 s a tick after an error), the snapshot restore and preset waits
+  (20 and 45 s), the job and mail waits (15 s), the `toPass` retries (45 s). Three of the actor polls (60 s) now equal
+  the test's own budget, so a hang there reports as a test timeout rather than with the poll's message; that test took
+  16 s.
+- **Not done here:** the chromium project's budgets (60 s, 15 s) are still the dev ones on CI too; that is
+  safeinsights/sssb#235. A per-spec world (#99, #161) is what would end the destructive suite's shared-state class of
+  failure; the ten repeat runs above found none to file.
+
+## A stream's failure after text is visible, and the replays can fail the same way (2026-11-27, `fix/stream-failure-visible`)
+
+`safeinsights/sssb#145`: when a stream fails after some of its text was delivered, the consumer must be able to tell.
+`safeinsights/sssb#98` (`fix/llm-timeout`) made the real adapter throw it (`await stream.done()` after the loop: the SDK's
+iterator drops a failure that arrives while the consumer is busy between chunks); what was left is that nothing else could
+fail, and nothing held the three to one behaviour.
+
+- **The port already carries the marker: a thrown error, not an event.** The question was whether the stream type needs an
+  end-of-stream marker; it does not. An `AsyncIterable<string>` that throws from `next()` is the marker, and the text
+  already yielded stays yielded. Rejected: a terminal event in the chunk type, which would change `stream`'s type for every
+  consumer to say what a `throw` says.
+- **A fixture entry may `failure`: `{ reason }`** (`LlmFixtureEntry`, `packages/kit/src/adapters/fake/llm.ts`), with the
+  reasons of `LlmUnavailableError`. `complete` throws before returning text; `stream` yields the entry's `response`, the
+  partial answer, then throws; `runToolLoop` runs every recorded tool call live, then throws in place of the final answer.
+  An entry matches as any other does, the default entry included. The static demo's `replayAssistant` throws the same error
+  after the same tool calls. The fake can now also be built with its own fixtures directory (`createFakeLlm({ fixturesDir,
+catchRequests })`), which the conformance check uses so it never touches an app's fixtures or `.data`; `fakeLlm` is
+  `createFakeLlm()`. Rejected: a thrown error whatever the vendor, which would put a real adapter's error class in a fixture.
+- **One conformance check, `llm-stream-failure`** (`checks.json`, unit runner, so it runs in both apps and the kit's fixture), three
+  tests of one scenario (an answer that starts, then an overload): the fake's stream gives the partial text and throws, the
+  demo's replay throws after its tools, and the real adapter, against a stubbed `fetch` and with its consumer busy between
+  chunks, throws the same reason after delivering the same text and does not start the answer again. It holds the
+  framework's adapters, so it passes in every app unless the kit regressed; it fails when `await stream.done()` is taken
+  out of the real adapter (checked), which is what an adopter's own copy of the adapter would need to keep. The SDK refuses
+  to build a client in a browser-like environment, which an app's Vitest environment may be, so the check takes `window`
+  away for its one test and undoes it.
+- **A failing entry that fails before any text sets `response` to `""`** (an empty answer is an answer here; `null` still
+  means "to record", and `llm:record` now skips every entry with a `failure`, which is hand-authored: recording would
+  replace its partial answer with a whole one and leave the failure on it). The tool loop's default entry accepts the
+  same empty answer, found in review.
+- **The showcase's own consumers say it too.** The static demo's pass 2 (the compose fixture's default entry, streamed in
+  chunks) throws `LlmUnavailableError` after the same text when the entry has a `failure`, as the server's stream does;
+  the demo replay finds a matched entry only when its `conversation` is not empty, as the fake does. The dashboard hid the
+  failure once any text had arrived (`prev || assistantError`): it now keeps the streamed text and says the failure under
+  it (`assistant-failed`, `role="alert"`), and still shows the failure as the answer when nothing arrived. Known and left (`safeinsights/sssb#241`):
+  a default entry with a `conversation` is replayed by the fake with its tool calls but by the demo as its `response`
+  alone, as before this change.
+- **Not done.** The check proves the adapters, not an app's own consumer: whether a route or a screen shows the failure is
+  its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
+  can throw and how to test the path.
+
+## A world per e2e worker, and `workers` left at 1 on CI (2026-11-27, `fix/e2e-worker-worlds`)
+
+`safeinsights/sssb#99`: every Playwright worker drove one server holding one `.data`, so `workers` could not be raised
+without specs touching each other's state. Now, in the showcase, `E2E_BUILD=1 E2E_WORKERS=<n>` gives each worker a
+server and a world of its own (`apps/showcase/tests/e2e/support/worlds.ts`, read by `playwright.config.ts` and by every
+spec or helper that reads or writes its world on disk).
+
+- **The design: a server per worker over one production build.** Worker 0 is the suite as it was (the config's first
+  web server on the app's port, the app's `.data`), so one worker changes nothing. Worker `k` gets another
+  `start:e2e` (`sssb serve-standalone`) of the same build, on a port in a per-checkout band (10000 to 19999, below the
+  ports Linux hands out from 32768) and with
+  `APP_DATA_DIR` at an emptied directory under the system's temp directory. The config lists those servers after the
+  first; Playwright starts them in order, and every worker loads the config with `TEST_PARALLEL_INDEX` set, so
+  `baseURL` and `worldPath(...)` follow the worker with no change to a spec's imports (`docs/build-notes.md`, "A world
+  per Playwright worker, from the config alone"). Eleven files that named `.data` by a path relative to themselves
+  now call `worldPath`.
+- **Rejected: one server with a world per request** (a header or cookie keyed through `AsyncLocalStorage` instead of
+  `APP_DATA_DIR`). It is the seam safeinsights/sssb#161 wants for a public demo, but every fake adapter, the pglite
+  instance, the world clock and the Simulator's state would have to become per-world inside one process, and nothing
+  short of that is safe. Rejected: **a worker-scoped fixture that starts each worker's server** (Playwright's documented
+  pattern): it needs every spec to import `test` from a support module, for nothing the config cannot do on its own. Rejected: **a server per worker on `next dev`**: Next 16 allows one dev server per app directory
+  (safeinsights/sssb#113's first attempt), and a `distDir` per worker would put a test-only concern in the app's config
+  and pay a cold compile per worker. So the worlds need `E2E_BUILD`, and asking for more than one worker without it is
+  an error that says so.
+- **Measured on CI** (PR #245, temporary commits that set `E2E_WORKERS` on the e2e job and let the destructive shard use
+  it, reverted): three runs at each count, every shard green, no flaky test.
+
+    | workers                                                         | `e2e (showcase)`, 60 tests | `e2e (showcase-destructive)`, 16 tests | job (showcase / destructive) |
+    | --------------------------------------------------------------- | -------------------------- | -------------------------------------- | ---------------------------- |
+    | 1 (before: #233's last run; the destructive range over 20 runs) | 2.0 min                    | 1.5 to 2.0 min                         | 166 s / 165 s                |
+    | 2                                                               | 1.2 to 1.4 min             | 1.1 to 1.3 min                         | 134 to 151 s / 104 to 123 s  |
+    | 4                                                               | 1.3 to 1.7 min             | 1.1 to 1.2 min                         | 129 to 152 s / 109 to 129 s  |
+
+    Four workers buy nothing over two on a four-CPU runner, where each worker brings a browser and a server. Locally, on
+    a production build at three workers (load average 27 at the start): the showcase's 60 tests in 1.1 min and its 16
+    destructive ones in 1.3 min, against 5.8 min for the destructive project alone under `next dev` (at load ~330).
+
+- **`workers` stays 1 on CI, because it does not pay there.** A pull request waits on `lint-typecheck-unit` (6.3 to 9.6 min in these runs and #233's last) and on `adoption-probe` and `pack-and-consume` (4.4 to 5.6 min); the e2e shards finish inside
+  3 min at any worker count, so more workers save runner time and no one's wait. When e2e becomes the slowest job, the
+  switch is `E2E_WORKERS` on the e2e job, plus dropping `--workers=1` from `sssb ci e2e --project destructive` for an
+  app whose config gives each worker a world (an adopter's app does not, so that flag must stay for them).
+- **Guards, from review:** with more than one world the first server is never reused (a dev server or an earlier
+  build adopted on the app's port would leave the others serving an older build); a worker past the last world
+  (`--workers` above `E2E_WORKERS`) fails at once, naming `E2E_WORKERS`, rather than driving a port nothing listens on;
+  and each world is emptied by its server's own `APP_DATA_DIR`, with no path in a shell command. A port in a worker's band that another
+  program holds (this machine's Dropbox listens on 17600 and 17603) fails that server's start loudly, as a port taken in
+  `@sssb/tools/ports`' own bands does.
+- **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
+  ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
+  changes but a comment in `serve-standalone.js` (an empty changeset).
+
+## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
+
+safeinsights/sssb#189 and #190, both left by the review of the resume wait (#183, "One wait for a paused cluster, and a typed
+error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
+
+- **#189: kept in the framework's own transactions, not in the dialect.** Kysely's `execute()` catches the work's error, awaits
+  `driver.rollbackTransaction`, and rethrows the work's error; if the rollback throws, that replaces it. A controlled
+  transaction's `rollback()` calls the same driver method with the same connection, and nothing tells the driver which
+  caller it has, so a rule in `rollbackTransaction` (swallow a failure) would also hide a deliberate rollback's: the
+  issue's open question. `transactionKeepingWorkError` (`packages/kit/src/db/with-tenant.ts`), which `runWithTenant`
+  (both transports) and the Data API transport's `migrateToLatest` run their transactions through, sees the work's
+  error, so it throws that when something else was thrown after it, and keeps the
+  rollback's failure as a warning and as a non-enumerable `rollbackError` on the work's error when that is an object that
+  takes one (a thrown string or a frozen error gets the warning alone). The rollback's error is never `cause`: the work's
+  error may carry its own. A transaction opened on the raw handle (`getDb()`: the contract suite's proofs, which never throttle) keeps Kysely's
+  behaviour, and a commit that fails is
+  thrown as it was: nothing the work threw is there to keep. Rejected: **a Kysely subclass or a proxy of
+  `TransactionBuilder`**, to catch the same on the raw handle: private fields, and the builder's methods each return
+  another builder. Rejected: **swallowing every failed rollback**, which hides a deliberate one.
+- **#190: a probe is aborted after three of its turns, and when the wait ends.** `RdsDataClientLike.send` takes the
+  SDK's `{ abortSignal }`, which `RDSDataClient.send` accepts (the SDK's own request option, which closes the socket).
+  A probe is sent every 3 s at the soonest (its 2 s turn plus the 1 s wait), so 6 s (`PROBE_ABORT_MS`) leaves at most
+  three out, and a probe that is slow but answers inside it still ends the wait, as before. The wait aborts every probe
+  still out when it ends, by an answer, or when its last caller gives up, at once. A rejection after an abort is ours and is read as nothing: it
+  neither ends the wait nor counts as the database's answer. Rejected: **keeping at most a few in flight by not sending**,
+  which would hold up a wait the probes in flight may never end. The SDK's pool size was not read; the bound does not
+  depend on it.
+
+## A dropped connection is `connection-lost`; the demo replays a default entry's conversation (2026-11-27, `fix/llm-replay-and-terminated`)
+
+`safeinsights/sssb#230` and `safeinsights/sssb#241`, two leftovers of the `#98` and `#145` work.
+
+- **`#230`: what the SDK 1.8.0 gives for a connection that drops** (probed against its real classes, with a stubbed
+  `fetch` and no network): a streamed body that dies while it is read is a plain `AnthropicError('terminated')`, whose
+  `cause` is undici's `TypeError('terminated')`, whose `cause` has `code: 'UND_ERR_SOCKET'`; a non-streaming body that
+  dies reaches the caller as that bare `TypeError('terminated')`; `fetch` itself rejecting is an `APIConnectionError`
+  (the one the adapter already repeated, and then passed on unmapped). `adapters/real/llm.test.ts` pins the first shape
+  by asserting the thrown error's own classes and cause chain, so an SDK that changes it fails a test by name.
+- **It is `LlmUnavailableError('connection-lost')`, and repeated before any text.** The provider is not answering, and may
+  be soon: the same shape as a rate limit or an overload, so a route answers the 503 it already answers and a job
+  fails with a typed cause. A new reason, not `timed-out` (the deadline did not pass, and a caller that tells the two
+  apart may wait for one and not the other) and not `overloaded` (the provider said nothing). The reason union grows by
+  one, so an exhaustive `switch` on `reason` in an app needs a case (a type error, never a runtime one): the changeset
+  says so. `retryAfterSeconds` is the default 10.
+- **Detection is by what the error carries, not by its class:** `isConnectionDrop` (`adapters/real/llm.ts`) is an
+  `APIConnectionError`, or anything in a five-deep cause chain that is a `TypeError('terminated')` or has a code that
+  is undici's (`UND_ERR_*`) or a transport's (`ECONNRESET`, `ECONNREFUSED`, `ECONNABORTED`, `EPIPE`, `ENOTFOUND`,
+  `EAI_AGAIN`, `ENETUNREACH`, `EHOSTUNREACH`). Matching `AnthropicError` alone was rejected: the SDK also throws it for a
+  request it refuses to send, which no retry mends. An error with no transport cause passes through as before.
+  The check runs over what the provider's calls throw, never over what the app's tool throws: a tool loop's `execute`
+  failures are tagged on the way out (`ToolFailure`) and unwrapped by the adapter's error mapping, because a database
+  reset or a tool's own `fetch` that dropped carries the same codes and would otherwise be reported as the provider's
+  outage (found in review; a test per shape). The demo replay's failing entry still fails when it has no answer to give.
+- **The same rule retries and maps.** A call whose connection dropped is repeated once, as every other retryable failure,
+  inside the deadline and only when the wait fits; a stream only when it had delivered no text (the consumer has the rest
+  otherwise, so it ends in `connection-lost` after that text). A non-streaming call is repeated though its body had begun,
+  as the SDK's own policy repeated a failed connection: it may be billed twice.
+- **`#241`: the demo's `replayAssistant` chooses its answering entry as the fake's `lookupToolLoop` does:** the entry
+  recorded for the question, else the default entry, whose `conversation` is replayed with its tools, or, with none, its
+  `response` as a one-turn answer. Before, a default entry's conversation was answered by its `response` alone, so the
+  demo ran none of the tools the server's replay runs. Answered, from the open question: an unrecorded question's tools
+  do run live in the demo, as on the server, because a demo that skipped them would show a different world from the one
+  the fixture describes. No committed fixture has such an entry today. Measured: the showcase's static bundle
+  (`dist-demo/index.html`) is 849,822 bytes before and 849,860 after (+38), 10,140 bytes under its 860,000 budget.
+
+## A reused pid does not keep a stale ticker marker alive, and the vendor ban reads one list one way (2026-11-27, `fix/ticker-marker-and-vendor-ban`)
+
+`safeinsights/sssb#146` and `safeinsights/sssb#155`, two tooling leftovers.
+
+- **`#146`: a marker is stale when the process now at its pid is not the one that wrote it, told by a start token.** A
+  wrapper killed with SIGKILL leaves `dev-ticker.json`, and once the OS gives its pid to an unrelated process
+  `process.kill(pid, 0)` says "alive", so both Playwright configs refused to load until the file was deleted by hand.
+  The marker now carries `startToken`, the writer's own start as the kernel records it (`processStartToken`): on Linux the
+  boot id and the start time in ticks since boot (`/proc/<pid>/stat`, field 22), elsewhere `ps -o lstart=` (macOS keeps it
+  fixed per process), run with `TZ=UTC0` so two processes with other time zones read one string. A reader compares tokens
+  for equality: another token at the pid is another process, and the marker is ignored and cleared. **First written as a
+  date comparison** (`startedAt` against the start `ps` gives, plus a tolerance), and **dropped after review**: on Linux
+  `ps` computes `lstart` from the kernel's boot time plus ticks, so a wall clock stepped forward after the process began
+  (a paused guest resuming, an NTP step) moves every process's start later, past the marker's `startedAt`, and a LIVE
+  ticker's marker was judged stale and deleted, the failure the marker exists to stop; and a `TZ` that libc and V8 read
+  differently shifted it by hours. A token compared for equality has neither. Rejected: the issue's "did not start at
+  `startedAt`", for the same clock reason and because a dev server writes its marker minutes after it began.
+- **What cannot be judged is live, as before:** a marker with no token (written by an older version), a token that cannot
+  be read now (no `/proc` and no `ps`, as on Windows, an unreadable pid, `ps` timing out), tokens of different kinds
+  (another machine's, through a shared directory). A false "stale" would let an e2e run adopt a ticking dev server. A
+  process never judges its own marker, so the Simulator's status poll in a dev server spawns no `ps`. **Only a marker
+  proved stale by a token is cleared**; one whose process is gone is ignored and left, as before (a container's marker read
+  from a host shows a gone or foreign pid, and deleting it would take its ticker's protection away). The clearing re-reads
+  the file and removes it only if it is still the one judged, so a wrapper that wrote its own in between keeps it; one
+  that writes between that re-read and the removal still loses it, microseconds wide, and its ticker restores it on its
+  next start.
+- **`#155`: the vendor ban's two halves read one list through one matcher.** The static half matched the list with the
+  `ignore` package (gitignore semantics, case-insensitive), the declarationless half (`import()`, `require()`, a
+  type-position `import('…')`) with a hand-written `isVendorSpecifier`, so a bare `pg` banned a local `./pg` and
+  `some/dir/pg` in one half only, and `@CLERK/nextjs` was a vendor in one half only. The bare names in
+  `vendorSdkPattern` are anchored (`/pg`, `/posthog-js`, `/posthog-node`, `/mailgun.js`: in gitignore a leading `/`
+  anchors to the start, and `/pg` still bans what is under it, `pg/lib/x`), and the declarationless half is
+  `matchesPatterns` over the same group, as the framework/app fence's already was. An app's own bare `sssb.vendors`
+  entries are anchored in the rules (`anchorBare`) the same way, so `stripe` bans the package, not `./stripe`. Both
+  halves are now case-insensitive. Seen in the tests: `posthog-node/lib` is a vendor in both halves (a name bans what is
+  under it; the old declarationless reading agreed), a thing the issue's table did not list.
+- **What a change of fence needs:** the preset is the rules' own list, `packages/eslint-plugin/src/probes.js` probes an
+  app's vendors by naming the package itself (`stripe`), which the anchored entry still matches, so the probes needed no
+  change and `sssb check-fences` passes (`tests/lint/check-fences.test.ts`, both apps and the scratch apps that weaken a
+  fence). A negation entry (`!pg`) was already refused by the loader; anchoring would have turned one into a literal name
+  had it got through. The parity table (`tests/lint/framework-fence.test.ts`) now has a vendor block: 27 specifiers,
+  three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
+  (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
+
+## Pages, layouts and metadata routes are judged as reads (2026-11-27, `fix/authz-pages`)
+
+safeinsights/sssb#221 and #259. The design and what it accepts are ADR-0012's last 2026-11-27 addendum; the calls it
+did not settle:
+
+- **Seen failing first.** With the scan change alone, the showcase's conformance check went red on eight pages, the
+  dashboard first: "showcase: ../[locale]/dashboard/page.tsx (at ../[locale]/(protected)/dashboard/page.tsx) default is
+  a page export, rendered on the server for every request, that does not reach authorize(...) on its own path, and
+  reads something: `auth.listMembers` is used, and a page may use `auth` only as `auth.getCurrentUser()`, …". The org
+  page failed the same way (a second copy of the #259 leak, its member list with emails and roles), and the starter
+  three times (its layouts and sign-in page reading the seed). A starter dashboard that called `auth.listMembers`, and
+  one that imported `findTenant` from the seed, each turned the starter's check red, and passed again restored.
+- **The page allow-list, entry by entry** (each pages only; routes keep INERT_IMPORTS):
+    - `setRequestLocale`, `getTranslations`, `getMessages` (`next-intl/server`): the catalog and the locale, on every
+      page; `getMessages` is next-intl's layout pattern. `getLocale` is left out: neither app needs it.
+    - `hasLocale` (`next-intl`) and `routing.locales` (`@sssb/kit/i18n/routing`, the member only): the locale layout's
+      segment check.
+    - `canInActiveOrg` (`@sssb/kit/authz/authorize`): a UI ability check of the caller's own abilities, never a read.
+    - `isDemoMode` (`@sssb/kit/adapters/index`): the run mode beside `appMode` and `isSimulated`, the demo badge.
+    - `sameOriginPath` (`@sssb/kit/core/same-origin-path`): the sign-in page's `returnTo` normaliser, a pure function.
+    - `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`): the locale layout's theme and
+      document shell, branding and constants.
+    - `auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()`, `auth.listMyOrgs()`: the
+      caller's own session and placements (the header's org switcher), each only called. `auth` itself and every other
+      member are refused outright, `auth.listMembers` first.
+    - A component used only as a JSX tag from a `'use client'` module or a package; a same-file component only
+      rendered (read as part of the page); a real adapter's component loaded with `import()` only to render it (the
+      guide's own shape for real mode), from such a module.
+    - Added in review: `useTranslations` (`next-intl`), the same catalog read in a component that is not async, and
+      a default import of a stylesheet or an image used as a value (class names, a URL), both false positives the
+      first draft had.
+- **Narrowed in review.** The first draft rendered any imported component out of sight, so an async server component
+  of the app's own that loads its data (`<MemberList slug={user.orgSlug} />` calling `auth.listMembers`) passed as
+  reading nothing, by a named, default or namespace import and through `import()` alike. Round 1 made a tag out of sight only
+  when its module resolves to a file whose prologue is `'use client'` or to a package (under `node_modules`, or outside
+  the app's directory: `@sssb/kit`'s screens resolve to the framework's source in this repository); otherwise its name
+  is counted (narrowed again in rounds 2 and 3, below). Every component both apps render was already one of those, so neither app's verdict changed; seen
+  working by taking `'use client'` off the starter's `WelcomeScreen`, which turned its home page red ("it names
+  `WelcomeScreen`"). Also: `auth` and `routing` are checked before the tag allowance (`<auth.listMembers />` passed),
+  through a namespace and `import()` too, and refused from any other module (an app's re-export of `auth` plus a
+  `reads-only` entry naming it passed `auth.listMembers`); a lowercase `<auth />` stays allowed, since JSX makes it an
+  HTML element, not the import. `generateViewport` and `global-not-found` are judged; a page-named file with an
+  unread code extension (`page.mdx`, `page.mts`) and a Pages Router `pages` directory fail, as `route.mts` and
+  `pages/api` did; a `'use client'` metadata route is judged, since it runs on the server.
+- **Narrower than the issue's sketch.** `redirect` and `notFound` were already inert. Not listed: `analytics.isFlagEnabled`
+  (the showcase's two flag reads sit in pages that authorize now), `next/og`'s `ImageResponse` (no app has an image
+  route; one names it in its app's entry), `DEFAULT_TENANT_SLUG` (the showcase alone uses it).
+- **What each app names instead, and why there.** Seed and simulated-world reads are the app's, so they are app
+  entries, where an adopter sees them: the starter now ships `authz-exemptions.mjs` with `[locale]/layout.tsx`
+  (`tenants`, `findTenant`: the locale layout's theme fallback and the protected layout's tenant name; groups are
+  dropped, so the two layouts share one key and one reason) and `[locale]/signin/page.tsx` (`listAllPeople`,
+  `findTenant`: the simulated-mode picker). The showcase names the same sign-in reads, `DEFAULT_TENANT_SLUG` in its locale
+  layout, `findInvite` and `findOrg` on its accept-invite page (authorized by possession of the invite token, as the
+  framework's `auth/accept-invite/route.ts` exemption says), and `isActorId` on the Simulator's actor frame. Pages that
+  read the caller's own records authorize them instead of being named: the profile page and the protected layout read
+  the caller's acceptances and authorize the self-only `AgreementAcceptance` (the layout's `listAgreementsForTenant` and
+  feature flag ride on that authorize, as a route's other reads ride on its own). Rejected: an exemption listing `db`,
+  `tenantIdForSlug`, the agreement readers and seven pure gate functions, a list that described the layout but excused
+  `db` whole.
+- **Narrowed again in review (round 2): by the resolved file, not the text.** The asset allowance had trusted the
+  specifier's ending, so `import load from '../lib/members.css'` (which TypeScript and webpack resolve to a
+  `members.css.ts` beside it), `'./members?x.css'` and a missing file passed; now a `?` or `#` is refused, a specifier
+  that resolves to code or a declaration (but a `.d.css.ts` of `allowArbitraryExtensions`) is refused, and a relative or
+  alias one must name an asset file on disk. "A package" had been anything outside the app's directory, which put an
+  adopter's own workspace package (`packages/ui`, linked or reached by a path) out of sight, and a `node_modules` link
+  back into the app's own `src` too; now only a real path with a `node_modules` segment (pnpm's store) or
+  `@sssb/kit`'s real package directory counts, so the kit's screens stay out of sight here as for an adopter who
+  installs it. The `'use client'` check now reads the module that declares the component, through a barrel's
+  re-exports (a server `components/index.ts` re-exporting a client `x.tsx` was a false failure), and fails closed on a
+  cycle or an unresolvable re-export. The unread-page guard flags only `<name>.<one extension>` (`page.css.ts`,
+  `layout.styles.ts`, `page.spec.e2e.ts` were false failures), and no walk of routes or pages enters a private `_`
+  folder, which Next does not route: that drops a route there from the route walk too, which never served one, while
+  the Server Action walk still enters it. Neither app has a `_` folder under `src/app`; both apps' verdicts and file
+  counts are unchanged.
+- **Narrowed rather than patched (round 3).** A third round found more resolution edges in the same two allowances,
+  so both shrank instead of gaining cases. An asset is now only a relative or `paths`-alias specifier whose literal
+  file exists (no `?` or `#`, no resolution to code, no declaration but the asset's own sibling `.d.css.ts`); a bare
+  specifier (a package's `styles.css`, `baseUrl`, a self-reference, `imports`, a bundler alias) is never one, and is
+  refused as any default import is. "Installed" now means a real path through a `node_modules` whose parent is the
+  app's directory or an ancestor (where a package manager installs), never one below the app's root (`src/node_modules`)
+  and never a pnpm `file:` or `link:` dependency (`.pnpm/<name>@file+…`), which are the adopter's own code; the kit's
+  directory is not trusted for an app inside it. And a `next.config` that sets `pageExtensions` now fails the check
+  (read with the TypeScript parser, so a comment does not count), since the scan reads no custom extension and the
+  unread-file guard catches only `.mts`, `.cts`, `.cjs`, `.mdx` and `.md`. Neither app nor the fixture changed verdict.
+- **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
+Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
+  (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only
+  when `canInActiveOrg(user, 'read', 'Membership')` and authorizing inside that branch, which the scan would pass but
+  the guide's rule (authorize on a path every request takes) forbids. The first draft let a person without standing
+  reach that `authorize` and get its `ForbiddenError`, which in a server component with no error boundary is a 500,
+  on the page sign-in sends everyone to by default. Now both pages check standing first, with the non-throwing
+  `canInActiveOrg(user, 'read', 'Membership')`, and send such a person to their own profile (the one page here that is
+  theirs, which authorizes its self-only read), then authorize unconditionally on the path every other request takes,
+  so the scan still counts the call and `listMembers` never runs for them. Rejected: `notFound()` (says the page does
+  not exist) and a no-access screen (new copy in both catalogs; safeinsights/sssb#265 is that screen). Pinned by
+  `apps/showcase/src/app/[locale]/(protected)/dashboard/page.test.tsx` and its org twin (real abilities, faked
+  adapters: a member gets the active members, `none` is redirected to `/<locale>/profile` and `listMembers` never runs).
+- **Matched by URL, as routes.** A route group's layout and its parent's share a key, which a reviewer may find
+  surprising: one entry, each layout judged by it alone; an `outsideApi.prefixes` entry covers the pages under it too.
+  A page under an intercepting segment (Next's modal pattern) was refused outright in the first draft, even one that
+  authorized; it is now judged as any page with no exemption applying, so it authorizes or reads nothing, and an entry
+  only it would use is stale. An intercepting route is still refused outright (its `service/` and `webhooks/` gates are
+  path-keyed).
+- **Found on the way:** following `export *` for a page's `default`, as the lookups follow it for a verb, would have
+  taken a default JavaScript never re-exports through one; both lookups now skip it. The check keeps its id `authz-mutations`; its title
+  and second test name now say pages.
+
+## The ticker marker is written whole and cleared without a gap; a failing default fixture always fails typed (2026-11-27, `fix/marker-atomic-and-fake-failure`)
+
+`safeinsights/sssb#258`, `#257` and `#249`: three leftovers of the `#146` and `#145` work.
+
+- **`#258`: the marker is written to a name beside it and renamed onto it** (`writeTickerMarker`; `<file>.<pid>.<random>.tmp`),
+  so a Playwright config that loads in that instant reads the marker that was there or the whole new one, never half of
+  it (a half-written file read as "no marker", and the config passed over a ticking dev server). A process killed between
+  the write and the rename leaves the `.tmp` file, which nothing reads. Pinned by standing inside the write
+  (`tests/tooling/ticker-marker-atomic.test.ts`): `writeFileSync` is wrapped to write half of its data, look at the marker as
+  a reader would, then write the rest; written straight onto the marker the reader sees half of a JSON document
+  (checked by making the write direct). Rejected: a stress test with a child process writing in a loop and the parent
+  reading, which can pass for a long time on the code it is meant to catch. Left as it was, and open in the issue: an
+  unparseable marker (damaged by anything else) still reads as no marker, not as "a ticker may be starting".
+- **`#257`: the stale marker is moved aside, and judged from the copy** (`clearStaleMarker`). Read-then-`rm` left a gap in
+  which a wrapper's new marker could be written and then removed. A rename is atomic and takes whatever file is there at
+  that instant: if it is the stale one it is deleted; if it is a newer one (written between the judgment and the move)
+  it is put back with `link`, which fails rather than overwrite, so a still newer marker written meanwhile wins and the
+  copy is dropped; a marker written after the move finds the name free and is never touched. Where a file system has no
+  hard links the put-back is a copy that fails rather than overwrite. **What it costs, found in review and filed as
+  `safeinsights/sssb#260`:** in that race a reader that looks while the newer marker is out of place sees none (a stress
+  run of one writer and four clearers spinning found the marker absent most of the time, which no real use approaches: a
+  clearer runs only after a marker was judged stale); a ticker that stops in that instant has its marker put back
+  (fails safe: the config refuses until the process exits); and two clearers meeting a newer and a newer-still marker
+  may leave the older. A write that fails now leaves no `.tmp` beside the marker. `clearStaleMarker` is exported, with a `hooks.afterClaim` seam, for its tests, which interleave a
+  writer at each step. Not changed: `removeTickerMarker` (the owner removing its own, by pid) has the same read-then-remove
+  shape, but only another wrapper's write into the same data directory in those microseconds could be lost, and the
+  token logic cannot tell one live ticker from two. `ps`'s start is to the second on macOS, so two processes born in the
+  same second share a token; a pid reused in the second it was released is not a case.
+- **`#249`: a default entry with a `failure` (one with a `reason`; `{}` is none) fails typed whatever answer it has, and every method reads the same default entry,** in `complete`, `stream` and
+  `runToolLoop`: `response: null` and no `conversation` (or an empty one) used to end in the plain "no default entry"
+  `Error`, which hid the failure the person wrote the entry to see. A default entry with no answer and no failure still
+  throws that error. (`response: null` is the recorder's "to record" marker and the recorder skips failing entries, so the
+  fixture is not rewritten.)
+
 ## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
 
 safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind
@@ -7896,3 +8972,277 @@ manager's call, and leaves `#152`'s question open:
 - **jscpd, re-measured as the issue asked** (2026-11-27, `pnpm jscpd` with the repository's `.jscpd.json`): 41 clones,
   654 duplicated lines (1.40%) on this branch, against 50 clones and 758 lines (1.57%) on `int-platform` before it.
   Nine fewer clones in all, which counts the showcase-and-starter pairs `safeinsights/sssb#114` tracks among them.
+
+## Main (0.9.1) into int-fixes: where the job retries' Simulator call went (2026-11-28, `merge/main-into-int-fixes`)
+
+Main moved the Simulator's clock and run-due routes out of the showcase into the kit's host (`simulator-api.ts`, served by
+each app's `api/simulator/[...path]` route, safeinsights/sssb#129) while int-fixes added due job retries to those routes
+(safeinsights/sssb#135; the entry above, "Job retries with backoff, a new row per attempt", names them). The merge takes the deletion: both
+routes are gone, and the host's `runDueAtWorldNow`, which its `clock` and `schedules/run-due` handlers share, runs due
+schedules, then due retries, then due deliveries, as the two routes did. `simulator-api.test.ts` proves it through the
+host: run-due alone leaves a retry that is not yet due, and moving the clock past its backoff starts it (red with the call
+taken out). The static twin's clock runs its own retry drain, which main did not touch.
+
+The other conflicts: the migrations registry and the family fence list main's `0018_organizations_write` (unchanged)
+with int-fixes' 0019 to 0021; the attachment confirm route authorizes before its lookup (int-fixes, safeinsights/sssb#137)
+and then takes main's pending check, `head` and size ceiling; the export count is 148 (145 at the merge base, one added
+by int-fixes, two by main), and the internal-module count 99, as `public-surface.test.ts` computes it.
+
+**A database that ran int-fixes' 0019 to 0021 before 0018 cannot take 0018.** The migrator runs the two sequences
+(framework, app) unordered against each other, but in order within each (`packages/kit/src/db/migrate.ts`, "migrations
+out of order within their sequence"), so 0018 after 0019 is refused, loudly, at the first query. Every released database
+is fine: 0.9.1's has 0018 and takes 0019 to 0021 after it, and an older one takes all four in order. What is refused is a
+world, local or deployed, built from int-fixes before this merge: this checkout's own e2e world failed exactly so until
+it was wiped (CLAUDE.md's rule after a migration change). Nothing in the code changes: 0019 to 0021 already come after 0018, which is right for every released database.
+Such a world is wiped; whether a deployment runs int-fixes, and so must be kept, is for its owner to say.
+
+## A CodeBuild job marked from its first write, and a bounded sweep (2026-11-28, `fix/codebuild-starting-and-sweep-bound`)
+
+The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
+
+- **safeinsights/sssb#251: the `starting` mark goes in the row's own write.** The CodeBuild runner used to write
+  `jobs.runner_ref = 'starting'` as a statement of its own, just before StartBuild. If that statement failed after
+  `submitJob`'s transaction committed, `start` threw before anything reached CodeBuild. The job then stayed queued
+  with no ref, which the sweep never judges (so that jobs from before migration 0020 are left alone).
+    - The jobs port now declares what a job's row starts as: `JobsPort.startingRef`, optional, `starting` for the
+      CodeBuild runner. Every writer of a row the runner will start writes it in the same statement: `submitJob`'s
+      insert, a schedule spawn's insert, and the retry drain's claim (the update that readies a waiting retry). `start`
+      itself writes nothing before StartBuild.
+    - A start that throws, for whatever reason, therefore leaves a job the sweep judges: `refused` after five minutes
+      when CodeBuild said so, `starting` after the hour otherwise.
+    - Rejected: **judging a NULL-ref queued job created after some cutoff**, which needs a cutoff the sweep can know
+      (the migration's apply time is not recorded anywhere it can read). Also rejected: **catching the write and
+      calling StartBuild anyway**, which leaves the same hole when the second write (the build id) fails too.
+- **safeinsights/sssb#252: the sweep takes a budget from the tick.** `JobsPort.sweep(now, budget?)`, where `budget`
+  is the drains' shape (`SweepBudget`, restated in the port so it imports nothing). The tick gives it a window of its
+  own, its first two seconds (`SWEEP_WINDOW_MS`), and at most 100 jobs failed (`maxSweep`, `sweepWindowMs` on the tick's
+  budget).
+    - Both runners' sweeps take tenants in a fresh random order (the drains' `shuffled`) and stop once the budget is
+      spent, checked before each tenant, each BatchGetBuilds call and each failure. What a sweep leaves, the next tick's
+      sweep finds; nothing it skips is lost, since a lost job stays lost.
+    - **The CodeBuild sweep fails each loss as soon as it knows it.** First the losses that need no CodeBuild call
+      (`refused`, and `starting` past the hour), then each BatchGetBuilds answer's before the next call; a tenant's build
+      ids are shuffled too. Round 1 of review found the first version, which read every batch before failing any, could
+      spend the whole window reading and throw away what it had found, every tick, for a tenant with many open builds.
+    - **The tick checks the sweep's budget as it checks the drains'** (`resolveDrainBudget`), before the sweep runs: a
+      `maxSweep` or `sweepWindowMs` of `NaN` would have left the sweep unbounded (every comparison with `NaN` is false),
+      and a `maxSweep` of 0 would have stopped it for good. Both throw now. Found in round 2.
+    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the
+      schedules about four seconds of theirs. A judgment, or a BatchGetBuilds call, already under way at the deadline
+      runs to its end; the SDK sets no timeout on that call, so one that stalls can outlast the window
+      (safeinsights/sssb#267, filed from round 2).
+    - `lazyJobs` passes the budget through. A sweep called with no budget judges everything, as before.
+    - Not changed: the sweep still lists every tenant once a tick within its window (the drains' due hints,
+      safeinsights/sssb#263, do not extend to it).
+- **Proofs.**
+    - `adapters/real/jobs.test.ts`:
+        - the starting ref written by `submitJob`, a schedule spawn and a retry claim;
+        - a job whose start threw before writing anything, failed by the sweep after the hour;
+        - a bounded sweep failing at most its count, nothing after its deadline, and the rest next time;
+        - the tenants, and one tenant's builds, taken in the order the random gives;
+        - the losses needing no CodeBuild call failed even when a read spends the window, and one read's losses failed
+          before a later read is cut off.
+    - `adapters/real/jobs-in-process.test.ts`: the in-process sweep, bounded the same way, its tenants shuffled.
+    - `server-lib/scheduled-tick.test.ts`: the tick hands the sweep its budget, and refuses a malformed one.
+    - `adapters/lazy-jobs.test.ts`: the budget passes through.
+    - Removing any of these turns them red: the ref from each of the three writers, either runner's bound, either
+      runner's tenant shuffle, the build-id shuffle, failing as found (free losses first, each batch's before the next),
+      the tick's deadline, its budget check, or the pass-through.
+- **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
+  the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
+  and #267. Then a claims pass over the prose.
+
+## Common page shapes pass, and a reads-only name is pinned to its module (2026-11-27, `fix/review-page-shapes`)
+
+The whole-branch review of the authorization changes before 0.10.0 (findings Z1, Z2, Z4, and the doc drift of Z8 and
+Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its module"; the calls it did not settle:
+
+- **Seen failing first.** The reviewer's scratch app with four everyday pages failed four times at `cfe96f2`: a sync
+  page's `use(params)` ("it names `use`"), a page calling `getLocale()` and `headers()`, a page handing
+  `<Form action={saveItem} />` an imported Server Action, and a module-level `const LINKS = [...]`. After: the sync page
+  and the action pass, `getLocale` passes, and `headers()` and the `const` still fail by decision, each with its way
+  through (an entry pinning `headers` to `next/headers`; the value inline or in a module).
+- **The page allow-list, two more entries** (pages only; routes keep INERT_IMPORTS), each named in PAGE_IMPORTS with
+  its reason:
+    - `use` (`react`): next-intl's documented sync page, `const { locale } = use(params)`. `use` only unwraps the
+      promise or context it is handed; what it is handed is the page's own parameter or another name, judged where the
+      page writes it.
+    - `getLocale` (`next-intl/server`): the request's locale. The pages entry above left it out because neither app
+      needed it; an adopter's page does.
+    - **Not `headers` or `cookies`** (`next/headers`). The first draft allowed `headers`; review dropped it:
+      `headers()` returns the Cookie and Authorization headers, the session's credential, so a page could render the
+      token into its HTML with a green scan. No page of either app needs either; a page that does names it in its entry,
+      `names: { headers: 'next/headers' }`, with a reason.
+- **A Server Action handed on by reference.** Only as the whole value of a JSX attribute (`action={saveItem}`,
+  `formAction={…}`, any attribute), by a named or default import, when the module that declares it (followed through
+  re-exports, the client-component walk reused as `declaringBinding`) is a file under the app's `src`, not through a
+  `node_modules` (the tree the Server Action walk judges), and its prologue is `'use server'` or the exported function's
+  own body opens with `'use server'`. Counted, as before: a call, `saveItem.bind(null, id)` (a member read: a later
+  allowance could take `.bind` with judged arguments, not taken here), a parenthesized or spread value, an action
+  outside `src` or in a package, a `'use server'` file's re-export of a plain module's function (followed to the plain
+  module, which is no action), and any non-action import handed on as a prop (`load={load}` may run in the render).
+- **The module-level `const` stays refused.** Code of the file can change an object or array there, as four rounds of
+  the reads review showed. Its message now says: write the value inline where the page uses it, render it as a
+  component of the file, or move it into a module and list the import (a primitive `const` is already inert).
+- **Z4: reads-nothing before a required gate.** `judge` asked `service/`'s `withServiceCaller` gate before the
+  reads-nothing pass, so an inline-headers preflight there had no way through. Moved, for route handlers only:
+  `judgePage` keeps its order, since a page cannot be the wrapper's call and the pages changeset refuses an unwrapped
+  page under `service/` as before.
+- **Z2: the pin, and its format.** `names` changes from `['corsHeaders']` to `{ corsHeaders: 'src/lib/cors.ts' }`, before
+  0.10.0 ships, so no released app wrote the list. Decided:
+    - **What a pin matches** (`pinsOf`, computed when the facts are, so `gateHolds` stays a pure check): the import's
+      specifier when it is not relative and resolves from the app's directory to the same file (packages and aliases;
+      a nearer `node_modules` cannot swap the module); and the app-relative path of the file it resolves to and of the
+      file that declares the export. Both the resolved and the declaring file are accepted: a barrel is a module the
+      reason can name, as a package is, and the declaring file is where the value is written.
+    - **A path carries its extension.** `'src/lib/cors.ts'`, never `'src/lib/cors'` or `'src/seed'` for an `index.ts`:
+      a pin names one file, and the failure prints the exact path to copy. Rejected: matching an extensionless path,
+      which would be a second resolution with its own corner cases (`cors.ts` beside `cors/index.ts`).
+    - **Never a pin:** a relative specifier (another module from each file), a path with `.` or `..`, a leading `/` or
+      `./`, a file through a `node_modules` or outside the app (named by its specifier instead). `isGate` refuses the
+      malformed ones with an entry problem that shows the format.
+    - **Both sides fail.** A read importing a listed name from another module fails, and the entry gets a problem
+      naming both modules; the old "more than one module among governed reads" check is gone, since the pin is stricter.
+    - The apps' entries: the starter pins its seed reads to `src/seed/index.ts` and `listAllPeople` to
+      `@sssb/kit/adapters/fake/auth`; the showcase pins `@app/seed`, `@sssb/kit/theme`, the fake auth adapter and
+      `src/app-config/actors.ts`.
+- **Docs.** The pages changeset now shows both entries an app from an earlier generator needs (its layouts' seed reads
+  and its sign-in page, pinned), checked by scanning the reviewer's 0.9.1-generated app with them (0 failures,
+  0 problems), and repeats the may-reach limit beside its self-only advice (Z8). The reads changeset names
+  `withStandardWebhookSignature` (Z9); `/sssb:pre-pr` looks for a read, page or Server Action without `authorize`;
+  `judgeServerAction`'s message names the always-rethrow exception the guide has.
+- **Proofs.** `route-scan.test.ts` ("the page shapes the authorization review found failing") and
+  `app-exemptions.test.ts` (the pin's matching rules, a nearer `node_modules`, the malformed formats, a page handing on
+  an unauthorized action that still fails as an action). Each new guard was mutated and seen red: each of the two
+  allow-list entries, and putting `headers` and `cookies` back; the attribute-value test and its attribute parent; the
+  `src`, `node_modules`, prologue, body and missing-export checks of the action test, and the raw-text directive match;
+  the reads-nothing order (and narrowing it to reads); the pin check (ignored, `some` for `every`, an unplaced source
+  passing, an inherited key, in the gate and in the entry's problem); each source of a pin (the specifier resolved from
+  the app and from the file, an unresolved one, one spelled as an app file's path, a `node_modules` path, the resolved
+  file, and the declaring file under the listed name); each of `isGate`'s and `isPin`'s refusals; and the entry's pin
+  and unused-name problems. Five checks that turned out equivalent were dropped rather than kept untested, each
+  because another check already refuses what it would: `isGate`'s refusal of an array of names (an array's keys are
+  never identifiers), `isPin`'s refusals of an empty pin and of a leading `/` (each has an empty segment), and
+  `pinsOf`'s refusals of a relative and of an absolute specifier as a specifier pin (no pin with a `.`, `..` or empty
+  segment can be written to match one).
+- **Review round (an Opus round and a Fable pass, no realistic bypass), fixed here:**
+    - The declaring-file pin ignored which export it was: a barrel's `export { secretRows as corsHeaders } from './cors'`
+      (or the import-then-export form) passed `names: { corsHeaders: 'src/lib/cors.ts' }`. `declaringBinding` now
+      returns the name at the end of the re-export chain, and the declaring file answers only when it is the name
+      listed; a plain re-export and the file's own local rename still hold.
+    - An escaped directive, `'use\x20server'`, counted for the by-reference check (the AST's value) while the Server
+      Action walk's text pre-filter skipped the file, so a page could hand on an action nobody judged. Directives are now
+      matched by their raw source text everywhere (`'use client'` too), as ECMAScript matches `'use strict'`, and the
+      pre-filter agrees.
+    - Specifier and path pins shared one namespace: with `paths: { "src/*": ["./evil/*"] }`, the specifier
+      `'src/lib/cors.ts'` answered to the path pin of the real file. A string that is the path of a file in the app is
+      now a path pin only.
+    - An unresolved bare specifier answered to its own text (`undefined === undefined`); a specifier pin now requires it
+      to resolve.
+    - Two mutants had survived: the under-`src` check (its tests' apps had no `src`, so a missing directory refused the
+      action) and the attribute-parent check (no JSX-child case). Both have cases now.
+- **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
+  gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
+  filed separately.
+
+## The keyless guard refuses what Clerk leaves open, and no more (2026-11-27, `fix/review-keyless-guard`)
+
+Finding A3 of the whole-branch review of `int-fixes`, against safeinsights/sssb#193's fix (the entry "The Clerk adapter:
+one read per render, the keyless fallback closed, a client sign-out"). That cut refused the adapter in every process that
+was not a production Next build, before every session read and every Backend API call, so a plain `node` process (an
+adopter's CodeBuild job program, an ops script, the auth contract suite) threw "...wherever real mode runs under next
+dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMembers`, would have failed on upgrade.
+
+- **The rule is now Clerk's own two conditions, re-read in @clerk/nextjs 7.10** (`decryptClerkRequestData`,
+  `canUseKeyless`, `createAuthOptions`): the keyless key is Clerk's FIRST key only when neither `CLERK_ENCRYPTION_KEY` nor
+  `CLERK_SECRET_KEY` is set (the dummy key when `NODE_ENV` is not `production`, an empty passphrase in a production
+  build, which a forger has just as well); it is the FALLBACK, after the real key fails, only when
+  `NODE_ENV` is `development`, it is not CI, and the disable flag is unset. And a forged token is checked against
+  `CLERK_SECRET_KEY`, empty when unset, in every `NODE_ENV`. So the guard refuses when `CLERK_SECRET_KEY` is unset, and when
+  `NODE_ENV` is `development` and the flag is not `1` or `true`; a process with the secret key set and `NODE_ENV` unset,
+  `test` or `production` is let through, and the real-Clerk test shows Clerk itself refuses a forgery there (it fails to
+  decrypt). Stricter than Clerk in one place on purpose, as before: it ignores the CI exemption.
+- **A missing secret key is refused in production too**, which the review's wording left out ("outside production").
+  A production process with no key checks a forged token against an empty key (shown against real Clerk in the same
+  test), `assertRealEnv` already refuses to boot without the key, and no process that calls Clerk can work without it, so
+  nothing legitimate loses. Rejected: refusing only outside production, which would leave that one case to boot alone.
+- **`check-real-env` reports it two ways.** `assertRealEnv` now throws the guard's problem as a cutover item on `auth-dev`
+  (so `createRealPorts` stops at boot too, instead of failing every request), which sees the process's own `NODE_ENV`; and
+  `realEnvNotices` prints what `next dev` would do with the environment when this process is not `next dev` (the preflight
+  of `dev:real` runs before it, with no `NODE_ENV=development`), computed by the guard itself with `NODE_ENV`
+  `development`, so the two cannot disagree. A notice, not a failure: an adopter who sets the flag only on `next dev` is
+  right, if less helped. The showcase's `dev:real` now exports the flag first, so the notice stays quiet there. Rejected:
+  forcing `NODE_ENV=development` in the preflight, which would fail every script that follows the earlier changeset's
+  advice to set the flag on `next dev` alone.
+- **Considered in review, and not done.** (1) Refusing when the RUNTIME `NODE_ENV` says `development` as well as the
+  inlined one, against the case where an adopter puts `@clerk/nextjs` in `serverExternalPackages` (so Clerk reads the
+  runtime value) and runs a production build with `NODE_ENV=development` preset. It needs two unusual choices at once, and
+  would refuse every request of a production build merely started with a preset `NODE_ENV=development` (Clerk's bundled
+  copy is inlined as `production` there and safe): the outage class finding A3 was about, for the opposite combination.
+  The literal reads, which agree with the bundled Clerk, are pinned by a source assertion because no run can tell them
+  from the whole-environment read. (2) Validating the secret key's shape (`sk_live_…`): it would refuse only a deployment
+  already broken (every Backend API call and sign-in fails), and a format check can refuse a legitimate key. (3) A notice
+  from a preflight run with `NODE_ENV=production` that is then followed by `next dev`: it fails closed on the first
+  request, and a production-looking preflight is not the `dev:real` this notice speaks for.
+
+## A drain lists for half its window; a retry that may have started is left to the sweep (2026-11-28, `fix/review-drains-and-retry-start`)
+
+Two findings of the whole-branch review of `int-fixes` before 0.10.0, both where #217's bounded drains, #238's retries
+and #248/#268's CodeBuild sweep meet.
+
+- **J1 (HIGH): past a tenant count, a drain started nothing, every tick.** `drainFairly` listed every tenant (one
+  `withTenant` each, even a tenant with nothing due) before it ran any row, and both phases shared one deadline. Once
+  listing every tenant took longer than what was left of the window, the drain listed until the deadline and started
+  nothing, every tick, with `stoppedBy: 'time'` the only sign. The reviewer's case: 1,000 tenants at 5 ms a listing, the
+  schedules' drain starting 2 s into its 6 s window, listed 800 and ran 0. 0.9.1's unbounded drains made progress for
+  the same deployment.
+    - **The fix, for this release:** under a deadline the drain works in passes over one shuffled order. Each pass
+      lists for at most `LISTING_SHARE` (half) of what is left of the window, then runs what it listed; a pass that
+      finishes its rows with time to spare lists on from where the last stopped. `maxItems` counts across the passes.
+      The tenants are still shuffled afresh each tick, so the ones a tick does not reach are a different random set each
+      time: every tenant with due work is reached in time, though at a large enough count not every tick.
+    - **The full fix is next release's:** the due hints of safeinsights/sssb#202 (PR #263, held for after 0.10.0) list
+      only the tenants with work due, which removes the per-tenant listing cost instead of rationing it.
+    - Rejected: interleaving listing and running (list a tenant, run its first row, and so on), which is the larger
+      change to the fairness argument #217 rests on (one shuffled order for listing and turns), too late for this
+      release; and a fixed number of tenants listed per tick, which needs a per-transport cost the drain cannot know.
+    - **Why passes:** review found that the first version, one listing share and no second pass, made a mid-sized
+      drain worse: one that finished its listed rows early left the window unused and the rest of its tenants unlisted,
+      which the old code would have reached (the reviewer's probe: 100 tenants at 10 ms, 75 listed, 675 ms unused).
+    - Accepted: a pass's turns go round only the tenants it listed, so a tenant reached by a later pass takes its turns
+      after the earlier pass's tenants; the shuffle decides which pass a tenant falls in, so no tenant is favoured across
+      ticks.
+- **J3 (MEDIUM): a retry whose StartBuild may have started a build was failed at once.** `startRetry`'s catch failed
+  the attempt on any error from `start`, which armed the next attempt. The CodeBuild adapter treats a non-client fault
+  (a timeout, a server fault) as one that may have started a build and leaves the row `starting` for the sweep;
+  `submitJob` and a schedule's spawn honour that (neither catches), a retry did not. A build that had started then ran
+  beside the next attempt, its `completed` webhook met a failed row (409) and its result was dropped, and on the last
+  attempt the job was notified failed though it had succeeded.
+    - **The fix:** `start`'s error says so. The CodeBuild adapter marks a non-client fault `mayHaveStarted: true`
+      (`markMayHaveStarted`), and `startRetry`, on such an error from a port with a `startingRef` and a `sweep`, leaves
+      the claimed
+      row as the claim wrote it (queued, `starting`, no `run_after`) and notifies nothing; the sweep fails it after the
+      hour (`CODEBUILD_STARTING_LOST_AFTER_MS`), which arms the next attempt then. The helper `mayHaveStarted` is in
+      `ports/jobs.ts`, and `JobsPort.start`'s doc states the contract.
+    - The `startingRef` and `sweep` condition: a port without both has nothing that judges a row left as it is (a
+      CodeBuild port built by the public `createRealPorts` without its `failLostJob` hook, has no sweep), so its marked error
+      still fails the attempt, rather than leave a row nothing will ever look at. Review found the first version checked
+      only `startingRef`.
+    - Rejected: reading the row's `runner_ref` after the failure (`refused` versus still `starting`) to tell the two
+      apart, which works for CodeBuild only by its storage convention and takes a `refused` whose own write failed for
+      an unsure start.
+    - The drain still counts such a retry in `failed` (it did not start, as far as anyone knows).
+- **Proofs.**
+    - `db/drain-budget.test.ts`: the review's shape (1,000 tenants at 5 ms, the drain 2 s into a 6 s window, 50 ms a
+      row) lists 400 and runs 40; the reviewer's probe (100 tenants at 10 ms) lists and runs all 100; `maxItems` counts
+      across passes; listing stops at its share and the rest runs; a drain begun past its deadline lists nothing.
+    - `db/job-retries.test.ts`: a marked error from a port with a starting ref leaves the retry `starting`, unfailed and
+      unnotified; from a port with no starting ref, or with no sweep, it fails the attempt and arms the next.
+    - `adapters/real/jobs.test.ts`, against the fake CodeBuild: a server fault on a retry's StartBuild leaves it
+      `starting` with no next attempt, the sweep leaves it alone at 30 minutes and fails it after the hour, arming
+      attempt 3; a client fault fails it at once.
+    - Removing the listing share, the second pass, the count across passes, the leave-it branch, its `startingRef` or
+      its `sweep` condition, or the adapter's mark each turns the named tests red.
+- **Review.** One Opus round: the MEDIUM (passes) and the LOW (the `sweep` condition) above, both fixed. Then a claims
+  pass. The release-notes findings J8 (the schedules' window stated as 8 s) and J2 (a paused cluster's first tick) are
+  fixed in `bounded-tick-drains.md` and `job-retries.md` on the same branch.

@@ -11,11 +11,16 @@ import {
     type ScanRoot,
     type ScannedRoute,
     describeGate,
+    exemptRel,
     exemptionFor,
     gateHolds,
+    isPageFileName,
+    isReadVerb,
     judge,
+    scanPages,
     scanRoutes,
 } from './route-scan'
+import { FRAMEWORK_POLICY } from './route-policy'
 
 /**
  * The analyser's own cases: which export forms it reads, what counts as a handler's path, what it refuses.
@@ -59,6 +64,22 @@ function expectVerdicts(actual: Record<string, string>, expected: Record<string,
     for (const [verb, want] of Object.entries(expected)) {
         if (want instanceof RegExp) expect(actual[verb], verb).toMatch(want)
         else expect(actual[verb], verb).toBe(want)
+    }
+}
+
+/**
+ * The `outsideNames` and `outsideSources` of a read that names each key of `names`, imported from the module its value
+ * names (written as the specifier, and the one pin it answers to), or from each of several.
+ */
+function reading(names: Record<string, string | string[]>): Pick<HandlerFacts, 'outsideNames' | 'outsideSources'> {
+    return {
+        outsideNames: new Set(Object.keys(names)),
+        outsideSources: new Map(
+            Object.entries(names).map(([name, modules]) => [
+                name,
+                [modules].flat().map((module) => ({ specifier: module, resolves: true, pins: [module] })),
+            ]),
+        ),
     }
 }
 
@@ -169,7 +190,7 @@ describe('the export forms a mutating handler can take', () => {
                 'route.ts': "export * from './impl'\nexport async function GET() {}",
                 'impl.ts': `${AUTHORIZE}${DECLS}export async function POST() { ${CALL} }\nexport async function DELETE() {}\nexport async function GET() {}`,
             },
-            expect: { POST: 'authorized', DELETE: 'open' },
+            expect: { GET: 'open', POST: 'authorized', DELETE: 'open' },
         },
         {
             name: 'export * through two modules, where the route also names a verb itself',
@@ -245,8 +266,15 @@ describe('the export forms a mutating handler can take', () => {
             expect: { POST: /ClassDeclaration, not a function/ },
         },
         {
-            name: 'a GET-only route has no mutating handler',
-            files: { 'route.ts': 'export async function GET() {}\nexport const HEAD = async () => {}' },
+            name: 'every verb Next routes is judged, reads as well as mutations (safeinsights/sssb#103)',
+            files: {
+                'route.ts': `${AUTHORIZE}${DECLS}export async function GET() { ${CALL} }\nexport const HEAD = async () => {}\nexport function OPTIONS() {}`,
+            },
+            expect: { GET: 'authorized', HEAD: 'open', OPTIONS: 'open' },
+        },
+        {
+            name: 'a route file that exports no verb has no handler',
+            files: { 'route.ts': "export const dynamic = 'force-dynamic'\nexport async function helper() {}" },
             expect: {},
         },
         {
@@ -338,7 +366,7 @@ describe('what the analyser refuses, and says why', () => {
         {
             name: 'export * from a module that does not resolve: which verbs is unknown',
             files: { 'route.ts': "export * from './missing'\nexport async function GET() {}" },
-            expect: { '*': /which verbs it exports is unknown/ },
+            expect: { GET: /^open$/, '*': /which verbs it exports is unknown/ },
         },
         {
             name: 'an import of a module that does not resolve, exported as a verb',
@@ -1134,7 +1162,7 @@ describe("what counts as a handler's own path", () => {
             verdicts({
                 'route.ts': `${AUTHORIZE}${DECLS}export async function PATCH() { ${CALL} }\nexport async function DELETE() {}\nexport async function GET() { ${CALL} }`,
             }),
-            { PATCH: 'authorized', DELETE: 'open' },
+            { PATCH: 'authorized', DELETE: 'open', GET: 'authorized' },
         )
     })
 
@@ -1894,12 +1922,355 @@ describe('the facts a gate is judged on', () => {
     })
 })
 
+describe('a read that reads nothing (safeinsights/sssb#103)', () => {
+    const only = (src: string, verb = 'GET') => factsOf(src, verb).readsNothing
+    const IMPORT = "import { appMode, db, load, store, query } from '@sssb/kit/adapters/index'\n"
+    const tsx = (src: string) => scanTree({ 'route.tsx': src }).find((r) => r.rel === 'route.tsx')!.handlers[0]!.facts!
+
+    it('holds for a probe that names only inert globals, its request, primitive constants and the named imports', () => {
+        expect(only('export async function GET() { return Response.json({ ok: true }) }')).toBe(true)
+        expect(
+            only(
+                `${IMPORT}export async function GET() { return Response.json({ mode: appMode, at: new Date().toISOString() }) }`,
+            ),
+        ).toBe(true)
+        expect(only('export const HEAD = () => new Response(null, { status: 204 })', 'HEAD')).toBe(true)
+        expect(
+            only(
+                "const ALLOW = 'GET'\nexport function OPTIONS() { return new Response(null, { headers: { allow: ALLOW } }) }",
+                'OPTIONS',
+            ),
+        ).toBe(true)
+        expect(
+            only(
+                "import { NextResponse } from 'next/server'\nexport function GET() { return NextResponse.json({ ok: true }) }",
+            ),
+        ).toBe(true)
+        expect(
+            only(
+                'export function GET(request: Request) { const u = new URL(request.url); return new Response(u.searchParams.get("hub.challenge")) }',
+            ),
+        ).toBe(true)
+        expect(
+            only(
+                'type Row = { id: string }\nexport function GET() { const rows: Row[] = []; return Response.json(rows) }',
+            ),
+        ).toBe(true)
+        expect(tsx(`${IMPORT}export async function GET() { return Response.json({ el: <div /> }) }`).readsNothing).toBe(
+            true,
+        )
+    })
+
+    it('fails a name from outside it that is not inert: an import, a helper, a value that is not a literal', () => {
+        for (const body of [
+            'return Response.json(await load())',
+            "return Response.json(await db.withTenant('t', () => 1))",
+            'return Response.json({ dockets: store })',
+            'return Response.json({ store })',
+            'return Response.json({ ...store })',
+            "return Response.json(store['depot'] ?? [])",
+            'return Response.json(await query)',
+            'const f = load; return Response.json(await Promise.resolve().then(f))',
+            'setTimeout(load); return Response.json({})',
+        ]) {
+            expect(only(`${IMPORT}export async function GET() { ${body} }`), body).toBe(false)
+        }
+        expect(
+            only('function helper() { return 1 }\nexport async function GET() { return Response.json(helper()) }'),
+        ).toBe(false)
+        expect(only('const cache = new Map()\nexport async function GET() { return Response.json([...cache]) }')).toBe(
+            false,
+        )
+        expect(
+            only("import { NextResponse as R } from 'next/server'\nexport function GET() { return R.json({}) }"),
+        ).toBe(false)
+    })
+
+    it('fails a global that is not inert: an upstream service, the process, a module, code from a string', () => {
+        for (const body of [
+            "return fetch('http://data/orgs/depot/dockets')",
+            'return Response.json(await (await fetch(process.env.DATA_API!)).json())',
+            'return Response.json({ api: process.env.DATA_API })',
+            "return Response.json(require('./db').load())",
+            "return Response.json(eval('1'))",
+            "return Response.json(new Function('return 1')())",
+            'return Response.json(Reflect.ownKeys({}))',
+            'return Response.json(globalThis.store)',
+            'return Response.json(await prisma.docket.findMany())',
+            'return Response.json(arguments[0])',
+            'return Response.json({ m: module, e: exports, w: window, s: self, g: global })',
+            "return Response.json(Object.constructor('return 1')())",
+            "return Response.json(Date['constructor'])",
+            "return Response.json(await import('./data'))",
+            'return Response.json(import.meta.url)',
+        ]) {
+            expect(only(`export async function GET() { ${body} }`), body).toBe(false)
+        }
+        expect(only('Response = class {} as never\nexport async function GET() { return Response.json({}) }')).toBe(
+            false,
+        )
+    })
+
+    it('reads the handler lexically: a dead branch, a nested function and a default count', () => {
+        expect(only(`${IMPORT}export async function GET() { if (false) load(); return Response.json({}) }`)).toBe(false)
+        expect(only(`${IMPORT}export async function GET() { const f = () => load(); return Response.json({}) }`)).toBe(
+            false,
+        )
+        expect(only(`${IMPORT}export async function GET(x = load()) { return Response.json({ x }) }`)).toBe(false)
+    })
+
+    it('fails a tagged template, a component, a class, a decorator or a using declaration', () => {
+        expect(
+            only(
+                "import { sql } from '@vercel/postgres'\nexport async function GET() { return Response.json(await sql`select 1`) }",
+            ),
+        ).toBe(false)
+        expect(
+            tsx(`import { Card } from './card'\nexport async function GET() { return Response.json({ el: <Card /> }) }`)
+                .readsNothing,
+        ).toBe(false)
+        expect(
+            tsx(
+                `import { Card } from './card'\nexport async function GET() { return Response.json({ el: <Card></Card> }) }`,
+            ).readsNothing,
+        ).toBe(false)
+        expect(only('export async function GET() { class A {}; return Response.json({ a: A.name }) }')).toBe(false)
+        expect(
+            only(
+                `${IMPORT}export async function GET() { class A { @load m() {} }; return Response.json({ a: A.name }) }`,
+            ),
+        ).toBe(false)
+        expect(
+            only('export async function GET() { using r = { [Symbol.dispose]() {} }; return Response.json({}) }'),
+        ).toBe(false)
+    })
+
+    it('holds for the named imports and inert names a probe or a redirect uses', () => {
+        expect(
+            only(
+                "import { isSimulated } from '@sssb/kit/adapters/index'\n" +
+                    "export function GET() { if (!isSimulated) throw new Error('real'); return Response.json({}) }",
+            ),
+        ).toBe(true)
+        expect(only("import { redirect } from 'next/navigation'\nexport function GET() { redirect('/sign-in') }")).toBe(
+            true,
+        )
+        expect(
+            only(
+                'export function GET() { type T = string; interface I { a: T } const x: I = { a: "" }; return Response.json(x) }',
+            ),
+        ).toBe(true)
+        expect(only('export function GET() { outer: for (;;) { break outer } return Response.json({}) }')).toBe(true)
+    })
+
+    it('fails a const whose contents the file can fill, a let, a namespace import, a const after the handler', () => {
+        expect(
+            only(
+                "import { loadDockets } from './db'\nconst cache: Record<string, string[]> = {}\n" +
+                    "export async function POST() { cache['x'] = await loadDockets(); return new Response(null) }\n" +
+                    "export async function GET() { return Response.json(cache['x'] ?? []) }",
+            ),
+        ).toBe(false)
+        expect(only('const recent: string[] = []\nexport async function GET() { return Response.json(recent) }')).toBe(
+            false,
+        )
+        expect(only("let ALLOW = 'GET'\nexport function GET() { return Response.json({ ALLOW }) }")).toBe(false)
+        expect(
+            only("import * as db from './db'\nexport async function GET() { return Response.json(await db.load()) }"),
+        ).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nexport async function GET() { return Response.json(x) }\nconst x = load()",
+            ),
+        ).toBe(false)
+    })
+
+    it('fails an instantiation expression, whose value a type-only skip would hide', () => {
+        expect(
+            only(`${IMPORT}export async function GET() { const f = load<never>; return Response.json(await f()) }`),
+        ).toBe(false)
+        expect(only("export async function GET() { const f = fetch<never>; return f('http://data') }")).toBe(false)
+    })
+
+    it('fails a destructured constructor, the Function constructor by another name', () => {
+        expect(
+            only("export function GET() { const { constructor: F } = Object; return Response.json(F('return 1')()) }"),
+        ).toBe(false)
+        expect(only("export function GET() { const { 'constructor': F } = Object; return Response.json(F) }")).toBe(
+            false,
+        )
+    })
+
+    it('fails a name bound to anything but a primitive, data hung on the handler, and a shadowed undefined', () => {
+        expect(
+            only(
+                "import { load } from './db'\nconst f = load\nexport async function GET() { return Response.json(await f()) }",
+            ),
+        ).toBe(false)
+        expect(only('const X = `${process.env.X}`\nexport function GET() { return Response.json({ X }) }')).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nexport async function GET() { return Response.json(await GET.load()) }\nGET.load = load",
+            ),
+        ).toBe(false)
+        expect(
+            only(
+                "import { load } from './db'\nconst undefined = load, X = undefined\n" +
+                    'export async function GET() { return Response.json(await (X as never as () => Promise<unknown>)()) }',
+            ),
+        ).toBe(false)
+    })
+
+    it("holds for next/navigation's other inert imports, which only throw a response", () => {
+        expect(
+            only(
+                "import { permanentRedirect } from 'next/navigation'\nexport function GET() { permanentRedirect('/a') }",
+            ),
+        ).toBe(true)
+        expect(only("import { notFound } from 'next/navigation'\nexport function GET() { notFound() }")).toBe(true)
+    })
+
+    it('never holds for a wrapper, whose code runs on every request out of sight', () => {
+        expect(only("import { wrap } from './wrap'\nexport const GET = wrap(() => Response.json({}))")).toBe(false)
+    })
+})
+
+describe('the names a read refers to from outside itself, for a reads-only gate (safeinsights/sssb#220)', () => {
+    const names = (src: string, verb = 'GET') => {
+        const facts = factsOf(src, verb)
+        return facts.outsideNames === null ? null : [...facts.outsideNames].sort()
+    }
+
+    it('lists an import by its exported name, never a default import or a value of the file', () => {
+        expect(
+            names(
+                "import { corsHeaders } from './cors'\nexport function GET() { return new Response(null, { headers: corsHeaders }) }",
+            ),
+        ).toEqual(['corsHeaders'])
+        expect(
+            names(
+                "import pkg from './package.json'\nexport function GET() { return Response.json({ v: pkg.version }) }",
+            ),
+        ).toBeNull()
+        expect(
+            names(
+                "const CORS = { allow: 'GET', methods: ['GET'] }\nexport function GET() { return Response.json({ CORS }) }",
+            ),
+        ).toBeNull()
+        expect(names('export function GET() { return Response.json({ ok: true }) }')).toEqual([])
+    })
+
+    it("refuses every value of the route's own file but a primitive const", () => {
+        for (const src of [
+            "import { db } from './db'\nconst corsHeaders = db\nexport function GET() { return Response.json(corsHeaders) }",
+            "import { db } from './db'\nfunction publicPosts() { return db.all() }\nexport function GET() { return Response.json(publicPosts()) }",
+            "import { db } from './db'\nconst { posts } = db\nexport function GET() { return Response.json(posts) }",
+            'const CORS = { at: Date.now() }\nexport function GET() { return Response.json(CORS) }',
+            "const { get } = (() => { const m = new Map(); return { get: (k: string) => m.get(k) } })()\nexport function GET() { return Response.json(get('feed')) }",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf('function h() { return 1 }\nexport function GET() { return Response.json(h()) }', 'GET')
+                .outsideRefusal,
+        ).toMatch(/a declaration of the route's own file, which code of the file can change; put it in a module/)
+    })
+
+    it('is null for a declared ambient, an import-equals, an exported or mutable name, and the handler itself', () => {
+        for (const src of [
+            "declare const fetch: (u: string) => Promise<Response>\nexport function GET() { return fetch('http://x') }",
+            "declare function fetch(u: string): Promise<Response>\nexport function GET() { return fetch('http://x') }",
+            'declare global { var process: { env: Record<string, string> } }\nexport function GET() { return Response.json(process.env) }',
+            "import db = require('./db')\nexport function GET() { return Response.json(db) }",
+            "export const cors = { allow: 'GET' }\nexport function GET() { return Response.json(cors) }",
+            "let cors = { allow: 'GET' }\nexport function GET() { return Response.json(cors) }",
+            "import { load } from './db'\nexport async function GET() { return Response.json(await (GET as never as { load: () => unknown }).load()) }\n;(GET as never as { load: unknown }).load = load",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf('declare const fetch: () => Response\nexport function GET() { return fetch() }', 'GET')
+                .outsideRefusal,
+        ).toMatch(/declared with `declare`/)
+    })
+
+    it('is null for a listed declaration the file changes or shares outside the read', () => {
+        for (const src of [
+            "import { db } from './db'\nconst cache: Record<string, unknown> = {}\n;(cache as never as { db: unknown }).db = db\nexport function GET() { return Response.json(cache) }",
+            "import { db } from './db'\nconst cache = new Map<string, unknown>()\nexport async function POST() { cache.set('k', await db.secret()); return Response.json({}) }\nexport function GET() { return Response.json([...cache]) }",
+            'const cache = { a: 1 }\nexport { cache }\nexport function GET() { return Response.json(cache) }',
+            "import { db } from './db'\nfunction f() { return 1 }\nnamespace f { export const d = db }\nexport function GET() { return Response.json(f.d) }",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+        expect(
+            factsOf(
+                "import { db } from './db'\nconst box = {}\nObject.assign(box, { db })\nexport function GET() { return Response.json(box) }",
+                'GET',
+            ).outsideRefusal,
+        ).toMatch(/`box` is a declaration of the route's own file/)
+        // Shared by two handlers: each may change it, so each is refused (give each its own, or import it).
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\nexport function GET() { return Response.json(CORS) }\nexport function OPTIONS() { return new Response(null, { headers: CORS }) }",
+            ),
+        ).toBeNull()
+        // A type position changes nothing.
+        expect(
+            names(
+                "const CORS = { allow: 'GET' }\nexport function GET(r?: Request) { if (!r) return CORS as never; return Response.json(CORS) }\n;(GET() as never as { db: unknown }).db = 1",
+            ),
+        ).toBeNull()
+    })
+
+    it('records the module each listed import comes from, and refuses a computed constructor key', () => {
+        const facts = factsOf(
+            "import { corsHeaders } from './cors'\nexport function GET() { return Response.json(corsHeaders) }",
+            'GET',
+        )
+        // './cors' does not resolve here, so the import answers to no pin: a relative specifier is never one.
+        expect([...(facts.outsideSources ?? [])]).toEqual([
+            ['corsHeaders', [{ specifier: './cors', resolves: false, pins: [] }]],
+        ])
+        expect(
+            names("export function GET() { const { ['constructor']: F } = () => 1; return Response.json(F) }"),
+        ).toBeNull()
+    })
+
+    it('is null for a handler exported by name that reads what is hung on it', () => {
+        const self =
+            "import { load } from './db'\n" +
+            'async function handler() { return Response.json(await (handler as never as { load: () => unknown }).load()) }\n' +
+            ';(handler as never as { load: unknown }).load = load\nexport { handler as GET }'
+        expect(names(self)).toBeNull()
+        expect(factsOf(self, 'GET').outsideRefusal).toMatch(/refers to itself/)
+    })
+
+    it('is null where no name can excuse what the handler does', () => {
+        for (const src of [
+            "import { corsHeaders as c } from './cors'\nexport function GET() { return Response.json(c) }",
+            "import * as cors from './cors'\nexport function GET() { return Response.json(cors.headers) }",
+            "export function GET() { return fetch('http://x') }",
+            'export function GET() { return Response.json(process.env.X) }',
+            "export async function GET() { return Response.json(await import('./x')) }",
+            'export function GET() { class A {}; return Response.json(A.name) }',
+            "import { wrap } from './wrap'\nexport const GET = wrap(() => Response.json({}))",
+        ]) {
+            expect(names(src), src).toBeNull()
+        }
+    })
+})
+
 describe('judging a handler against a policy', () => {
     const facts = (over: Partial<HandlerFacts>): HandlerFacts => ({
         reachesAuthorize: false,
         wrappedBy: null,
         calls: new Set(),
         opensWithSimulated404: false,
+        outsideNames: null,
+        outsideRefusal: null,
+        outsideSources: null,
+        readsNothing: false,
         ...over,
     })
     const route = (rel: string): ScannedRoute => ({ root: 'r', rel, file: `/x/${rel}`, handlers: [] })
@@ -1930,6 +2301,66 @@ describe('judging a handler against a policy', () => {
         expect(
             judge(route('items/route.ts'), { verb: 'POST', facts: facts({}) }, { ...policy, hint: undefined }),
         ).not.toContain('undefined')
+    })
+
+    it('judges a read as a mutation, with its own message, and passes one that reads nothing (safeinsights/sssb#103)', () => {
+        for (const verb of ['GET', 'HEAD', 'OPTIONS']) {
+            expect(
+                judge(route('items/route.ts'), { verb, facts: facts({ reachesAuthorize: true }) }, policy),
+            ).toBeUndefined()
+            const failure = judge(route('items/route.ts'), { verb, facts: facts({}) }, policy)
+            expect(failure).toMatch(
+                new RegExp(`^r: items/route\\.ts ${verb} exports a read handler that does not reach authorize`),
+            )
+            expect(failure).toContain("authorize(user, orgId, 'read', subject)")
+            expect(failure).toContain('HINT-TEXT')
+            expect(
+                judge(route('items/route.ts'), { verb, facts: facts({ readsNothing: true }) }, policy),
+            ).toBeUndefined()
+        }
+    })
+
+    it('tells a read outside api/ where its exemption goes', () => {
+        expect(judge(route('../feed/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /under `outsideApi` \(keys relative to src\/app\), with a `reads-only` gate/,
+        )
+        expect(judge(route('items/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /name a justified exemption, with the gate it passes, in the app's authz-exemptions\.mjs/,
+        )
+    })
+
+    it('reading nothing excuses a read only: a mutation that reads nothing still authorizes', () => {
+        expect(judge(route('items/route.ts'), { verb: 'POST', facts: facts({ readsNothing: true }) }, policy)).toMatch(
+            /exports a mutating handler that does not reach authorize/,
+        )
+    })
+
+    it('a read that reads nothing passes under an exemption whose gate it misses, and under a required gate', () => {
+        expect(
+            judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ readsNothing: true }) }, policy),
+        ).toBeUndefined()
+        // It reads no data, so the caller-verifying wrapper has no actor to build for it (an inline-headers preflight).
+        expect(
+            judge(route('svc/jobs/route.ts'), { verb: 'OPTIONS', facts: facts({ readsNothing: true }) }, policy),
+        ).toBeUndefined()
+        // A read that reads something there still needs the wrapper, authorized or not.
+        expect(
+            judge(
+                route('svc/jobs/route.ts'),
+                { verb: 'GET', facts: facts({ reachesAuthorize: true, outsideNames: new Set(['load']) }) },
+                policy,
+            ),
+        ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
+        // And a mutation that reads nothing is no read: it needs the wrapper and authorize.
+        expect(
+            judge(route('svc/jobs/route.ts'), { verb: 'POST', facts: facts({ readsNothing: true }) }, policy),
+        ).toMatch(/must also satisfy: the handler is itself a call to an imported withCaller/)
+        expect(
+            judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, policy),
+        ).toBeUndefined()
+        expect(judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).toMatch(
+            /sits under an exemption that holds only when/,
+        )
     })
 
     it('fails a refused handler, whatever its path', () => {
@@ -1989,6 +2420,146 @@ describe('judging a handler against a policy', () => {
         )
     })
 
+    it('a reads-only gate holds for a read that names only the listed names, and never for a mutation', () => {
+        const gate: Gate = { kind: 'reads-only', names: { corsHeaders: 'src/cors.ts', params: 'config/params' } }
+        const listed = facts(reading({ corsHeaders: 'src/cors.ts' }))
+        expect(gateHolds(gate, listed, 'GET')).toBe(true)
+        expect(gateHolds(gate, listed, 'OPTIONS')).toBe(true)
+        expect(gateHolds(gate, facts({ outsideNames: new Set() }), 'HEAD')).toBe(true)
+        expect(gateHolds(gate, listed, 'POST')).toBe(false)
+        expect(gateHolds(gate, listed)).toBe(false)
+        expect(gateHolds(gate, facts(reading({ corsHeaders: 'src/cors.ts', load: 'src/cors.ts' })), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts({ outsideNames: null }), 'GET')).toBe(false)
+        expect(describeGate(gate)).toMatch(
+            /a read \(GET, HEAD or OPTIONS, or a page's export\) that names nothing from outside itself but inert values and `corsHeaders` from src\/cors\.ts, `params` from config\/params/,
+        )
+    })
+
+    it('a reads-only gate pins each name to its module: another module, or a source it cannot place, fails', () => {
+        const gate: Gate = { kind: 'reads-only', names: { corsHeaders: 'src/cors.ts' } }
+        expect(gateHolds(gate, facts(reading({ corsHeaders: 'src/other.ts' })), 'GET')).toBe(false)
+        // Every import of the name must be from the pin (a page and a component of its file may import it twice).
+        expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/other.ts'] })), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/cors.ts'] })), 'GET')).toBe(true)
+        // A pin is matched against what the import answers to, any one of them.
+        const answers = { specifier: '@/cors', resolves: true, pins: ['@/cors', 'src/cors.ts', 'src/lib/cors.ts'] }
+        expect(
+            gateHolds(
+                gate,
+                facts({
+                    outsideNames: new Set(['corsHeaders']),
+                    outsideSources: new Map([['corsHeaders', [answers]]]),
+                }),
+                'GET',
+            ),
+        ).toBe(true)
+        // A name with no source recorded, or none at all, is not placed, so it is not covered.
+        for (const outsideSources of [null, new Map(), new Map([['corsHeaders', []]])]) {
+            expect(gateHolds(gate, facts({ outsideNames: new Set(['corsHeaders']), outsideSources }), 'GET')).toBe(
+                false,
+            )
+        }
+        // A key the map inherits is no listed name, and the failure says it is not listed.
+        const inherited = facts(reading({ toString: 'src/cors.ts' }))
+        expect(gateHolds(gate, inherited, 'GET')).toBe(false)
+        expect(
+            judge(
+                { root: 'r', rel: 'cors/route.ts', file: '/x/cors/route.ts', handlers: [] },
+                { verb: 'GET', facts: inherited },
+                { ...policy, exemptFiles: { 'cors/route.ts': { reason: 'cors', mustMatch: gate } } },
+            ),
+        ).toMatch(/It names `toString`, which the gate does not list\./)
+    })
+
+    it('a reads-only exact entry applies to reads; a mutation at its path falls to the prefix it sits under', () => {
+        const withEntry: ScanPolicy = {
+            ...policy,
+            exemptFiles: {
+                ...policy.exemptFiles,
+                'hooks/meta/route.ts': {
+                    reason: 'handshake',
+                    mustMatch: { kind: 'reads-only', names: { params: 'config/params.ts' } },
+                },
+            },
+        }
+        expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'GET')?.reason).toBe('handshake')
+        expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'POST')?.reason).toBe('machine caller')
+        const read = facts(reading({ params: 'config/params.ts' }))
+        expect(judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: read }, withEntry)).toBeUndefined()
+        expect(judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: read }, withEntry)).toMatch(
+            /holds only when the handler is itself a call to an imported withSecret/,
+        )
+        expect(
+            judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: facts({ wrappedBy: 'withSecret' }) }, withEntry),
+        ).toBeUndefined()
+        // A read the entry's gate refuses is judged under the entry, not passed on the prefix's gate.
+        expect(
+            judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: facts({ wrappedBy: 'withSecret' }) }, withEntry),
+        ).toMatch(/holds only when the handler is a read/)
+    })
+
+    it('names, in the failure, what a reads-only read named or did that its gate does not allow', () => {
+        const withEntry: ScanPolicy = {
+            ...policy,
+            exemptFiles: {
+                'feed/route.ts': {
+                    reason: 'feed',
+                    mustMatch: { kind: 'reads-only', names: { posts: 'src/posts.ts' } },
+                },
+            },
+        }
+        expect(
+            judge(
+                route('feed/route.ts'),
+                { verb: 'GET', facts: facts(reading({ posts: 'src/posts.ts', db: 'src/db.ts' })) },
+                withEntry,
+            ),
+        ).toMatch(/It names `db`, which the gate does not list\./)
+        // A listed name from another module than its pin is named with the module it came from, and the pin.
+        const elsewhere = { specifier: '@/lib/posts', resolves: true, pins: ['@/lib/posts', 'src/lib/posts.ts'] }
+        expect(
+            judge(
+                route('feed/route.ts'),
+                {
+                    verb: 'GET',
+                    facts: facts({
+                        outsideNames: new Set(['posts', 'db']),
+                        outsideSources: new Map([
+                            ['posts', [elsewhere]],
+                            ['db', [elsewhere]],
+                        ]),
+                    }),
+                },
+                withEntry,
+            ),
+        ).toMatch(
+            /It names `db`, which the gate does not list; and it imports `posts` from '@\/lib\/posts' \(src\/lib\/posts\.ts\), which the gate pins to src\/posts\.ts\./,
+        )
+        expect(
+            judge(
+                route('feed/route.ts'),
+                { verb: 'GET', facts: facts({ outsideRefusal: '`fetch` is a global off the inert list' }) },
+                withEntry,
+            ),
+        ).toMatch(/It cannot pass one: `fetch` is a global off the inert list\./)
+        // The handshake hint: only under webhooks/, the one framework prefix an app's reads-only file entry may sit under.
+        const webhooks: ScanPolicy = {
+            ...policy,
+            exemptPrefixes: {
+                'webhooks/': { reason: 'machine', mustMatch: { kind: 'wrapped-by', callees: ['withSecret'] } },
+            },
+        }
+        expect(judge(route('webhooks/meta/route.ts'), { verb: 'GET', facts: facts({}) }, webhooks)).toMatch(
+            /A read here that reads nothing org-scoped \(a provider's verification handshake\) can instead have a reads-only entry/,
+        )
+        expect(judge(route('webhooks/meta/route.ts'), { verb: 'POST', facts: facts({}) }, webhooks)).not.toMatch(
+            /reads-only entry/,
+        )
+        expect(judge(route('hooks/a/route.ts'), { verb: 'GET', facts: facts({}) }, policy)).not.toMatch(
+            /reads-only entry/,
+        )
+    })
+
     it('a gate holds only on the facts it names', () => {
         const wrapped: Gate = { kind: 'wrapped-by', callees: ['withA', 'withB'] }
         expect(gateHolds(wrapped, facts({ wrappedBy: 'withB' }))).toBe(true)
@@ -2006,7 +2577,7 @@ describe('judging a handler against a policy', () => {
 
     it('describes each gate in words an author can act on', () => {
         expect(describeGate({ kind: 'wrapped-by', callees: ['withA', 'withB'] })).toBe(
-            'the handler is itself a call to an imported withA(…) or withB(…), as in `export const POST = withA(…)`',
+            'the handler is itself a call to an imported withA(…) or withB(…), as in `export const <VERB> = withA(…)`',
         )
         expect(describeGate({ kind: 'calls', callees: ['a.b'] })).toBe(
             'the handler reaches a call to an imported a.b(…) on its own path',
@@ -2014,6 +2585,58 @@ describe('judging a handler against a policy', () => {
         expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(
             /opens with `if \(!isSimulated\) return new Response\(null, \{ status: 404 \}\)` \(an imported `isSimulated`/,
         )
+    })
+})
+
+describe('a route group is not part of the path an exemption is matched against', () => {
+    it("drops a parallel route's @slot segment too, and keeps an interception marker", () => {
+        const root = { exemptDir: '/app/src/app/api' }
+        expect(exemptRel(root, '/app/src/app/api/@s/service/y/route.ts')).toBe('service/y/route.ts')
+        expect(exemptRel(root, '/app/src/app/api/(.)service/z/route.ts')).toBe('(.)service/z/route.ts')
+    })
+
+    it('refuses a route under an intercepting segment, which Next also serves at the URL it intercepts', () => {
+        for (const rel of ['(.)service/z/route.ts', 'a/(..)b/route.ts', '(...)x/route.ts', '(..)(..)x/route.ts']) {
+            const [route] = scanTree({ [rel]: 'export async function GET() { return Response.json({}) }' })
+            expect(route?.handlers, rel).toEqual([
+                { verb: '*', refusal: expect.stringMatching(/under an intercepting segment/) },
+            ])
+        }
+    })
+
+    it('names the path as written in a failure when a group or slot is dropped from it', () => {
+        const [route] = scanTree({
+            '(internal)/x/route.ts': 'export async function POST() { return Response.json({}) }',
+        })
+        const policy: ScanPolicy = { exemptPrefixes: {}, exemptFiles: {}, requiredAlongside: {} }
+        expect(judge(route!, route!.handlers[0]!, policy)).toMatch(
+            /^case: x\/route\.ts \(at \(internal\)\/x\/route\.ts\) POST /,
+        )
+    })
+
+    it('drops (name) segments inside and above the exempt directory', () => {
+        const root = { exemptDir: '/app/src/app/api' }
+        expect(exemptRel(root, '/app/src/app/api/(internal)/service/x/route.ts')).toBe('service/x/route.ts')
+        expect(exemptRel(root, '/app/src/app/(app)/api/webhooks/a/route.ts')).toBe('webhooks/a/route.ts')
+        expect(exemptRel(root, '/app/src/app/(marketing)/feed.xml/route.ts')).toBe('../feed.xml/route.ts')
+        expect(exemptRel(root, '/app/src/app/api-docs/route.ts')).toBe('../api-docs/route.ts')
+        expect(exemptRel(root, '/app/src/app/api/items/route.ts')).toBe('items/route.ts')
+    })
+
+    it('so a service route in a group still needs its required gate', () => {
+        const routes = scanTree({
+            '(internal)/service/x/route.ts': `${AUTHORIZE}${DECLS}export async function GET() { ${CALL} }`,
+        })
+        const required: ScanPolicy = {
+            exemptPrefixes: {},
+            exemptFiles: {},
+            requiredAlongside: {
+                'service/': { reason: 'caller', mustMatch: { kind: 'wrapped-by', callees: ['withCaller'] } },
+            },
+        }
+        const [route] = routes
+        expect(route?.rel).toBe('service/x/route.ts')
+        expect(judge(route!, route!.handlers[0]!, required)).toMatch(/must also satisfy/)
     })
 })
 
@@ -2475,5 +3098,1430 @@ describe("the fix review's second verdict (Y3, Y5)", () => {
     it("Y5: the simulated-404 gate's description says what it refuses", () => {
         expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(/notFound\(\)/)
         expect(describeGate({ kind: 'opens-with-simulated-404' })).toMatch(/new Response\(null, NOT_FOUND\)/)
+    })
+})
+
+// ---------------------------------------------------------------------------------------------------------
+// Pages, layouts and metadata routes (safeinsights/sssb#221).
+// ---------------------------------------------------------------------------------------------------------
+
+/** A package in the case's own node_modules: what a page renders from one is out of sight. */
+function pkg(name: string): Record<string, string> {
+    return {
+        [`node_modules/${name}/package.json`]: JSON.stringify({ name, main: 'index.js' }),
+        [`node_modules/${name}/index.js`]: 'export {}\n',
+    }
+}
+
+/**
+ * The modules every page case can render from, which a case's own files override: client components (`glue`, `screen`,
+ * `ui`, `real`), a server component of the app's own (`server-list`, no `'use client'`), and packages.
+ */
+const PAGE_FIXTURES: Record<string, string> = {
+    'glue.tsx': "'use client'\nexport function Glue() { return null }\n",
+    'screen.tsx':
+        "'use client'\nexport function Screen() { return null }\nexport default function S() { return null }\n",
+    'ui.tsx': "'use client'\nexport function Card() { return null }\n",
+    'real.tsx': "'use client'\nexport function Real() { return null }\n",
+    'server-list.tsx': "import { db } from './db'\nexport async function MemberList() { return db }\n",
+    ...pkg('@mantine/core'),
+    ...pkg('next-intl'),
+    ...pkg('ui-kit'),
+    'node_modules/@sssb/kit/adapters/real/user-menu.js': 'export {}\n',
+    'node_modules/@sssb/kit/adapters/real/sign-in-form.js': 'export {}\n',
+    'node_modules/@sssb/kit/package.json': JSON.stringify({ name: '@sssb/kit' }),
+}
+
+/** Writes `files` (over PAGE_FIXTURES) under a fresh directory and scans its pages as one root. */
+function scanPageTree(files: Record<string, string>): ScannedRoute[] {
+    const dir = path.join(SCRATCH, `case-${++caseNumber}`)
+    for (const [rel, src] of Object.entries({ ...PAGE_FIXTURES, ...files })) {
+        mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+        writeFileSync(path.join(dir, rel), src)
+    }
+    return scanPages([{ label: 'case', dir, exemptDir: dir }])
+}
+
+/** What a page handler came to: authorized, reads nothing, the names it reads, or why it cannot read nothing. */
+function pageState(handler: Handler): string {
+    if (handler.refusal !== undefined) return `refused: ${handler.refusal}`
+    const f = handler.facts
+    if (f.reachesAuthorize) return 'authorized'
+    if (f.readsNothing) return 'reads nothing'
+    return f.outsideNames === null ? `refusal: ${f.outsideRefusal}` : `names: ${[...f.outsideNames].join(', ')}`
+}
+
+/** Each export of the tree's `page.tsx` (or `file`), with its state. */
+function pageStates(files: Record<string, string>, file = 'page.tsx'): Record<string, string> {
+    const page = scanPageTree(files).find((p) => p.rel === file)
+    if (!page) throw new Error(`no ${file} in the case`)
+    return Object.fromEntries(page.handlers.map((h) => [h.verb, pageState(h)]))
+}
+
+/** The state of the `default` export of a `page.tsx` with source `src`. */
+function pageDefault(src: string, more: Record<string, string> = {}): string {
+    const state = pageStates({ 'page.tsx': src, ...more })['default']
+    if (state === undefined) throw new Error('no default export judged')
+    return state
+}
+
+const SESSION = "import { auth } from '@sssb/kit/adapters/index'\n"
+const GLUE = "import { Glue } from './glue'\n"
+
+describe('pages, layouts and metadata routes are read handlers (safeinsights/sssb#221)', () => {
+    it('finds every server-rendered special file and metadata route, with every route extension, and nothing else', () => {
+        const judged = [
+            'page.tsx',
+            'a/layout.ts',
+            'b/template.jsx',
+            'c/default.js',
+            'd/loading.mjs',
+            'e/not-found.tsx',
+            'f/forbidden.tsx',
+            'g/unauthorized.tsx',
+            'h/sitemap.ts',
+            'robots.ts',
+            'manifest.ts',
+            'i/opengraph-image.tsx',
+            'j/twitter-image.tsx',
+            'k/icon.tsx',
+            'k/icon1.tsx',
+            'l/apple-icon.tsx',
+        ]
+        const ignored = [
+            'error.tsx',
+            'global-error.tsx',
+            'route.ts',
+            'page.test.tsx',
+            'page.stories.tsx',
+            'page.module.css',
+            'm/icon12.tsx',
+            'n/opengraph-image.png',
+            'sitemap.xml',
+            'o/page.mts',
+            'p/glue.tsx',
+        ]
+        const files = Object.fromEntries(
+            [...judged, ...ignored].map((f) => [f, 'export default function X() { return null }\n']),
+        )
+        expect(
+            scanPageTree(files)
+                .map((p) => p.rel)
+                .sort(),
+        ).toEqual([...judged].sort())
+        for (const name of ['page.tsx', 'layout.mjs', 'icon1.tsx', 'sitemap.js'])
+            expect(isPageFileName(name)).toBe(true)
+        for (const name of ['error.tsx', 'icon12.tsx', 'page.module.css', 'route.ts'])
+            expect(isPageFileName(name)).toBe(false)
+    })
+
+    it('judges the default export and the four generate functions, each by name, and nothing else Next reads', () => {
+        const states = pageStates({
+            'page.tsx':
+                'export default function Page() { return null }\n' +
+                'export async function generateMetadata() { return { title: "x" } }\n' +
+                'export function generateImageMetadata() { return [] }\n' +
+                'export const generateSitemaps = async () => [{ id: 0 }]\n' +
+                'export function generateStaticParams() { return [] }\n' +
+                'export function generateViewport() { return {} }\n' +
+                "export const metadata = { title: 'x' }\nexport const revalidate = 60\nexport function helper() {}\n",
+        })
+        expect(states).toEqual({
+            default: 'reads nothing',
+            generateMetadata: 'reads nothing',
+            generateImageMetadata: 'reads nothing',
+            generateSitemaps: 'reads nothing',
+            generateViewport: 'reads nothing',
+        })
+        // Each is a read, for the exemption lookup, the reads-only gate and staleness alike.
+        for (const name of [
+            'default',
+            'generateMetadata',
+            'generateImageMetadata',
+            'generateSitemaps',
+            'generateViewport',
+            'GET',
+        ]) {
+            expect(isReadVerb(name), name).toBe(true)
+        }
+        expect(isReadVerb('POST')).toBe(false)
+    })
+
+    it('judges a generateMetadata that reads data on its own: it authorizes or it fails', () => {
+        const states = pageStates({
+            'page.tsx':
+                "import { loadOrg } from './data'\nexport default function Page() { return null }\n" +
+                'export async function generateMetadata() { return { title: (await loadOrg()).name } }\n',
+        })
+        expect(states).toEqual({ default: 'reads nothing', generateMetadata: 'names: loadOrg' })
+    })
+
+    it("skips a 'use client' file, and an export whose function is in one, but not a file where the string is no directive", () => {
+        expect(
+            scanPageTree({
+                'page.tsx': `'use client'\n${GLUE}export default function P() { return fetch('/x') }\n`,
+            })[0]!.handlers,
+        ).toEqual([])
+        expect(
+            scanPageTree({
+                'page.tsx': "export { default } from './client'\n",
+                'client.tsx': "'use client'\nexport default function C() { return fetch('/x') }\n",
+            })[0]!.handlers,
+        ).toEqual([])
+        // A client file is skipped whole, even where its export could not be resolved to a function.
+        expect(
+            scanPageTree({ 'page.tsx': "'use client'\nlet C = () => null\nexport default C\n" })[0]!.handlers,
+        ).toEqual([])
+        expect(pageDefault("const x = 1\n'use client'\nexport default function P() { return fetch('/x') }\n")).toBe(
+            'refusal: `fetch` is a global off the inert list',
+        )
+    })
+
+    it('follows a re-exported page into its module, and refuses one it cannot read, as for a route', () => {
+        expect(
+            pageDefault("export { default } from './screen'\n", {
+                'screen.tsx': "import { db } from './db'\nexport default async function S() { return db }\n",
+            }),
+        ).toBe('names: db')
+        expect(pageStates({ 'page.tsx': 'export default function P( { return null }\n' })).toEqual({
+            '*': expect.stringMatching(/^refused: the file does not parse/),
+        })
+        expect(pageDefault("export { default } from './missing'\n")).toMatch(
+            /^refused: the handler is re-exported from/,
+        )
+        // `export *` never re-exports a default, so it gives the page none to judge, directly or through a named re-export.
+        expect(
+            pageDefault("export { default } from './screen'\n", {
+                'screen.tsx': "export * from './inner'\n",
+                'inner.tsx': 'export default function S() { return null }\n',
+            }),
+        ).toBe("refused: './screen' has no export named `default`")
+        expect(
+            scanPageTree({
+                'page.tsx': "export * from './screen'\n",
+                'screen.tsx': 'export default function S() { return null }\n',
+            })[0]!.handlers,
+        ).toEqual([])
+    })
+
+    it('passes a page that reaches authorize, whatever else it names', () => {
+        expect(
+            pageDefault(
+                `${SESSION}${AUTHORIZE}export default async function P() {\n` +
+                    "  const user = await auth.requireUser()\n  authorize(user, user.orgSlug, 'read', { type: 'Membership', orgId: user.orgSlug })\n" +
+                    '  return auth.listMembers(user.orgSlug)\n}\n',
+            ),
+        ).toBe('authorized')
+    })
+
+    it('judges a page under an intercepting segment as a page, marked so no exemption applies, and matches one under a group or slot by its URL', () => {
+        const pages = scanPageTree({
+            '(.)photo/page.tsx': 'export default function P() { return null }\n',
+            '(shop)/@modal/cart/page.tsx': 'export default function P() { return null }\n',
+        })
+        const photo = pages.find((p) => p.rel === '(.)photo/page.tsx')
+        expect(photo?.intercepting).toBe(true)
+        expect(photo?.handlers.map(pageState)).toEqual(['reads nothing'])
+        const cart = pages.find((p) => p.rel === 'cart/page.tsx')
+        expect(cart?.written).toBe('(shop)/@modal/cart/page.tsx')
+        expect(cart?.page).toBe(true)
+    })
+})
+
+describe('what a page may name and still read nothing: the page allow-list (safeinsights/sssb#221)', () => {
+    it('passes the thin wrapper every app has: the locale, the session, a redirect, a UI ability check, a component', () => {
+        expect(
+            pageDefault(
+                "import { setRequestLocale, getTranslations } from 'next-intl/server'\nimport { redirect } from 'next/navigation'\n" +
+                    `${SESSION}import { canInActiveOrg } from '@sssb/kit/authz/authorize'\n${GLUE}` +
+                    'export default async function P({ params }: { params: Promise<{ locale: string }> }) {\n' +
+                    '  const { locale } = await params\n  setRequestLocale(locale)\n  const t = await getTranslations("x")\n' +
+                    '  const user = await auth.getCurrentUser()\n  if (!user) redirect(`/${locale}${auth.signInPath()}`)\n' +
+                    '  return <Glue title={t("title")} canCreate={canInActiveOrg(user, "create", "Item")} />\n}\n',
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it("passes the locale layout's names: hasLocale, routing.locales, the theme, Mantine's html props, the demo flag", () => {
+        expect(
+            pageStates(
+                {
+                    'layout.tsx':
+                        "import { mantineHtmlProps, MantineProvider } from '@mantine/core'\nimport { hasLocale, NextIntlClientProvider } from 'next-intl'\n" +
+                        "import { getMessages } from 'next-intl/server'\nimport { notFound } from 'next/navigation'\n" +
+                        "import { auth, isDemoMode, isSimulated } from '@sssb/kit/adapters/index'\nimport { routing } from '@sssb/kit/i18n/routing'\n" +
+                        "import { getTenantTheme } from '@sssb/kit/theme'\nimport { sameOriginPath } from '@sssb/kit/core/same-origin-path'\n" +
+                        'export default async function L({ children, params }: { children: unknown; params: Promise<{ locale: string }> }) {\n' +
+                        '  const { locale } = await params\n  if (!hasLocale(routing.locales, locale)) notFound()\n' +
+                        '  const user = await auth.getCurrentUser()\n  const orgs = await auth.listMyOrgs()\n  void (await auth.refusal?.())\n' +
+                        '  void sameOriginPath(locale)\n  const messages = await getMessages()\n' +
+                        '  return <html {...mantineHtmlProps}><body><NextIntlClientProvider messages={messages}><MantineProvider theme={getTenantTheme(user?.tenantSlug ?? "x")}>' +
+                        '{isSimulated && isDemoMode ? orgs.length : children}</MantineProvider></NextIntlClientProvider></body></html>\n}\n',
+                },
+                'layout.tsx',
+            ),
+        ).toEqual({ default: 'reads nothing' })
+    })
+
+    it('holds the allow-list to the page: a route that names the same imports names them', () => {
+        const route = scanTree({
+            'route.ts':
+                `${SESSION}import { setRequestLocale } from 'next-intl/server'\n` +
+                'export async function GET() { setRequestLocale("en"); return Response.json(await auth.getCurrentUser()) }\n',
+        })[0]!
+        expect(pageState(route.handlers[0]!)).toBe('names: setRequestLocale, auth')
+    })
+
+    it('holds an allowed import to its exported name and its module', () => {
+        expect(
+            pageDefault(
+                "import { setRequestLocale as s } from 'next-intl/server'\nexport default function P() { s('en'); return null }\n",
+            ),
+        ).toBe('refusal: `s` is an import under another name than its exported `setRequestLocale`')
+        expect(
+            pageDefault(
+                "import { setRequestLocale } from './i18n'\nexport default function P() { setRequestLocale('en'); return null }\n",
+            ),
+        ).toBe('names: setRequestLocale')
+    })
+})
+
+describe('a member-level allowance: `auth` only as a session read (safeinsights/sssb#221, #259)', () => {
+    const page = (body: string, prelude = '') =>
+        pageDefault(`${SESSION}${prelude}export default async function P() {\n${body}\n  return null\n}\n`)
+
+    it('passes each listed member, called', () => {
+        expect(
+            page(
+                'await auth.getCurrentUser(); await auth.requireUser(); auth.signInPath("/x"); await auth.refusal?.(); await auth.listMyOrgs()',
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it("refuses every other member, the team's member list first, whatever an exemption could list", () => {
+        expect(page('await auth.listMembers("frontline")')).toMatch(
+            /^refusal: `auth\.listMembers` is used, and a page may use `auth` only as `auth\.getCurrentUser\(\)`/,
+        )
+        expect(page('await auth.getMember("frontline", "u")')).toMatch(/^refusal: `auth\.getMember` is used/)
+    })
+
+    it('refuses `auth` itself: passed along, aliased, spread, destructured, or reached by a computed key', () => {
+        for (const body of [
+            'await send(auth)',
+            'const a = auth; await a.listMembers("x")',
+            'const all = { ...auth }; void all',
+            'const { listMembers } = auth; await listMembers("x")',
+            'await auth["getCurrentUser"]()',
+        ]) {
+            expect(page(body, "import { send } from './send'\n"), body).toMatch(/^refusal: `auth` is used itself/)
+        }
+    })
+
+    it('refuses a listed method that is not called, and a read-only member read is all `routing` may give', () => {
+        expect(page('const get = auth.getCurrentUser; await get()')).toBe(
+            'refusal: `auth.getCurrentUser` is used without being called, and a page may use `auth` only as ' +
+                '`auth.getCurrentUser()`, `auth.listMyOrgs()`, `auth.refusal()`, `auth.requireUser()`, `auth.signInPath()`, ' +
+                'since what else it reaches may be org-scoped',
+        )
+        const routing = "import { routing } from '@sssb/kit/i18n/routing'\n"
+        expect(page('void routing.locales', routing)).toBe('reads nothing')
+        expect(page('void routing.defaultLocale', routing)).toMatch(/^refusal: `routing\.defaultLocale` is used/)
+        expect(page('void routing', routing)).toMatch(/^refusal: `routing` is used itself/)
+    })
+
+    it('holds the allowance to the module and the exported name, and never counts the name, from any module', () => {
+        // An app's own `auth` (a re-export, a look-alike) is refused outright, so no reads-only entry can list it.
+        expect(
+            pageDefault(
+                "import { auth } from './auth'\nexport default async function P() { await auth.listMembers('x'); return null }\n",
+            ),
+        ).toBe(
+            "refusal: `auth` is reached through './auth', and a page may use `auth` only as imported by name from " +
+                '@sssb/kit/adapters/index, through its listed members, since what else it reaches may be org-scoped; no ' +
+                'exemption can list it',
+        )
+        expect(
+            pageDefault("import { routing } from './i18n'\nexport default function P() { return routing.locales }\n"),
+        ).toMatch(/^refusal: `routing` is reached through '\.\/i18n'/)
+        expect(
+            pageDefault(
+                "import { auth as session } from '@sssb/kit/adapters/index'\nexport default async function P() { await session.getCurrentUser(); return null }\n",
+            ),
+        ).toBe('refusal: `session` is an import under another name than its exported `auth`')
+    })
+})
+
+describe('components a page renders (safeinsights/sssb#221)', () => {
+    it('passes an imported component used only as a JSX tag, by a named, default or namespace import', () => {
+        expect(
+            pageDefault(
+                `${GLUE}import Screen from './screen'\nimport * as UI from './ui'\n` +
+                    'export default function P() { return <UI.Card><Screen><Glue /></Screen></UI.Card> }\n',
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('counts an imported component referred to any other way: passed, called, aliased', () => {
+        expect(pageDefault(`${GLUE}export default function P() { return <div render={Glue} /> }\n`)).toBe('names: Glue')
+        expect(pageDefault(`${GLUE}export default function P() { return Glue({}) }\n`)).toBe('names: Glue')
+        expect(pageDefault(`${GLUE}export default function P() { const C = Glue; return <C /> }\n`)).toBe('names: Glue')
+    })
+
+    it('does not read a type-only import as a component', () => {
+        expect(
+            pageDefault("import type { Glue } from './glue'\nexport default function P() { return <Glue /> }\n"),
+        ).toBe('refusal: `Glue` is a type-only import')
+    })
+
+    it('reads a component of its own file that it renders, as part of the page, once, by the same rules', () => {
+        const wrapper = (body: string, prelude = '') =>
+            pageDefault(
+                `${prelude}async function Wrapper({ children }: { children: unknown }) {\n${body}\n}\n` +
+                    'export default function P() { return <Wrapper><Wrapper>x</Wrapper></Wrapper> }\n',
+            )
+        expect(wrapper('return <section>{children}</section>')).toBe('reads nothing')
+        expect(wrapper('return <Wrapper>{children}</Wrapper>')).toBe('reads nothing')
+        expect(
+            wrapper('return <Glue rows={await db.rows()}>{children}</Glue>', `${GLUE}import { db } from './db'\n`),
+        ).toBe('names: db')
+        expect(wrapper('return cache.get("x")', 'const cache = new Map()\n')).toBe(
+            "refusal: `cache` is a declaration of the page's own file, which code of the file can change: write the value inline where the page uses it (a literal), render it as a component of this file (a JSX tag), or move it into a module and list the import in the page's reads-only entry (a const bound to a primitive literal is already inert)",
+        )
+        const arrow = pageDefault(
+            `${GLUE}const Shell = () => <Glue />\nexport default function P() { return <Shell /> }\n`,
+        )
+        expect(arrow).toBe('reads nothing')
+    })
+
+    it('refuses a component of its own file it does not only render, or that the file reassigns', () => {
+        expect(
+            pageDefault('function Inner() { return null }\nexport default function P() { return Inner() }\n'),
+        ).toMatch(/^refusal: `Inner` is a declaration of the page's own file/)
+        expect(
+            pageDefault(
+                'function Inner() { return null }\nInner = () => null\nexport default function P() { return <Inner /> }\n',
+            ),
+        ).toMatch(/^refusal: `Inner` is a declaration of the page's own file/)
+        expect(pageDefault('let Inner = () => null\nexport default function P() { return <Inner /> }\n')).toMatch(
+            /^refusal: `Inner` is a declaration of the page's own file/,
+        )
+    })
+
+    it('holds the components to the page: a route that renders a JSX tag names its import', () => {
+        const route = scanTree({ 'route.tsx': `${GLUE}export function GET() { return Response.json(<Glue />) }\n` })[0]!
+        expect(pageState(route.handlers[0]!)).toBe('names: Glue')
+    })
+})
+
+describe('what a page loads with import() to render it (safeinsights/sssb#221)', () => {
+    it("passes the guide's real-adapter shape: destructured, awaited, alone or in Promise.all, rendered only", () => {
+        expect(
+            pageDefault(
+                "import { isSimulated } from '@sssb/kit/adapters/index'\nimport { getTranslations } from 'next-intl/server'\n" +
+                    'export default async function P() {\n  if (isSimulated) return null\n' +
+                    "  const { RealMenu } = await import('@sssb/kit/adapters/real/user-menu')\n" +
+                    "  const [{ RealForm }, t] = await Promise.all([import('@sssb/kit/adapters/real/sign-in-form'), getTranslations('auth')])\n" +
+                    '  return <RealMenu><RealForm label={t("x")} /></RealMenu>\n}\n',
+            ),
+        ).toBe('reads nothing')
+        // In a component of the page's own file, as a layout's provider is loaded.
+        expect(
+            pageDefault(
+                "async function Providers({ children }: { children: unknown }) { const { Real } = await import('./real'); return <Real>{children}</Real> }\n" +
+                    'export default function P() { return <Providers>x</Providers> }\n',
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('refuses a loaded name used any other way than as a JSX tag', () => {
+        expect(
+            pageDefault(
+                "export default async function P() { const { load } = await import('./data'); return load() }\n",
+            ),
+        ).toBe(
+            "refusal: `load` is loaded with `import('./data')`, and a page may use what it loads with import() only to render it as a component (a JSX tag)",
+        )
+    })
+
+    it('refuses every other import(): a module object, a rename, a default, a rest, a non-literal, unawaited, a let', () => {
+        for (const body of [
+            "const mod = await import('./x'); return <mod.C />",
+            "const { C: D } = await import('./x'); return <D />",
+            "const { C = null } = await import('./x'); return <C />",
+            "const { ...rest } = await import('./x'); return rest",
+            "const { C } = await import(`./${'x'}`); return <C />",
+            "const p = import('./x'); return p",
+            "let { C } = await import('./x'); return <C />",
+            "const [, { C }] = await Promise.all([...xs, import('./x')]); return <C />",
+        ]) {
+            expect(
+                pageDefault(`export default async function P({ xs }: { xs: unknown[] }) { ${body} }\n`),
+                body,
+            ).toMatch(/^refusal: it loads a module with `import\(\)` other than to render what it takes from it/)
+        }
+    })
+
+    it('refuses the same shape in a route: import() is a page allowance only', () => {
+        const route = scanTree({
+            'route.tsx':
+                "export async function GET() { const { C } = await import('./x'); return Response.json(<C />) }\n",
+        })[0]!
+        expect(pageState(route.handlers[0]!)).toBe('refusal: it loads a module with `import()`')
+    })
+})
+
+describe('judging a page against a policy (safeinsights/sssb#221)', () => {
+    const facts = (overrides: Partial<HandlerFacts>): HandlerFacts => ({
+        reachesAuthorize: false,
+        wrappedBy: null,
+        calls: new Set(),
+        opensWithSimulated404: false,
+        ...reading({ findTenant: 'src/seed.ts' }),
+        outsideRefusal: null,
+        readsNothing: false,
+        ...overrides,
+    })
+    const page = (rel: string): ScannedRoute => ({ root: 'app', rel, file: rel, handlers: [], page: true })
+    const policy = (exemptions: Record<string, Gate>, required: Record<string, Gate> = {}): ScanPolicy => ({
+        exemptPrefixes: Object.fromEntries(
+            Object.entries(exemptions)
+                .filter(([k]) => k.endsWith('/'))
+                .map(([k, mustMatch]) => [k, { reason: 'r', mustMatch }]),
+        ),
+        exemptFiles: Object.fromEntries(
+            Object.entries(exemptions)
+                .filter(([k]) => !k.endsWith('/'))
+                .map(([k, mustMatch]) => [k, { reason: 'r', mustMatch }]),
+        ),
+        requiredAlongside: Object.fromEntries(
+            Object.entries(required).map(([k, mustMatch]) => [k, { reason: 'r', mustMatch }]),
+        ),
+        hint: 'a route-only hint',
+    })
+
+    it('fails a page that names data, saying which names, and how to authorize or exempt it', () => {
+        const why = judge(page('../x/page.tsx'), { verb: 'default', facts: facts({}) }, policy({}))
+        expect(why).toMatch(
+            /^app: \.\.\/x\/page\.tsx default is a page export, rendered on the server for every request/,
+        )
+        expect(why).toMatch(/reads something: it names `findTenant`\./)
+        expect(why).toMatch(/Load the data in the page and authorize there/)
+        expect(why).toMatch(/`auth\.getCurrentUser\(\)`/)
+        expect(why).toMatch(/under `outsideApi` \(keys relative to src\/app\), with a `reads-only` gate/)
+        expect(why).not.toMatch(/a route-only hint/)
+    })
+
+    it('passes a page that authorizes, or reads nothing, with no entry', () => {
+        expect(
+            judge(page('../x/page.tsx'), { verb: 'default', facts: facts({ reachesAuthorize: true }) }, policy({})),
+        ).toBeUndefined()
+        expect(
+            judge(
+                page('../x/page.tsx'),
+                { verb: 'default', facts: facts({ outsideNames: new Set(), readsNothing: true }) },
+                policy({}),
+            ),
+        ).toBeUndefined()
+    })
+
+    it('applies a reads-only entry to a page, and names what it reads beyond the gate', () => {
+        const gate: Gate = { kind: 'reads-only', names: { findTenant: 'src/seed.ts' } }
+        expect(
+            judge(page('../x/page.tsx'), { verb: 'default', facts: facts({}) }, policy({ '../x/page.tsx': gate })),
+        ).toBeUndefined()
+        const more = judge(
+            page('../x/page.tsx'),
+            { verb: 'generateMetadata', facts: facts(reading({ findTenant: 'src/seed.ts', db: 'src/db.ts' })) },
+            policy({ '../x/page.tsx': gate }),
+        )
+        expect(more).toMatch(/generateMetadata is a page export \(a read\) under an exemption that holds only when/)
+        expect(more).toMatch(/: it names `db`, which the gate does not list\. List only what the page reads/)
+        // The same name from another module than its pin: refused, the module named.
+        const elsewhere = judge(
+            page('../x/page.tsx'),
+            { verb: 'default', facts: facts(reading({ findTenant: 'src/other.ts' })) },
+            policy({ '../x/page.tsx': gate }),
+        )
+        expect(elsewhere).toMatch(
+            /: it imports `findTenant` from 'src\/other\.ts', which the gate pins to src\/seed\.ts\./,
+        )
+    })
+
+    it('applies no other gate kind to a page: a route-shaped gate proves nothing about a render', () => {
+        for (const gate of [
+            { kind: 'wrapped-by', callees: ['withWebhookSecret'] },
+            { kind: 'calls', callees: ['findTenant'] },
+            { kind: 'opens-with-simulated-404' },
+        ] satisfies Gate[]) {
+            const f = facts({
+                wrappedBy: 'withWebhookSecret',
+                calls: new Set(['findTenant']),
+                opensWithSimulated404: true,
+            })
+            expect(
+                judge(page('webhooks/x/page.tsx'), { verb: 'default', facts: f }, policy({ 'webhooks/': gate })),
+                gate.kind,
+            ).toMatch(/is a page export, rendered on the server/)
+        }
+    })
+
+    it('requires a prefix-required gate of a page under it too', () => {
+        const why = judge(
+            page('service/x/page.tsx'),
+            { verb: 'default', facts: facts({ reachesAuthorize: true }) },
+            policy({}, { 'service/': { kind: 'wrapped-by', callees: ['withServiceCaller'] } }),
+        )
+        expect(why).toMatch(/^app: service\/x\/page\.tsx default must also satisfy/)
+    })
+
+    it('fails a page it could not read', () => {
+        expect(judge(page('../x/page.tsx'), { verb: '*', refusal: 'the file does not parse (x)' }, policy({}))).toMatch(
+            /cannot be checked: the file does not parse \(x\)\. The scan fails a handler it cannot follow/,
+        )
+    })
+})
+
+describe('metadata routes (safeinsights/sssb#221)', () => {
+    it('passes a sitemap and a robots of literals, and names an image route renderer, which no list allows', () => {
+        expect(
+            pageStates(
+                {
+                    'sitemap.ts':
+                        "export default function sitemap() { return [{ url: 'https://example.test', lastModified: new Date() }] }\n" +
+                        'export async function generateSitemaps() { return [{ id: 0 }] }\n',
+                },
+                'sitemap.ts',
+            ),
+        ).toEqual({ default: 'reads nothing', generateSitemaps: 'reads nothing' })
+        expect(
+            pageStates({ 'robots.ts': "export default () => ({ rules: { userAgent: '*' } })\n" }, 'robots.ts'),
+        ).toEqual({
+            default: 'reads nothing',
+        })
+        expect(
+            pageStates(
+                {
+                    'opengraph-image.tsx':
+                        "import { ImageResponse } from 'next/og'\nexport default function Image() { return new ImageResponse(<div>x</div>) }\n",
+                },
+                'opengraph-image.tsx',
+            ),
+        ).toEqual({ default: 'names: ImageResponse' })
+    })
+
+    it('fails an image route that reads org data without authorizing', () => {
+        expect(
+            pageStates(
+                {
+                    'icon.tsx':
+                        "import { ImageResponse } from 'next/og'\nimport { loadOrg } from './org'\n" +
+                        'export default async function Icon() { return new ImageResponse(<div>{(await loadOrg()).name}</div>) }\n',
+                },
+                'icon.tsx',
+            ),
+        ).toEqual({ default: 'names: ImageResponse, loadOrg' })
+    })
+})
+
+describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
+    it("renders out of sight only a client module's or a package's component; the app's own server component is named", () => {
+        // Client modules and packages: PAGE_FIXTURES' glue, screen, ui and ui-kit.
+        expect(
+            pageDefault(
+                `${GLUE}import Screen from './screen'\nimport * as UI from './ui'\nimport { Kit } from 'ui-kit'\n` +
+                    'export default function P() { return <UI.Card><Screen><Kit /><Glue /></Screen></UI.Card> }\n',
+            ),
+        ).toBe('reads nothing')
+        // An async server component that loads its own data is counted, so the page authorizes or an entry lists it.
+        const list = "import { MemberList } from './server-list'\n"
+        expect(pageDefault(`${list}export default function P() { return <MemberList slug="x" /> }\n`)).toBe(
+            'names: MemberList',
+        )
+        expect(pageDefault("import List from './server-list'\nexport default function P() { return <List /> }\n")).toBe(
+            'refusal: `List` is a default import, which has no exported name',
+        )
+        expect(
+            pageDefault(
+                "import * as S from './server-list'\nexport default function P() { return <S.MemberList /> }\n",
+            ),
+        ).toBe('refusal: `S` is a namespace import, the whole module')
+        // A module that does not resolve is not a client one.
+        expect(pageDefault("import { Gone } from './gone'\nexport default function P() { return <Gone /> }\n")).toBe(
+            'names: Gone',
+        )
+        // `'use client'` after another statement is no directive.
+        expect(
+            pageDefault("import { Late } from './late'\nexport default function P() { return <Late /> }\n", {
+                'late.tsx': "const x = 1\n'use client'\nexport function Late() { return x }\n",
+            }),
+        ).toBe('names: Late')
+    })
+
+    it("holds what a page loads with import() to the same rule: the app's own server module's component is named", () => {
+        expect(
+            pageDefault(
+                "export default async function P() { const { MemberList } = await import('./server-list'); return <MemberList /> }\n",
+            ),
+        ).toBe('names: MemberList')
+        expect(
+            pageDefault(
+                "export default async function P() { const { Real } = await import('./real'); return <Real /> }\n",
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('runs the member check before the JSX-tag allowance: `auth` is never a component', () => {
+        expect(pageDefault(`${SESSION}export default function P() { return <auth.listMembers /> }\n`)).toMatch(
+            /^refusal: `auth\.listMembers` is used/,
+        )
+        // A lowercase tag is an HTML element (`React.createElement('auth')`), not the import: it reads nothing.
+        expect(pageDefault(`${SESSION}export default function P() { return <auth /> }\n`)).toBe('reads nothing')
+        expect(
+            pageDefault(
+                "import * as kit from '@sssb/kit/adapters/index'\nexport default function P() { return <kit.auth.listMembers /> }\n",
+            ),
+        ).toMatch(/^refusal: `auth` is reached through the namespace import `kit`/)
+        expect(
+            pageDefault(
+                "export default async function P() { const { auth } = await import('@sssb/kit/adapters/index'); return <auth.listMembers /> }\n",
+            ),
+        ).toMatch(/^refusal: `auth` is reached through import\('@sssb\/kit\/adapters\/index'\)/)
+    })
+
+    it('pins the page allow-list as an exact set, as the failure names it', () => {
+        const route: ScannedRoute = { root: 'app', rel: '../x/page.tsx', file: 'x', handlers: [], page: true }
+        const facts: HandlerFacts = {
+            reachesAuthorize: false,
+            wrappedBy: null,
+            calls: new Set(),
+            opensWithSimulated404: false,
+            outsideNames: new Set(['x']),
+            outsideSources: new Map(),
+            outsideRefusal: null,
+            readsNothing: false,
+        }
+        const why = judge(
+            route,
+            { verb: 'default', facts },
+            { exemptPrefixes: {}, exemptFiles: {}, requiredAlongside: {} },
+        )
+        expect(why).toContain(
+            'the inert values a read route may name, `getLocale`, `getMessages`, `getTranslations`, `setRequestLocale` ' +
+                '(next-intl/server), `use` (react), `hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
+                '(@sssb/kit/adapters/index), `sameOriginPath` (@sssb/kit/core/same-origin-path), `getTenantTheme` ' +
+                '(@sssb/kit/theme), `mantineHtmlProps` (@mantine/core), `auth.getCurrentUser()`, `auth.listMyOrgs()`, ' +
+                '`auth.refusal()`, `auth.requireUser()`, `auth.signInPath()` (@sssb/kit/adapters/index; `auth` itself, or ' +
+                'any other member of it, is not), `routing.locales` (@sssb/kit/i18n/routing; `routing` itself, or any other ' +
+                'member of it, is not), a component it only renders',
+        )
+    })
+
+    it('holds the Promise.all shape to the global, awaited, with one argument, and import() to one argument', () => {
+        for (const body of [
+            "const [{ C }] = await Promise.all([import('./real')], 1); return <C />",
+            "const p = Promise.all([import('./real')]); return p",
+            "const [{ C }] = await Promised.all([import('./real')]); return <C />",
+            "const { C } = await import('./real', { with: { type: 'json' } }); return <C />",
+        ]) {
+            expect(
+                pageDefault(`import { Promised } from './p'\nexport default async function P() { ${body} }\n`),
+                body,
+            ).toMatch(/^refusal: it loads a module with `import\(\)` other than to render what it takes from it/)
+        }
+        expect(
+            pageDefault(
+                "import { Promise } from './p'\nexport default async function P() { const [{ C }] = await Promise.all([import('./real')]); return <C /> }\n",
+            ),
+        ).toMatch(/^refusal: it loads a module with `import\(\)`/)
+    })
+
+    it('follows no same-file component that is redeclared, a generator, ambient, or a member of a value', () => {
+        const tag = (prelude: string) => pageDefault(`${prelude}\nexport default function P() { return <C /> }\n`)
+        expect(tag('function C() { return null }\nfunction C() { return null }')).toMatch(
+            /^refusal: `C` is a declaration of the page's own file/,
+        )
+        expect(tag('function* C() { yield null }')).toMatch(/^refusal: `C` is a declaration of the page's own file/)
+        expect(tag('declare function C(): null')).toBe(
+            'refusal: `C` is declared with `declare`, so its value is out of sight',
+        )
+        expect(
+            pageDefault(
+                "import { db } from './db'\nconst Rows: Record<string, unknown> = {}\nRows.X = async () => db\n" +
+                    'export default function P() { return <Rows.X /> }\n',
+            ),
+        ).toMatch(/^refusal: `Rows` is a declaration of the page's own file/)
+        expect(
+            pageDefault(
+                "import { db } from './db'\nfunction Rows() { return null }\nRows.X = async () => db\n" +
+                    'export default function P() { return <Rows.X /> }\n',
+            ),
+        ).toMatch(/^refusal: `Rows` is a declaration of the page's own file/)
+    })
+
+    it("judges a page whose prologue is 'use server', and a 'use client' metadata route", () => {
+        expect(pageDefault("'use server'\nexport default async function P() { return fetch('/x') }\n")).toBe(
+            'refusal: `fetch` is a global off the inert list',
+        )
+        expect(
+            pageStates(
+                { 'sitemap.ts': "'use client'\nexport default function s() { return fetch('/x') }\n" },
+                'sitemap.ts',
+            ),
+        ).toEqual({ default: 'refusal: `fetch` is a global off the inert list' })
+        expect(
+            pageStates(
+                {
+                    'icon1.tsx': "export { default } from './client-icon'\n",
+                    'client-icon.tsx': "'use client'\nexport default function I() { return fetch('/x') }\n",
+                },
+                'icon1.tsx',
+            ),
+        ).toEqual({ default: 'refusal: `fetch` is a global off the inert list' })
+    })
+
+    it('reads a static asset default import and useTranslations as nothing, and no other default import', () => {
+        expect(
+            pageDefault(
+                "import styles from './page.module.css'\nimport logo from './logo.png'\nimport { useTranslations } from 'next-intl'\n" +
+                    "export default function P() { const t = useTranslations('x'); return <img className={styles.x} src={logo} alt={t('a')} /> }\n",
+                { 'page.module.css': '.x {}\n', 'logo.png': 'png' },
+            ),
+        ).toBe('reads nothing')
+        expect(pageDefault("import data from './data.json'\nexport default function P() { return data }\n")).toBe(
+            'refusal: `data` is a default import, which has no exported name',
+        )
+        // Only a page: a route's asset import is a default import as before.
+        const route = scanTree({
+            'route.ts': "import styles from './x.css'\nexport function GET() { return Response.json(styles) }\n",
+        })[0]!
+        expect(pageState(route.handlers[0]!)).toBe('refusal: `styles` is a default import, which has no exported name')
+    })
+
+    it('finds global-not-found, and judges an intercepting page with no exemption', () => {
+        expect(scanPageTree({ 'global-not-found.tsx': 'export default function G() { return null }\n' })[0]?.rel).toBe(
+            'global-not-found.tsx',
+        )
+        const route: ScannedRoute = {
+            root: 'app',
+            rel: '../(.)x/page.tsx',
+            file: 'x',
+            handlers: [],
+            page: true,
+            intercepting: true,
+        }
+        const policy: ScanPolicy = {
+            exemptPrefixes: {},
+            exemptFiles: {
+                '../(.)x/page.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } } },
+            },
+            requiredAlongside: {},
+        }
+        const facts = (overrides: Partial<HandlerFacts>): HandlerFacts => ({
+            reachesAuthorize: false,
+            wrappedBy: null,
+            calls: new Set(),
+            opensWithSimulated404: false,
+            ...reading({ x: 'src/x.ts' }),
+            outsideRefusal: null,
+            readsNothing: false,
+            ...overrides,
+        })
+        expect(judge(route, { verb: 'default', facts: facts({ reachesAuthorize: true }) }, policy)).toBeUndefined()
+        expect(
+            judge(route, { verb: 'default', facts: facts({ outsideNames: new Set(), readsNothing: true }) }, policy),
+        ).toBeUndefined()
+        expect(judge(route, { verb: 'default', facts: facts({}) }, policy)).toMatch(
+            /it names `x`\..*It is under an intercepting segment .* so no exemption applies to it: authorize, or read nothing\./,
+        )
+        // Without the mark, the same entry applies.
+        expect(
+            judge(
+                { root: route.root, rel: route.rel, file: route.file, handlers: [], page: true },
+                { verb: 'default', facts: facts({}) },
+                policy,
+            ),
+        ).toBeUndefined()
+    })
+})
+
+describe('round-2 review of the page scan: allowances decided by the resolved file (safeinsights/sssb#221)', () => {
+    /** Writes `files` and `links` (path → target) under a fresh directory, and scans its pages, with `tsconfig` if given. */
+    function scanCase(
+        files: Record<string, string>,
+        links: Record<string, string> = {},
+        tsconfig?: object,
+        /** The app's directory within the case (its pages, tsconfig and `node_modules` resolution root), if not the case. */
+        appSub = '',
+    ): ScannedRoute[] {
+        const base = path.join(SCRATCH, `case-${++caseNumber}`)
+        const dir = path.join(base, appSub)
+        mkdirSync(dir, { recursive: true })
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            writeFileSync(path.join(dir, rel), src)
+        }
+        for (const [rel, target] of Object.entries(links)) {
+            mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+            symlinkSync(target, path.join(dir, rel))
+        }
+        if (tsconfig) writeFileSync(path.join(dir, 'tsconfig.json'), JSON.stringify(tsconfig))
+        return scanPages([
+            {
+                label: 'case',
+                dir,
+                exemptDir: dir,
+                appDir: dir,
+                tsconfig: tsconfig ? path.join(dir, 'tsconfig.json') : undefined,
+            },
+        ])
+    }
+    const defaultOf = (pages: ScannedRoute[]) => pageState(pages.find((p) => p.rel === 'page.tsx')!.handlers[0]!)
+    const ASSET_PAGE = (specifier: string) =>
+        `import asset from '${specifier}'\nexport default function P() { return <img src={asset} /> }\n`
+
+    it('refuses an asset specifier that resolves to code, carries a query or a hash, or names no file', () => {
+        expect(
+            defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./members.css'), 'members.css.ts': 'export default 1\n' })),
+        ).toBe('refusal: `asset` is a default import, which has no exported name')
+        // The literal file beside it does not help: TypeScript (and a bundler) may load the code.
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': ASSET_PAGE('./members.css'),
+                    'members.css': '.x {}\n',
+                    'members.css.tsx': 'export default 1\n',
+                }),
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
+        // A loader query or a hash is refused by its text, where the file lookup would not catch it: the file named
+        // with the character exists.
+        for (const specifier of ['./members?x.css', './members#x.css']) {
+            const files = { 'page.tsx': ASSET_PAGE(specifier), 'members?x.css': '.x {}\n', 'members#x.css': '.x {}\n' }
+            expect(defaultOf(scanCase(files)), specifier).toMatch(/^refusal: `asset` is a default import/)
+        }
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./gone.png') }))).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./members.css'), 'members.css': '.x {}\n' }))).toBe(
+            'reads nothing',
+        )
+    })
+
+    it("takes an asset's declaration file and an alias as the app's options resolve them, and a package's asset", () => {
+        const options = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                allowArbitraryExtensions: true,
+                paths: { '@/*': ['./assets/*'] },
+            },
+        }
+        const declared = {
+            'members.css': '.x {}\n',
+            'members.d.css.ts': 'declare const s: Record<string, string>\nexport default s\n',
+        }
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./members.css'), ...declared }, {}, options))).toBe(
+            'reads nothing',
+        )
+        expect(
+            defaultOf(
+                scanCase(
+                    { 'page.tsx': ASSET_PAGE('./members.css'), 'members.d.css.ts': declared['members.d.css.ts'] },
+                    {},
+                    options,
+                ),
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
+        expect(
+            defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/logo.png'), 'assets/logo.png': 'png' }, {}, options)),
+        ).toBe('reads nothing')
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/gone.png') }, {}, options))).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
+        // A bare specifier is never an asset here, whatever it resolves to (round 3).
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
+    })
+
+    it('follows a re-export to the module that declares the component, and fails closed', () => {
+        const page = "import { X } from './components'\nexport default function P() { return <X /> }\n"
+        const client = "'use client'\nexport function X() { return null }\n"
+        const server = "import { db } from './db'\nexport async function X() { return db }\n"
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export { X } from './x'\n",
+                    'components/x.tsx': client,
+                }),
+            ),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export * from './x'\n",
+                    'components/x.tsx': client,
+                }),
+            ),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "import { X } from './x'\nexport { X }\n",
+                    'components/x.tsx': client,
+                }),
+            ),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export { X } from './x'\n",
+                    'components/x.tsx': server,
+                }),
+            ),
+        ).toBe('names: X')
+        // A cycle, and a re-export that does not resolve.
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "export { X } from './y'\n",
+                    'components/y.ts': "export { X } from './index'\n",
+                }),
+            ),
+        ).toBe('names: X')
+        expect(defaultOf(scanCase({ 'page.tsx': page, 'components/index.ts': "export { X } from './gone'\n" }))).toBe(
+            'names: X',
+        )
+        // A client barrel re-exporting a server component is judged by the component's own module.
+        expect(
+            defaultOf(
+                scanCase({
+                    'page.tsx': page,
+                    'components/index.ts': "'use client'\nexport { X } from './x'\n",
+                    'components/x.tsx': server,
+                }),
+            ),
+        ).toBe('names: X')
+    })
+
+    it("treats as a package only what is installed (a real path under node_modules) or SSSB's own kit", () => {
+        const page = (specifier: string) =>
+            `import { X } from '${specifier}'\nexport default function P() { return <X /> }\n`
+        const server = 'export async function X() { return null }\n'
+        // Installed: the real path has a node_modules segment, as pnpm's store does.
+        expect(
+            defaultOf(
+                scanCase(
+                    { 'page.tsx': page('ui'), 'node_modules/.pnpm/ui@1/node_modules/ui/index.js': server },
+                    { 'node_modules/ui': '.pnpm/ui@1/node_modules/ui' },
+                ),
+            ),
+        ).toBe('reads nothing')
+        // A workspace package of the adopter's own, linked into node_modules, by a path, or outside the app: named.
+        const workspace = {
+            'page.tsx': page('@acme/ui'),
+            '../ws/ui/package.json': JSON.stringify({ name: '@acme/ui', main: 'index.js' }),
+            '../ws/ui/index.js': server,
+        }
+        expect(defaultOf(scanCase(workspace, { 'node_modules/@acme/ui': '../../../ws/ui' }))).toBe('names: X')
+        expect(defaultOf(scanCase({ 'page.tsx': page('../shared/x'), '../shared/x.tsx': server }))).toBe('names: X')
+        // A node_modules link back into the app's own source hides nothing.
+        expect(
+            defaultOf(scanCase({ 'page.tsx': page('self/x'), 'src/x.tsx': server }, { 'node_modules/self': '../src' })),
+        ).toBe('names: X')
+        // SSSB's kit, linked as a workspace package is in this repository: its real package directory is out of sight.
+        const kit = {
+            'page.tsx': page('@sssb/kit/screen'),
+            '../kit-src/package.json': JSON.stringify({ name: '@sssb/kit' }),
+            '../kit-src/screen.js': server,
+        }
+        expect(defaultOf(scanCase(kit, { 'node_modules/@sssb/kit': '../../../kit-src' }))).toBe('reads nothing')
+    })
+
+    it('walks no private folder: a page or route under `_name` is not routed, so it is not judged', () => {
+        const pages = scanCase({
+            '_lib/page.tsx': "export default function P() { return fetch('/x') }\n",
+            'a/_parts/x/page.tsx': 'export default function P() { return null }\n',
+            'b/page.tsx': 'export default function P() { return null }\n',
+        })
+        expect(pages.map((p) => p.rel)).toEqual(['b/page.tsx'])
+        const routes = scanTree({
+            '_internal/route.ts': 'export async function POST() { return new Response() }\n',
+            'route.ts': 'export {}\n',
+        })
+        expect(routes.map((r) => r.rel)).toEqual(['route.ts'])
+    })
+})
+
+describe('round-3 review of the page scan: asset and package allowances narrowed (safeinsights/sssb#221)', () => {
+    function scan(files: Record<string, string>, links: Record<string, string> = {}, appSub = '', tsconfig?: object) {
+        const base = path.join(SCRATCH, `case-${++caseNumber}`)
+        const dir = path.join(base, appSub)
+        mkdirSync(dir, { recursive: true })
+        for (const [rel, src] of Object.entries(files)) {
+            mkdirSync(path.dirname(path.join(base, rel)), { recursive: true })
+            writeFileSync(path.join(base, rel), src)
+        }
+        for (const [rel, target] of Object.entries(links)) {
+            mkdirSync(path.dirname(path.join(base, rel)), { recursive: true })
+            symlinkSync(target, path.join(base, rel))
+        }
+        if (tsconfig) writeFileSync(path.join(dir, 'tsconfig.json'), JSON.stringify(tsconfig))
+        const pages = scanPages([
+            {
+                label: 'case',
+                dir,
+                exemptDir: dir,
+                appDir: dir,
+                tsconfig: tsconfig ? path.join(dir, 'tsconfig.json') : undefined,
+            },
+        ])
+        return pageState(pages.find((p) => p.rel === 'page.tsx')!.handlers[0]!)
+    }
+    const renders = (specifier: string) =>
+        `import { X } from '${specifier}'\nexport default function P() { return <X /> }\n`
+    const SERVER = 'export async function X() { return null }\n'
+    const ASSET = (specifier: string) =>
+        `import asset from '${specifier}'\nexport default function P() { return <img src={asset} /> }\n`
+
+    it('takes an asset only by a relative or alias specifier naming the file itself', () => {
+        expect(scan({ 'page.tsx': ASSET('./logo.png'), 'logo.png': 'png' })).toBe('reads nothing')
+        expect(scan({ 'app/page.tsx': ASSET('../shared/gone.png') }, {}, 'app')).toMatch(/^refusal/)
+        expect(scan({ 'app/page.tsx': ASSET('../shared/logo.png'), 'shared/logo.png': 'png' }, {}, 'app')).toBe(
+            'reads nothing',
+        )
+        // An absolute path, baseUrl, and a package are bare: never an asset here.
+        const base = { compilerOptions: { baseUrl: '.', moduleResolution: 'bundler', module: 'esnext' } }
+        expect(scan({ 'page.tsx': ASSET('assets/logo.png'), 'assets/logo.png': 'png' }, {}, '', base)).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
+        expect(
+            scan({
+                'page.tsx': ASSET('ui/styles.css'),
+                'node_modules/ui/styles.css': '.x {}\n',
+                'node_modules/ui/package.json': '{"name":"ui"}',
+            }),
+        ).toMatch(/^refusal: `asset` is a default import/)
+    })
+
+    it("takes a resolution to a declaration only when it is the asset's own sibling", () => {
+        const options = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                allowArbitraryExtensions: true,
+                paths: { '@/*': ['./assets/*'] },
+            },
+        }
+        expect(
+            scan(
+                {
+                    'page.tsx': ASSET('@/members.css'),
+                    'assets/members.css': '.x {}\n',
+                    'assets/members.d.css.ts': 'export default {}\n',
+                },
+                {},
+                '',
+                options,
+            ),
+        ).toBe('reads nothing')
+        // A declaration TypeScript lands on that is not the asset's own sibling (another alias target's) is refused.
+        const split = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                allowArbitraryExtensions: true,
+                paths: { '@/*': ['./decl/*', './assets/*'] },
+            },
+        }
+        expect(
+            scan(
+                {
+                    'page.tsx': ASSET('@/members.css'),
+                    'assets/members.css': '.x {}\n',
+                    'decl/members.d.css.ts': 'export default {}\n',
+                },
+                {},
+                '',
+                split,
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
+        // The alias maps to two places: the file exists in one, and TypeScript lands on code in the other.
+        const twice = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                paths: { '@/*': ['./code/*', './assets/*'] },
+            },
+        }
+        expect(
+            scan(
+                {
+                    'page.tsx': ASSET('@/members.css'),
+                    'assets/members.css': '.x {}\n',
+                    'code/members.css.ts': 'export default 1\n',
+                },
+                {},
+                '',
+                twice,
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
+    })
+
+    it('counts a node_modules folder as installed only at the app or above it, and never a pnpm file: or link: dependency', () => {
+        // The workspace root's node_modules, above the app: installed.
+        expect(
+            scan(
+                {
+                    'app/page.tsx': renders('ui'),
+                    'node_modules/ui/package.json': '{"name":"ui","main":"index.js"}',
+                    'node_modules/ui/index.js': SERVER,
+                },
+                {},
+                'app',
+            ),
+        ).toBe('reads nothing')
+        // A node_modules folder inside the app, below its root: the app's own code.
+        expect(
+            scan({ 'page.tsx': renders('./src/node_modules/ui/index.js'), 'src/node_modules/ui/index.js': SERVER }),
+        ).toBe('names: X')
+        // pnpm's injected (file:) and linked (link:) dependencies are the adopter's own code.
+        for (const store of ['@acme+ui@file+packages+ui', '@acme+ui@link+packages+ui']) {
+            expect(
+                scan(
+                    {
+                        'page.tsx': renders('@acme/ui'),
+                        [`node_modules/.pnpm/${store}/node_modules/@acme/ui/package.json`]:
+                            '{"name":"@acme/ui","main":"index.js"}',
+                        [`node_modules/.pnpm/${store}/node_modules/@acme/ui/index.js`]: SERVER,
+                    },
+                    { 'node_modules/@acme/ui': `../.pnpm/${store}/node_modules/@acme/ui` },
+                ),
+                store,
+            ).toBe('names: X')
+        }
+    })
+
+    it("does not trust the kit's directory for an app inside it", () => {
+        const files = {
+            'package.json': JSON.stringify({ name: '@sssb/kit' }),
+            'screen.js': SERVER,
+            'app/page.tsx': renders('@sssb/kit/screen'),
+        }
+        expect(scan(files, { 'app/node_modules/@sssb/kit': '../../..' }, 'app')).toBe('names: X')
+        // Outside it, the same kit is trusted.
+        const outside = {
+            'kit/package.json': JSON.stringify({ name: '@sssb/kit' }),
+            'kit/screen.js': SERVER,
+            'app/page.tsx': renders('@sssb/kit/screen'),
+        }
+        expect(scan(outside, { 'app/node_modules/@sssb/kit': '../../../kit' }, 'app')).toBe('reads nothing')
+    })
+})
+
+describe('the page shapes the authorization review found failing (Z1), and a preflight under service/ (Z4)', () => {
+    it('passes React `use` and `getLocale`: request-scoped readers that carry no org data', () => {
+        expect(
+            pageDefault(
+                "import { use } from 'react'\nimport { useTranslations } from 'next-intl'\n" +
+                    "import { setRequestLocale } from 'next-intl/server'\n" +
+                    'export default function P({ params }: { params: Promise<{ locale: string }> }) {\n' +
+                    '  const { locale } = use(params)\n  setRequestLocale(locale)\n  const t = useTranslations("x")\n' +
+                    '  return <h1>{t("title")}</h1>\n}\n',
+            ),
+        ).toBe('reads nothing')
+        expect(
+            pageDefault(
+                "import { getLocale } from 'next-intl/server'\n" +
+                    'export default async function P() { const l = await getLocale()\n  return <p>{l}</p> }\n',
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('counts `headers()` and `cookies()`: the request headers carry the Cookie and Authorization credential', () => {
+        expect(
+            pageDefault(
+                "import { headers } from 'next/headers'\n" +
+                    'export default async function P() { return <p>{(await headers()).get("cookie")}</p> }\n',
+            ),
+        ).toBe('names: headers')
+    })
+
+    it('holds each to its module and name: `cookies` (the session) and a look-alike `use` are counted', () => {
+        expect(
+            pageDefault(
+                "import { cookies } from 'next/headers'\nexport default async function P() { return (await cookies()).size }\n",
+            ),
+        ).toBe('names: cookies')
+        expect(
+            pageDefault("import { use } from './hooks'\nexport default function P(p: never) { return use(p) }\n"),
+        ).toBe('names: use')
+        expect(
+            pageDefault("import { use as u } from 'react'\nexport default function P(p: never) { return u(p) }\n"),
+        ).toBe('refusal: `u` is an import under another name than its exported `use`')
+    })
+
+    const ACTION = "'use server'\nexport async function saveItem(form: FormData) { return form }\n"
+    const handsOn = (specifier: string, jsx = '<form action={saveItem} />', name = 'saveItem') =>
+        `import { ${name} } from '${specifier}'\nimport { Glue } from './glue'\n` +
+        `export default function P() { return <div><Glue x={1} />${jsx}</div> }\n`
+
+    it("passes an imported Server Action handed on by reference, a JSX attribute's whole value", () => {
+        expect(pageDefault(handsOn('./src/actions'), { 'src/actions.ts': ACTION })).toBe('reads nothing')
+        expect(pageDefault(handsOn('./src/actions', '<Glue action={saveItem} />'), { 'src/actions.ts': ACTION })).toBe(
+            'reads nothing',
+        )
+        expect(
+            pageDefault(handsOn('./src/actions', '<button formAction={saveItem} />'), { 'src/actions.ts': ACTION }),
+        ).toBe('reads nothing')
+        // Through a barrel's re-export, to the 'use server' module that declares it.
+        expect(
+            pageDefault(handsOn('./src/index'), {
+                'src/actions.ts': ACTION,
+                'src/index.ts': "export { saveItem } from './actions'\n",
+            }),
+        ).toBe('reads nothing')
+        // A function whose own body opens with 'use server', in a module that does not.
+        expect(
+            pageDefault(handsOn('./src/inline'), {
+                'src/inline.ts': "export async function saveItem() { 'use server'\n  return 1 }\n",
+            }),
+        ).toBe('reads nothing')
+        expect(
+            pageDefault(handsOn('./src/inline'), {
+                'src/inline.ts': "export const saveItem = async () => { 'use server'\n  return 1 }\n",
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it('counts a Server Action the page calls or uses any other way, and anything else handed on as a prop', () => {
+        const files = { 'src/actions.ts': ACTION }
+        for (const jsx of [
+            '{saveItem(null as never)}',
+            '<form action={saveItem.bind(null, 1)} />',
+            '<form action={(saveItem)} />',
+            '{String(saveItem)}',
+            '<Glue {...{ action: saveItem }} />',
+            '<Glue action={[saveItem]} />',
+            // A JSX child is no attribute: rendered, not handed on.
+            '<div>{saveItem}</div>',
+        ]) {
+            expect(pageDefault(handsOn('./src/actions', `<form action={saveItem} />${jsx}`), files), jsx).toBe(
+                'names: saveItem',
+            )
+        }
+        // A plain module's function handed on as a prop may run in the render: counted.
+        expect(
+            pageDefault(handsOn('./src/data', '<Glue load={saveItem} />'), {
+                'src/data.ts': 'export async function saveItem() { return [] }\n',
+            }),
+        ).toBe('names: saveItem')
+        // An inline action beside a plain export: only the action is one.
+        expect(
+            pageDefault(handsOn('./src/mixed', '<Glue load={load} />', 'load'), {
+                'src/mixed.ts':
+                    "export async function saveItem() { 'use server'\n  return 1 }\nexport async function load() { return [] }\n",
+            }),
+        ).toBe('names: load')
+    })
+
+    it("counts an action the Server Action walk does not judge: outside src, a package's, or a plain re-export", () => {
+        // The app has a src (so the check is the file's place, not a missing directory): an action beside it, and a
+        // workspace package's outside the app's directory, are actions the Server Action walk never reads.
+        const SRC = { 'src/keep.ts': 'export {}\n' }
+        expect(pageDefault(handsOn('./lib/actions'), { ...SRC, 'lib/actions.ts': ACTION })).toBe('names: saveItem')
+        expect(
+            pageDefault(handsOn('../workspace-actions/actions'), {
+                ...SRC,
+                '../workspace-actions/actions.ts': ACTION,
+            }),
+        ).toBe('names: saveItem')
+        expect(pageDefault(handsOn('./src/node_modules/acts'), { 'src/node_modules/acts/index.ts': ACTION })).toBe(
+            'names: saveItem',
+        )
+        expect(
+            pageDefault(handsOn('acts'), {
+                'node_modules/acts/package.json': JSON.stringify({ name: 'acts', main: 'index.js' }),
+                'node_modules/acts/index.js': ACTION,
+            }),
+        ).toBe('names: saveItem')
+        // A 'use server' file re-exporting a plain module's function: followed to the plain module, which is no action.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': "'use server'\nexport { saveItem } from './plain'\n",
+                'src/plain.ts': 'export async function saveItem() { return [] }\n',
+            }),
+        ).toBe('names: saveItem')
+        expect(pageDefault(handsOn('./src/missing'))).toBe('names: saveItem')
+        // A 'use server' module that has no such export: nothing is judged under the name.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': "'use server'\nexport async function other() { return 1 }\n",
+            }),
+        ).toBe('names: saveItem')
+    })
+
+    it("matches 'use server' by its source text: an escaped one is no directive, so no action to hand on", () => {
+        for (const escaped of ["'use\\x20server'", '"use\\u0020server"', "'use \\\nserver'"]) {
+            const files = { 'src/actions.ts': `${escaped}\nexport async function saveItem() { return 1 }\n` }
+            expect(pageDefault(handsOn('./src/actions'), files), escaped).toBe('names: saveItem')
+            const inline = {
+                'src/inline.ts': `export async function saveItem() { ${escaped}\n  return 1 }\n`,
+            }
+            expect(pageDefault(handsOn('./src/inline'), inline), escaped).toBe('names: saveItem')
+        }
+        // Double quotes are the directive too.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': '"use server"\nexport async function saveItem() { return 1 }\n',
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it("matches 'use client' by its source text too: an escaped one leaves a server component, which is counted", () => {
+        expect(
+            pageDefault("import { Card } from './card'\nexport default function P() { return <Card /> }\n", {
+                'card.tsx': "'use\\x20client'\nexport async function Card() { return null }\n",
+            }),
+        ).toBe('names: Card')
+        expect(
+            pageDefault("import { Card } from './card'\nexport default function P() { return <Card /> }\n", {
+                'card.tsx': '"use client"\nexport function Card() { return null }\n',
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it('keeps refusing a module-level const of the page file, and names the ways through', () => {
+        const state = pageDefault(
+            "const LINKS = [{ href: '/a' }]\nexport default function P() { return <ul>{LINKS.map((l) => <li key={l.href}>{l.href}</li>)}</ul> }\n",
+        )
+        expect(state).toMatch(/^refusal: `LINKS` is a declaration of the page's own file/)
+        expect(state).toMatch(/write the value inline where the page uses it/)
+        expect(state).toMatch(/move it into a module and list the import in the page's reads-only entry/)
+        // Inlined, it is a literal.
+        expect(
+            pageDefault(
+                "export default function P() { return <ul>{[{ href: '/a' }].map((l) => <li key={l.href}>{l.href}</li>)}</ul> }\n",
+            ),
+        ).toBe('reads nothing')
+    })
+
+    it('passes a read under service/ that reads nothing, and still requires withServiceCaller of one that reads', () => {
+        const [route] = scanTree({
+            'service/jobs/route.ts':
+                "import { authorize } from '@sssb/kit/authz/authorize'\nimport { load } from './load'\n" +
+                "export function OPTIONS() { return new Response(null, { status: 204, headers: { allow: 'GET' } }) }\n" +
+                'export async function GET() { authorize({} as never, "read", {} as never); return Response.json(await load()) }\n',
+        })
+        const verdict = Object.fromEntries(route!.handlers.map((h) => [h.verb, judge(route!, h, FRAMEWORK_POLICY)]))
+        expect(verdict['OPTIONS']).toBeUndefined()
+        expect(verdict['GET']).toMatch(
+            /must also satisfy: the handler is itself a call to an imported withServiceCaller/,
+        )
     })
 })

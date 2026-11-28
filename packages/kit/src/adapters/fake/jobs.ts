@@ -6,6 +6,7 @@ import { NotFoundError } from '../../ports/errors'
 import type { JobsPort, SubmittedJob } from '../../ports/jobs'
 import { readFlags } from './analytics'
 import { personLocale } from './auth'
+import { worldNow } from './clock'
 import { fakeDb } from './db'
 import { fakeEmail } from './email'
 import { fakeLlm } from './llm'
@@ -56,6 +57,9 @@ async function executeJob(job: SubmittedJob): Promise<boolean> {
         llm: fakeLlm,
         auth: simulatedAuth(),
         resolveLocale: personLocale,
+        // A failure's retry is armed on the world clock, which the tick's retry drain reads too, so a demo reaches it by
+        // moving the clock.
+        now: worldNow,
     }
     return runJobInProcess(job, ports, (status) => notifyTerminal(job, status))
 }
@@ -79,6 +83,10 @@ export interface WorldJob {
     createdAt: string
     resultKey: string | null
     error: string | null
+    /** Which attempt the row is, from 1 (a kind that retries runs each attempt as a row). */
+    attempt: number
+    /** On a retry still waiting out its backoff, when the tick may start it; null otherwise. */
+    runAfter: string | null
     timeline: JobTimelineEntry[]
 }
 
@@ -100,6 +108,8 @@ export async function listWorldJobs(): Promise<WorldJob[]> {
             'jobs.status as status',
             'jobs.result_key as result_key',
             'jobs.error as error',
+            'jobs.attempt as attempt',
+            'jobs.run_after as run_after',
             'jobs.created_at as created_at',
             'tenants.slug as tenant_slug',
             'organizations.slug as org_slug',
@@ -121,6 +131,8 @@ export async function listWorldJobs(): Promise<WorldJob[]> {
         createdAt: toIso(r.created_at),
         resultKey: r.result_key,
         error: r.error,
+        attempt: r.attempt,
+        runAfter: r.run_after === null ? null : toIso(r.run_after),
         timeline: timelines.get(r.id) ?? [],
     }))
 }
@@ -128,15 +140,17 @@ export async function listWorldJobs(): Promise<WorldJob[]> {
 /**
  * Executes every currently-queued job across all tenants and returns how many actually ran (a job
  * claimed by a concurrent runner mid-loop is skipped, not counted). The operator's "step the held
- * world forward" action (Simulator) — runs jobs regardless of the held flag.
+ * world forward" action (Simulator) — runs jobs regardless of the held flag. A retry still waiting out its backoff is
+ * not stepped: the tick's retry drain starts it once its time comes, which advancing the world clock brings.
  */
 export async function runPendingJobs(): Promise<number> {
     await fakeDb.ready()
     const pending = await fakeDb
         .getDb()
         .selectFrom('jobs')
-        .select(['id', 'kind', 'tenant_id', 'org_id', 'payload'])
+        .select(['id', 'kind', 'tenant_id', 'org_id', 'payload', 'attempt', 'retry_of'])
         .where('status', '=', 'queued')
+        .where('run_after', 'is', null)
         .orderBy('created_at', 'asc')
         .execute()
     let ran = 0
@@ -147,6 +161,8 @@ export async function runPendingJobs(): Promise<number> {
             tenantId: job.tenant_id,
             orgId: job.org_id,
             payload: job.payload,
+            attempt: job.attempt,
+            firstJobId: job.retry_of ?? job.id,
         })
         if (executed) ran += 1
     }
@@ -190,6 +206,8 @@ export async function listPendingBuilds(): Promise<PendingBuild[]> {
             'organizations.slug as org_slug',
         ])
         .where('jobs.status', 'in', ['queued', 'running'])
+        // A retry still waiting out its backoff is no build yet: the tick starts it when its time comes.
+        .where('jobs.run_after', 'is', null)
         .orderBy('jobs.created_at', 'asc')
         .execute()
     return rows
@@ -221,7 +239,7 @@ export async function produceJobArtifact(
     const row = await fakeDb
         .getDb()
         .selectFrom('jobs')
-        .select(['id', 'kind', 'tenant_id', 'org_id', 'payload'])
+        .select(['id', 'kind', 'tenant_id', 'org_id', 'payload', 'attempt', 'retry_of'])
         .where('id', '=', jobId)
         .where('tenant_id', '=', tenantId)
         .executeTakeFirst()
@@ -240,6 +258,8 @@ export async function produceJobArtifact(
             tenantId: row.tenant_id,
             orgId: row.org_id,
             jobId: row.id,
+            attempt: row.attempt,
+            firstJobId: row.retry_of ?? row.id,
         })
         if (!resultKey) return { error: 'handler produced no artifact' }
         return { resultKey }

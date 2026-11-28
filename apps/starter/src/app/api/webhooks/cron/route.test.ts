@@ -49,7 +49,9 @@ describe('POST /api/webhooks/cron', () => {
         const response = await tick(`Bearer ${devWebhookSecret()}`)
 
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({
+        // What the route says it did, by the fields this app relies on: `toMatchObject`, so a field a later release adds
+        // to the tick's answer does not fail this test.
+        expect(await response.json()).toMatchObject({
             ok: true,
             spawned: expect.any(Number),
             failed: 0,

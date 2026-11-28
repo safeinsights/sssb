@@ -48,6 +48,7 @@
         "./adapters/real/providers": "./src/adapters/real/providers.tsx",
         "./adapters/real/s3-storage": "./src/adapters/real/s3-storage.ts",
         "./adapters/real/sign-in-form": "./src/adapters/real/sign-in-form.tsx",
+        "./adapters/real/user-menu": "./src/adapters/real/user-menu.tsx",
         "./adapters/sentry/client": "./src/adapters/sentry/client.ts",
         "./adapters/sentry/init": "./src/adapters/sentry/init.ts",
         "./authz/authorize": "./src/authz/authorize.ts",

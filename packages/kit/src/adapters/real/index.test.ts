@@ -58,7 +58,13 @@ const DATA_API_ENV = {
 }
 
 /** What the registry hands createRealPorts: an in-process runner that says what it was built with. */
-const HOOKS = { inProcessJobs: async (ports: object) => ({ start: async () => {}, kind: 'in-process', ports }) }
+const failLostJob = async () => true
+const HOOKS = {
+    inProcessJobs: async (ports: object) => ({ start: async () => {}, kind: 'in-process', ports }),
+    failLostJob,
+}
+/** The arguments the CodeBuild runner was built with, the last time it was. */
+const codebuildArgs = vi.hoisted(() => ({ last: [] as unknown[] }))
 
 function stubEnv(env: Record<string, string | undefined>): void {
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value)
@@ -92,7 +98,12 @@ beforeEach(() => {
     })
     vi.doMock('./jobs', () => {
         loaded.codebuild += 1
-        return { createRealJobs: () => ({ kind: 'codebuild' }) }
+        return {
+            createRealJobs: (...args: unknown[]) => {
+                codebuildArgs.last = args
+                return { kind: 'codebuild' }
+            },
+        }
     })
     vi.doMock('./storage', () => {
         loaded.storage += 1
@@ -107,6 +118,7 @@ beforeEach(() => {
         return { createInProcessJobs: () => ({}) }
     })
     stubEnv({ ...COMMON_ENV, DATABASE_TRANSPORT: undefined, DATABASE_URL: undefined })
+    stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: undefined, NODE_PG_FORCE_NATIVE: undefined })
     stubEnv(Object.fromEntries(Object.keys(DATA_API_ENV).map((name) => [name, undefined])))
     stubEnv(Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, undefined])))
     stubEnv({
@@ -165,6 +177,55 @@ describe('the database transport is chosen by DATABASE_TRANSPORT, and the Data A
         }
         // A pg deployment does not read it.
         stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
+
+    it('DATABASE_SSL_MODE and DATABASE_SSL_ROOT_CERT reach the pg transport, and a malformed pair fails at boot', async () => {
+        const createRealDb = vi.fn().mockReturnValue({})
+        transportOverride.db = { createRealDb }
+        const url = 'postgres://u:p@localhost:5432/app'
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: url })
+        const { assertRealEnv, createRealPorts } = await import('./index')
+        // Unset or empty is verify-full against Node's own roots: never no TLS.
+        for (const unset of [undefined, '']) {
+            stubEnv({ DATABASE_SSL_MODE: unset })
+            await createRealPorts(HOOKS)
+            expect(createRealDb).toHaveBeenLastCalledWith(url, { mode: 'verify-full', rootCert: undefined })
+        }
+        stubEnv({ DATABASE_SSL_MODE: 'verify-full', DATABASE_SSL_ROOT_CERT: '/var/runtime/ca-cert.pem' })
+        await createRealPorts(HOOKS)
+        expect(createRealDb).toHaveBeenLastCalledWith(url, {
+            mode: 'verify-full',
+            rootCert: '/var/runtime/ca-cert.pem',
+        })
+        stubEnv({ DATABASE_SSL_MODE: 'disable', DATABASE_SSL_ROOT_CERT: undefined })
+        await createRealPorts(HOOKS)
+        expect(createRealDb).toHaveBeenLastCalledWith(url, { mode: 'disable' })
+
+        // libpq's other modes are not modes here, and a mode's name has one spelling.
+        for (const bad of ['require', 'prefer', 'verify-ca', 'no-verify', 'VERIFY-FULL', 'true']) {
+            stubEnv({ DATABASE_SSL_MODE: bad, DATABASE_SSL_ROOT_CERT: undefined })
+            expect(() => assertRealEnv()).toThrow(/db-tls.*DATABASE_SSL_MODE must be one of verify-full, disable/s)
+        }
+        stubEnv({ DATABASE_SSL_MODE: 'disable', DATABASE_SSL_ROOT_CERT: '/var/runtime/ca-cert.pem' })
+        expect(() => assertRealEnv()).toThrow(
+            /db-tls.*DATABASE_SSL_ROOT_CERT is set, but DATABASE_SSL_MODE is disable/s,
+        )
+        stubEnv({ DATABASE_SSL_MODE: undefined, DATABASE_SSL_ROOT_CERT: 'certs/rds.pem' })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*DATABASE_SSL_ROOT_CERT must be an absolute path/s)
+        // The boot check reads no file: the path SssbApp sets exists only on Lambda, and `sssb check-real-env` runs anywhere.
+        stubEnv({ DATABASE_SSL_ROOT_CERT: '/nowhere/ca.pem' })
+        expect(() => assertRealEnv()).not.toThrow()
+
+        // A URL that would override the mode fails here too, before the adapter would refuse it.
+        stubEnv({ DATABASE_SSL_ROOT_CERT: undefined, DATABASE_URL: `${url}?sslmode=require` })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*the database URL \(DATABASE_URL\) sets sslmode/s)
+        stubEnv({ DATABASE_URL: url, NODE_PG_FORCE_NATIVE: '1' })
+        expect(() => assertRealEnv()).toThrow(/db-tls.*NODE_PG_FORCE_NATIVE is set/s)
+        stubEnv({ NODE_PG_FORCE_NATIVE: undefined })
+
+        // A Data API deployment does not read them.
+        stubEnv({ DATABASE_TRANSPORT: 'data-api', ...DATA_API_ENV, DATABASE_SSL_MODE: 'require' })
         expect(() => assertRealEnv()).not.toThrow()
     })
 
@@ -297,6 +358,103 @@ describe('the auth settings (AUTH_TENANCY, AUTH_ORG_SOURCE)', () => {
     })
 })
 
+describe('realEnvNotices: what `sssb check-real-env` says after a pass (safeinsights/sssb#192)', () => {
+    // An environment the Clerk adapter would run in under next dev as well, so the notices below are about the parties.
+    const READY = { CLERK_SECRET_KEY: 'sk', NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: '1' }
+
+    it('says CLERK_AUTHORIZED_PARTIES is unset, and nothing once it is set', async () => {
+        const { realEnvNotices } = await import('./index')
+        expect(realEnvNotices(READY)).toEqual([expect.stringMatching(/CLERK_AUTHORIZED_PARTIES is unset.*any origin/)])
+        expect(realEnvNotices({ ...READY, CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })).toEqual([])
+    })
+
+    // safeinsights/sssb#222's review, A3: the preflight of `dev:real` has no NODE_ENV=development of its own.
+    it('says what next dev would do with an environment that lacks the keyless flag, unless this process is that', async () => {
+        const { realEnvNotices } = await import('./index')
+        const parties = { CLERK_SECRET_KEY: 'sk', CLERK_AUTHORIZED_PARTIES: 'https://a.example' }
+        for (const NODE_ENV of ['test', undefined]) {
+            expect(realEnvNotices({ ...parties, NODE_ENV })).toEqual([
+                expect.stringMatching(
+                    /under next dev .*NODE_ENV=development.* would refuse every request.*NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/s,
+                ),
+            ])
+            expect(realEnvNotices({ ...parties, NODE_ENV, NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: 'true' })).toEqual([])
+        }
+        // A production process is not going to be `next dev`, and a development one is judged by assertRealEnv itself.
+        expect(realEnvNotices({ ...parties, NODE_ENV: 'production' })).toEqual([])
+        expect(realEnvNotices({ ...parties, NODE_ENV: 'development' })).toEqual([])
+    })
+
+    it('has assertRealEnv refuse what the Clerk adapter would, naming the auth-dev row', async () => {
+        const { assertRealEnv } = await import('./index')
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        stubEnv({ NODE_ENV: 'development', NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: undefined })
+        expect(() => assertRealEnv()).toThrow(/auth-dev.*NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/s)
+        stubEnv({ NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: '1' })
+        expect(() => assertRealEnv()).not.toThrow()
+        // A job program or a test run, with the secret key and no flag, is not refused.
+        stubEnv({ NODE_ENV: 'test', NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: undefined })
+        expect(() => assertRealEnv()).not.toThrow()
+    })
+
+    it('reads the process environment unless given one, and never fails the preflight it follows', async () => {
+        const { assertRealEnv, realEnvNotices } = await import('./index')
+        stubEnv({ DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' })
+        expect(() => assertRealEnv()).not.toThrow()
+        stubEnv({ NEXT_PUBLIC_CLERK_KEYLESS_DISABLED: '1' })
+        expect(realEnvNotices()).toHaveLength(1)
+        stubEnv({ CLERK_AUTHORIZED_PARTIES: 'https://app.example.org' })
+        expect(realEnvNotices()).toEqual([])
+    })
+
+    it('flags a misspelled name, which does nothing though a value looks set', async () => {
+        const { realEnvNotices } = await import('./index')
+        const notices = realEnvNotices({
+            ...READY,
+            CLERK_AUTHORISED_PARTIES: 'https://app.example.org',
+            clerk_authorized_parties: 'https://app.example.org',
+        })
+        expect(notices).toHaveLength(3)
+        expect(notices[0]).toMatch(/CLERK_AUTHORIZED_PARTIES is unset/)
+        expect(notices.slice(1).join('\n')).toMatch(
+            /CLERK_AUTHORISED_PARTIES is set, but the setting is read as CLERK_AUTHORIZED_PARTIES only/,
+        )
+        expect(notices.slice(1).join('\n')).toMatch(/clerk_authorized_parties is set/)
+        // With the real one set as well, the misspelling is still named: it does nothing, and may be a stale copy.
+        expect(
+            realEnvNotices({ ...READY, CLERK_AUTHORIZED_PARTIES: 'https://a.example', CLERK_AUTHORISED_PARTIES: 'x' }),
+        ).toEqual([expect.stringMatching(/CLERK_AUTHORISED_PARTIES is set/)])
+    })
+
+    it('takes another case of the name for the variable itself on Windows, where the environment ignores case', async () => {
+        const { realEnvNotices } = await import('./index')
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+        try {
+            Object.defineProperty(process, 'platform', { value: 'win32' })
+            expect(
+                realEnvNotices({
+                    ...READY,
+                    Clerk_Authorized_Parties: 'https://a.example',
+                    CLERK_AUTHORIZED_PARTIES: 'x',
+                }),
+            ).toEqual([])
+            // A spelling that is not the name in another case is still a misspelling there.
+            expect(
+                realEnvNotices({ ...READY, CLERK_AUTHORISED_PARTIES: 'x', CLERK_AUTHORIZED_PARTIES: 'y' }),
+            ).toHaveLength(1)
+        } finally {
+            Object.defineProperty(process, 'platform', platform)
+        }
+    })
+
+    it('leaves other Clerk variables alone', async () => {
+        const { realEnvNotices } = await import('./index')
+        expect(
+            realEnvNotices({ ...READY, CLERK_AUTHORIZED_PARTIES: 'https://a.example', CLERK_JWT_KEY: 'key' }),
+        ).toEqual([])
+    })
+})
+
 describe('the optional ports follow their switches, and a port switched off is absent', () => {
     const PG = { DATABASE_TRANSPORT: 'pg', DATABASE_URL: 'postgres://u:p@localhost:5432/app' }
     const ALL_OFF = Object.fromEntries(Object.values(OPTIONAL_PORTS).map(({ variable }) => [variable, 'none']))
@@ -320,6 +478,9 @@ describe('the optional ports follow their switches, and a port switched off is a
             { kind: 'codebuild' },
             { kind: 's3' },
         ])
+        // The CodeBuild runner gets the database it records builds in and the registry's handler for a lost one
+        // (safeinsights/sssb#231), without which it would have no sweep.
+        expect(codebuildArgs.last.slice(2)).toEqual([ports.db, failLostJob])
         await ports.db.getDb().destroy()
     })
 

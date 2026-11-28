@@ -75,13 +75,20 @@ async function main() {
     // An app reaches SSSB's real adapters only with import() outside its own src/adapters/real/
     // (sssb/no-kit-real-adapter-import), its scripts included.
     const { createRealLlm } = await import('@sssb/kit/adapters/real/llm')
-    const llm = createRealLlm(key)
+    // A recording is no request: nobody waits, and a tool loop makes several round trips, so it gets two minutes.
+    const llm = createRealLlm(key, { timeoutMs: 120_000 })
     for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
         const fixturePath = path.join(dir, file)
         const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as LlmFixtureFile
         let changed = false
         for (const entry of fixture.entries) {
             if (!entry.request) continue
+            // A failing entry is hand-authored for the failure path of a screen or a route: recording would replace
+            // its partial answer with a whole one and leave the failure on it.
+            if (entry.failure) {
+                console.warn(`skip ${fixture.purpose}/${entry.name}: it is a hand-authored failure`)
+                continue
+            }
 
             // Tool-loop entry: drive the real loop with the app's execute against the fake world.
             if (Array.isArray(entry.conversation)) {

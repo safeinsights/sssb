@@ -19,9 +19,11 @@ afterEach(() => {
     for (const unmount of unmounts.splice(0)) act(unmount)
 })
 
-async function renderScreen() {
+type Ask = (question: string, onDelta: (chunk: string) => void) => Promise<{ sources: string[] }>
+
+async function renderScreen(ask: Ask = () => Promise.resolve({ sources: [] })) {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-    const onAsk = vi.fn(() => Promise.resolve({ sources: [] }))
+    const onAsk = vi.fn(ask)
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
@@ -43,7 +45,7 @@ async function renderScreen() {
             box.dispatchEvent(new Event('input', { bubbles: true }))
         })
     }
-    return { box, button, type, onAsk }
+    return { box, button, type, onAsk, container }
 }
 
 describe('DashboardScreen assistant', () => {
@@ -67,5 +69,33 @@ describe('DashboardScreen assistant', () => {
             button.click()
         })
         expect(onAsk).toHaveBeenCalledTimes(1)
+    })
+
+    it('says an answer failed after it had begun, under the text that arrived, and not in its place', async () => {
+        const { button, type, container } = await renderScreen(async (_question, onDelta) => {
+            onDelta('The ticket was escalated and ')
+            throw new Error('the stream reported: stream failed')
+        })
+        await type('what happened?')
+        await act(async () => {
+            button.click()
+        })
+        const answer = container.querySelector('[data-testid="assistant-answer"]')
+        expect(answer?.textContent).toBe('The ticket was escalated and ')
+        expect(container.querySelector('[data-testid="assistant-failed"]')?.textContent).toBe(
+            en.dashboard.assistantError,
+        )
+    })
+
+    it('shows the failure as the answer when nothing had arrived, with no second notice', async () => {
+        const { button, type, container } = await renderScreen(() => Promise.reject(new Error('refused')))
+        await type('what happened?')
+        await act(async () => {
+            button.click()
+        })
+        expect(container.querySelector('[data-testid="assistant-answer"]')?.textContent).toBe(
+            en.dashboard.assistantError,
+        )
+        expect(container.querySelector('[data-testid="assistant-failed"]')).toBeNull()
     })
 })

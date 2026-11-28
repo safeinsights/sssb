@@ -2427,6 +2427,35 @@ It is filed as [safeinsights/sssb#183](https://github.com/safeinsights/sssb/issu
 runbook and the `data-api` row should say about it. Until it lands, an app that scales to zero keeps database calls out of
 its first paint, as this adopter did (no call before first paint, one after).
 
+## The pg transport's TLS, proven against a local server (2026-11-27, `fix/pg-ssl-mode`)
+
+- **`knip.json` ignores the `openssl` binary in `packages/kit`**, its one `ignoreBinaries` entry. The TLS contract test
+  (`packages/kit/src/adapters/real/db-tls.contract.test.ts`) makes a throwaway certificate with the `openssl` CLI, which
+  no package provides: Node can parse a certificate and cannot make one, and committing a key for the test would put a
+  private key in the tree for gitleaks to flag. CI's Ubuntu runners and macOS both have it.
+- **`pg` lets the URL override the `ssl` option.** Its `ConnectionParameters` merges what `pg-connection-string` parses
+  out of `connectionString` over the config it was handed, so `?sslmode=disable` on a URL beats `ssl: {...}` in code
+  (pinned by `packages/kit/src/adapters/real/db.test.ts`). That is why `createRealDb` refuses a URL with any `ssl*`
+  parameter rather than trusting its own option to win.
+- **`rejectUnauthorized: false` turns off the host check too**, not only the chain: Node acts on `checkServerIdentity`'s verdict only
+  when it rejects unauthorized certificates. Weakening the option in `db.ts` turns both of the contract test's refusal
+  cases red, which is how the test was seen to fail.
+
+## A world per Playwright worker, from the config alone (2026-11-27, `fix/e2e-worker-worlds`)
+
+- **Each Playwright worker process loads the config itself, with `TEST_PARALLEL_INDEX` already set** (checked on
+  1.65.1 with a three-worker throwaway project: three config loads, one per index, each test answered by its own
+  worker's server). So a config can compute `use.baseURL` per worker from the variable, and a module a spec imports can
+  resolve that worker's data directory at load time, with no fixture and no edit to a spec's imports. The runner's own
+  load sees no index (world 0). An index is kept by a worker that replaces one that failed, so a retry lands in the same
+  world.
+- **`webServer` entries start one after another, each once the one before it answers** (the same project: a server
+  that took 3 s to listen, and the next started 3.9 s after it). That is what lets one entry build and every later one
+  only serve the build: each `sssb serve-standalone` has copied its static assets before any test sends a request, so
+  the copy into the one shared server directory never races a request.
+- **`next dev` cannot do this**: Next 16 allows one dev server per app directory (safeinsights/sssb#113's first attempt
+  died on "Another next dev server is already running"), so the worlds are a production-build feature.
+
 ## Turbopack traces the whole project for a dynamic `cpSync` (2026-11-27, `feat/simulator-host-snapshots`)
 
 Serving the Snapshots paths from the kit's Simulator host brought `adapters/fake/simulator-admin.ts` into the graph a

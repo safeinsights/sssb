@@ -15,6 +15,14 @@ import type { DbPort } from '../ports/db'
 // TYPE-ONLY import (erased): keeps packages/kit/src/db free of a runtime @/adapters dependency — see WebhookDispatch.
 import type { WebhookDispatch } from '../server-lib/webhook-dispatch'
 import { recordAuditEvent } from './audit'
+import {
+    beforeDeadline,
+    type DrainBudget,
+    type DrainLeft,
+    drainFairly,
+    listingLimit,
+    resolveDrainBudget,
+} from './drain-budget'
 import { family } from './family'
 
 /** timestamptz comes back from both engines as a Date; local (avoids a jobs.ts import cycle since
@@ -72,7 +80,8 @@ export async function enqueueWebhookEvent(
 // are both FORCE-RLS and a raw cross-tenant scan only *appears* to work on pglite (build-notes).
 // ---------------------------------------------------------------------------
 
-export interface DrainResult {
+/** What one delivery drain did, and what it left for a later tick (`deferred`, `stoppedBy`: ./drain-budget.ts). */
+export interface DrainResult extends DrainLeft {
     delivered: number
     failed: number
     dead: number
@@ -92,38 +101,58 @@ export interface DrainResult {
  * Delivery is therefore AT-LEAST-ONCE (a crash between claim and record re-sends at the backoff time);
  * the envelope carries the delivery id so consumers dedupe. An audit event is written on first success
  * (webhook.delivered) and on death (webhook.dead) — the durable, append-only webhook record.
+ *
+ * BOUND. With a budget, one call attempts at most `budget.maxItems` deliveries and starts none after
+ * `budget.deadline`, taking one due delivery from each tenant in turn, the tenants and each tenant's listed deliveries
+ * in a fresh random order (./drain-budget.ts), so one tenant's slow endpoint or long backlog cannot hold another's
+ * deliveries past the tick; `runScheduledTick` always passes one. Without a budget it drains every due delivery, each
+ * tenant's oldest first. The result says how many due deliveries it left for a later tick and why.
  */
-export async function runDueDeliveries(db: DbPort, now: Date, dispatch: WebhookDispatch): Promise<DrainResult> {
+export async function runDueDeliveries(
+    db: DbPort,
+    now: Date,
+    dispatch: WebhookDispatch,
+    budget?: DrainBudget,
+): Promise<DrainResult> {
+    const limit = resolveDrainBudget(budget)
+    const counts = { delivered: 0, failed: 0, dead: 0 }
+    // BOUNDED AND FAIR (./drain-budget.ts, safeinsights/sssb#97): at most `limit.maxItems` attempts, none started
+    // after its deadline, one tenant's delivery at a time in turn. A due delivery left over is not claimed, so the
+    // next tick lists it again.
+    if (!beforeDeadline(limit)) return { ...counts, deferred: 0, stoppedBy: 'time' }
     await db.ready()
     const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
-    const due: { id: string; tenant_id: string }[] = []
-    for (const tenant of tenants) {
-        const rows = await db.withTenant(tenant.id, (trx) =>
-            trx
-                .selectFrom('webhook_deliveries')
-                .select('id')
-                .where('status', 'in', ['pending', 'failed'])
-                .where('next_attempt_at', '<=', now)
-                .orderBy('next_attempt_at', 'asc')
-                .execute(),
-        )
-        due.push(...rows.map((r) => ({ id: r.id, tenant_id: tenant.id })))
-    }
-
-    const result: DrainResult = { delivered: 0, failed: 0, dead: 0 }
-    for (const delivery of due) {
-        try {
-            const outcome = await deliverOne(db, now, delivery, dispatch)
-            if (outcome === 'delivered') result.delivered += 1
-            else if (outcome === 'failed') result.failed += 1
-            else if (outcome === 'dead') result.dead += 1
-        } catch {
-            // A bad row must not stall the rest — its next_attempt_at may not have advanced, so it's
-            // retried on the next tick (the runDueSchedules fault-isolation precedent).
-            result.failed += 1
-        }
-    }
-    return result
+    const perTenant = listingLimit(limit)
+    const left = await drainFairly(
+        tenants,
+        limit,
+        (tenantId) =>
+            db.withTenant(tenantId, (trx) =>
+                trx
+                    .selectFrom('webhook_deliveries')
+                    .select('id')
+                    .where('status', 'in', ['pending', 'failed'])
+                    .where('next_attempt_at', '<=', now)
+                    .orderBy('next_attempt_at', 'asc')
+                    .orderBy('id', 'asc')
+                    .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
+                    .execute(),
+            ),
+        (row) => row.id,
+        async (row, tenantId) => {
+            try {
+                const outcome = await deliverOne(db, now, { id: row.id, tenant_id: tenantId }, dispatch)
+                if (outcome === 'delivered') counts.delivered += 1
+                else if (outcome === 'failed') counts.failed += 1
+                else if (outcome === 'dead') counts.dead += 1
+            } catch {
+                // A bad row must not stall the rest — its next_attempt_at may not have advanced, so it's
+                // retried on the next tick (the runDueSchedules fault-isolation precedent).
+                counts.failed += 1
+            }
+        },
+    )
+    return { ...counts, ...left }
 }
 
 interface Claim {
@@ -349,8 +378,9 @@ export async function createEndpoint(
 /**
  * Resolves an endpoint id to its owning org ONLY when it belongs to `orgId` within `tenantId` — null
  * both when absent and when it belongs to another org (a foreign endpoint is indistinguishable from a
- * missing one, so ids can't be probed; the same doctrine as jobForOrg). The route uses
- * this to 404 before authorize().
+ * missing one, so another org's endpoint ids can't be probed; the same doctrine as jobForOrg). The route calls it
+ * after authorize(), so a person who may not manage endpoints gets the same 403 whether or not the id exists
+ * (safeinsights/sssb#137).
  */
 export async function endpointForOrg(
     db: DbPort,

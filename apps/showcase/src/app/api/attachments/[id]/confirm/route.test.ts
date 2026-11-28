@@ -158,6 +158,23 @@ describe('POST /api/attachments/[id]/confirm', () => {
         expect(h.confirmAttachment).not.toHaveBeenCalled()
     })
 
+    // safeinsights/sssb#137: authorize comes before the lookup, so a person who may not finalize learns nothing
+    // about whether the id names an attachment.
+    test.each([
+        ['a restricted member', user({ role: 'restricted', restricted: true })],
+        ['a person with no standing (none)', user({ role: 'none', restricted: true })],
+    ])('%s gets the same 403 for an existing id as for a missing one', async (_, who) => {
+        h.requireUser.mockResolvedValue(who)
+        const existing = await confirm()
+        h.attachmentForOrg.mockResolvedValue(null)
+        const missing = await confirm()
+
+        expect(existing.status).toBe(403)
+        expect([existing.status, await existing.json()]).toEqual([missing.status, await missing.json()])
+        expect(h.attachmentForOrg).not.toHaveBeenCalled()
+        expect(h.confirmAttachment).not.toHaveBeenCalled()
+    })
+
     test('401 when no one is signed in', async () => {
         const { AuthRequiredError } = await import('@sssb/kit/ports/errors')
         h.requireUser.mockRejectedValue(new AuthRequiredError())

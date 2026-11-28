@@ -18,8 +18,8 @@ export function lazyJobs(load: () => Promise<JobsPort>): JobsPort {
         async start(job) {
             await (await get()).start(job)
         },
-        async sweep(now) {
-            return (await (await get()).sweep?.(now)) ?? 0
+        async sweep(now, budget) {
+            return (await (await get()).sweep?.(now, budget)) ?? 0
         },
     }
 }

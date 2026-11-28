@@ -1,8 +1,8 @@
 import { rmSync } from 'node:fs'
-import path from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { signInAs } from '../support/people'
 import { setWorldFlag } from '../support/world-flags'
+import { worldPath } from '../support/worlds'
 
 /**
  * THE MANUAL ACTOR. This spec performs BY HAND exactly the loop the simulated-world iframe actors
@@ -26,7 +26,7 @@ import { setWorldFlag } from '../support/world-flags'
  * webhook calls additionally present their own Bearer credential (a JWT / the shared secret).
  */
 
-const simulatorState = path.resolve(__dirname, '../../../.data/simulator/state.json')
+const simulatorState = worldPath('simulator', 'state.json')
 
 function clearSimulatorState() {
     try {
@@ -106,8 +106,6 @@ async function mintToken(request: APIRequestContext, orgSlug: string): Promise<M
 test('manual service caller drives a held export job queued -> running -> completed, and the boundary holds', async ({
     page,
 }) => {
-    // First hits cold-compile the service routes on a fresh dev server — generous room over the default.
-    test.setTimeout(120_000)
     const { request } = page
 
     // 1. Held world + a ticket to export, then submit the job. Held -> it parks in `queued`.
@@ -178,7 +176,6 @@ test('manual service caller drives a held export job queued -> running -> comple
 })
 
 test('manual inbound webhook completes a second held export job, idempotently', async ({ page }) => {
-    test.setTimeout(120_000)
     const { request } = page
 
     // A second held export job, parked queued.

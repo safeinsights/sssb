@@ -1,4 +1,5 @@
 import { InvalidTransitionError } from '../../core/state-machine'
+import { shuffled } from '../../db/drain-budget'
 import { recordJobStatus } from '../../db/jobs'
 import { type JobRunPorts, runJobInProcess } from '../../jobs/run-in-process'
 import type { JobsPort } from '../../ports/jobs'
@@ -41,9 +42,16 @@ export const IN_PROCESS_LOST_AFTER_MS = 5 * 60_000
  * job carries no claim, so age alone decides, and that is sound for this runner only: with `JOBS_RUNNER=in-process`
  * every job is this runner's, and `start` claims it in the invocation that committed it, within that invocation's
  * 30-second limit, so a job queued for minutes will never start. It is failed, never run: a handler is written to run
- * at most once, and the request or tick that submitted it may have reported it already. The CodeBuild runner has no
- * sweep (a build may wait in CodeBuild's own queue), and neither does the simulated world, whose held jobs stay
+ * at most once, and the request or tick that submitted it may have reported it already. The CodeBuild runner's sweep
+ * (./jobs.ts) judges a job by its build's state instead, not by age (a build may wait in CodeBuild's own queue), and the
+ * simulated world has no sweep, its held jobs staying
  * `queued` on purpose.
+ *
+ * Retries (safeinsights/sssb#135). A retry still waiting out its delay (`queued` with `run_after` set) is the
+ * scheduled tick's to start, so the sweep leaves it alone; once the tick claims it (`run_after` cleared, `updated_at`
+ * set to the claim) it is judged as any queued job. A lost job of a kind whose `jobRetry` has attempts left is failed
+ * like any other, and `recordJobStatus` arms its next attempt, a new job: the work does run again, as that attempt,
+ * which is why a kind that retries must be idempotent.
  *
  * A terminal status notifies the job's org admins as the jobs webhook route does, through `notify`, which the adapter
  * registry passes in (the notification modules import the registry). Best effort: `notifyJobTerminal` swallows its
@@ -66,9 +74,12 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
         },
         // Fault-isolated per tenant and per job, as `runDueSchedules` is per schedule: one failure is logged and the
         // sweep goes on, and nothing it throws reaches the tick.
-        async sweep(now) {
+        async sweep(now, budget) {
             const before = new Date(now.getTime() - IN_PROCESS_LOST_AFTER_MS).toISOString()
             let failed = 0
+            // Bounded by the tick's budget (safeinsights/sssb#252): no job failed after its deadline or past its count.
+            const clock = budget?.clock ?? Date.now
+            const spent = () => budget !== undefined && (failed >= budget.maxItems || clock() >= budget.deadline)
             let tenants: { id: string }[]
             try {
                 tenants = await ports.db.getDb().selectFrom('tenants').select('id').execute()
@@ -76,7 +87,9 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                 console.warn(`SSSB jobs: the in-process sweep could not list tenants: ${messageOf(error)}`)
                 return 0
             }
-            for (const tenant of tenants) {
+            // In a fresh random order under a bound, so a sweep it stops short does not always leave the same tenants.
+            for (const tenant of budget ? shuffled(tenants, budget, (t) => t.id) : tenants) {
+                if (spent()) break
                 let lost: { id: string; status: string }[]
                 try {
                     lost = await ports.db.withTenant(tenant.id, (trx) =>
@@ -86,7 +99,9 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                             .where('jobs.updated_at', '<', before)
                             .where((eb) =>
                                 eb.or([
-                                    eb('jobs.status', '=', 'queued'),
+                                    // A retry waiting out its backoff is the tick's to start, not lost (its run_after is
+                                    // cleared when the tick claims it, and from then on it is judged as any queued job).
+                                    eb.and([eb('jobs.status', '=', 'queued'), eb('jobs.run_after', 'is', null)]),
                                     eb.and([
                                         eb('jobs.status', '=', 'running'),
                                         eb.exists(
@@ -107,8 +122,10 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                     continue
                 }
                 for (const { id, status } of lost) {
+                    if (spent()) break
                     try {
                         await recordJobStatus(ports.db, tenant.id, id, 'failed', {
+                            now,
                             error:
                                 status === 'queued'
                                     ? 'lost: never started; the in-process runner did not claim it'

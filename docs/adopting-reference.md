@@ -136,15 +136,19 @@ ends as the signal asked.
   `minimumReleaseAge` with `@sssb/*` exempt), the Vitest configs on `@sssb/tools/vitest` (`vitest.config.ts` and
   `vitest.contract.config.ts`, a project for each app `sssb.apps` names), `tsconfig.json`, `eslint.config.mjs` (for the root's own files), knip, jscpd,
   gitleaks, git-ignore and Prettier-ignore configs, and lint-staged's. `.editorconfig`, `.nvmrc`,
-  `.prettierrc.json`, the two husky hooks and `commitlint.config.mjs` are copied from SSSB's root as they are.
+  `.prettierrc.json`, the two husky hooks, `commitlint.config.mjs` and `.github/scripts/secret-scan-range.sh` are copied from SSSB's root as they are.
 - **CI**: `.github/workflows/checks.yml`, on pushes to `main` and on pull requests, with three jobs. `sssb` calls
   SSSB's reusable workflow (`.github/workflows/app-checks.yml` in SSSB's repository) pinned to a commit, with
   `contents: read`, no secrets and `synth: ./apps/<slug>/infra`, so its checks are named `sssb / <job>` and
-  `sssb / all-checks` is the one to require. Its `docs-only` input (false unless you set it) is a fast path for a change
+  `sssb / all-checks` is the one to require. Its e2e job sets `E2E_BUILD=1`, and your app's `playwright.config.ts` then
+  builds and serves a production build (its `build:e2e` and `start:e2e` scripts) where it runs `next dev` locally, so CI
+  runs `next build` for each app the generator or `sssb add-app` wrote (an app of yours whose config does not read the
+  flag stays on `next dev`). Its `docs-only` input (false unless you set it) is a fast path for a change
   you have judged can affect none of the contract tests, e2e, static demos and synth: those jobs then report success
   without running their work, so compute it from what your own pull request changed, as SSSB's own `checks.yml` does
   (`.github/scripts/docs-only.sh` in SSSB's repository). `workspace-checks` runs knip and jscpd, which SSSB's workflow does not;
-  `secret-scan` runs gitleaks over the whole history with your `.gitleaks.toml`.
+  `secret-scan` runs gitleaks with your `.gitleaks.toml` over a pull request's own commits, and over a push to `main`'s whole
+  history, never every branch (`.github/scripts/secret-scan-range.sh` picks the range).
 - **The owner files**, from `--repo` and `--owner`: `CODEOWNERS`, `SECURITY.md` (your own short policy, which
   points at SSSB only for a root cause in a shape SSSB gave the app), `CODE_OF_CONDUCT.md`, and under
   `.github/ISSUE_TEMPLATE/` a two-field bug form and a `config.yml` linking the security advisory form.
@@ -393,7 +397,7 @@ against your app's world.
 
 What does run against your app is the conformance suite, `@sssb/kit/testing` — the authorization scan of
 your route tree, the i18n partition/parity checks, the pglite RLS suite, migration order, the app's named roles, the
-demo-presets check and the seam map — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
+demo-presets check, the seam map and the stream-failure check — which your app runs from its own tree: `apps/<app>/src/sssb.conformance.test.ts` calls
 `conformanceSuite({ appDir, optOut })`, against your catalog, your tables, your routes and your presets. Leaving a
 check out takes a named opt-out with a reason (the check ids are in `@sssb/kit/testing/checks.json`); a typo in one
 fails the run, and so does a check that is skipped without one. That is what stops the fixture becoming the only world
@@ -470,9 +474,9 @@ The framework is not in the tree: it is `@sssb/kit` under `node_modules`, and yo
 ### What you may import from SSSB
 
 `@sssb/kit`'s `exports` map (its `package.json`; `packages/kit/package.json` in SSSB's repository) is the contract: it
-lists the 147 subpaths your app may
+lists the 148 subpaths your app may
 import as `@sssb/kit/<subpath>` (`@sssb/kit/ports/db`, `@sssb/kit/components/app-header`, `@sssb/kit/db/with-tenant`). The
-other 90 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
+other 99 modules of the package are internals — private sub-components, the fake-db plumbing, the test helpers, the
 framework migrations, the real adapters the registry constructs for you, the authorization scan's
 analyser — and importing one fails
 `pnpm lint` with the rule `sssb/public-surface`, which reads that map directly. Your Playwright specs may import
@@ -658,6 +662,15 @@ the tenant for the transaction; each tenant table's policy compares the row's `t
   `app_user`) and grant itself the switch to it (0015). Those are needed, not enough: off AWS there is no migrate
   command yet, and SSSB's `pg` adapter has not been run against any deployed database. ADR-0015's "libsql and Turso"
   section lists the rest.
+- **Its TLS.** On `pg` the server and the Migrator connect over TLS that checks the database's certificate chains to a
+  trusted root and names the host in `DATABASE_URL` (libpq's `verify-full`), with nothing for you to set on `SssbApp`,
+  which trusts the Amazon CA bundle the Lambda Node.js runtime carries. Two variables change it, both optional:
+  `DATABASE_SSL_MODE` (`verify-full` when unset or empty; `disable` turns TLS off, for a server that has none, a local
+  one, never a deployed one) and `DATABASE_SSL_ROOT_CERT` (the absolute path of a PEM file whose certificates are then
+  the only roots trusted; unset, Node's own). Another host sets the root file to its own bundle unless its certificate
+  chains to a root Node trusts. `DATABASE_URL` may not set `sslmode` or any other `ssl*` parameter: the adapter refuses
+  it at boot, since `pg` would let it override the mode. The Data API transport has neither variable: the AWS SDK
+  speaks HTTPS. The `db-tls` row of your cutover checklist is the proof a deployment owes.
 
 ### SSSB on Postgres, your data elsewhere
 
@@ -724,6 +737,20 @@ the showcase carries the same route over the same function.
   construct never puts the secret's value in an environment, so getting it into the server's `WEBHOOK_SECRET` is
   yours, as for your other secrets. Without the option nothing in a deployment ticks the route: the `scheduled-tick`
   row of the [cutover checklist](cutover-checklist.md).
+- **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick's
+  sweep for lost jobs fails at most 100, starting none after its first 2 seconds (a CodeBuild read already under way
+  may run past them: safeinsights/sssb#267); it spawns at most 100 due schedules, in
+  its first 6 seconds, starts at most 100 due job retries (a failed attempt of a
+  kind whose `jobRetry` lets it retry, once its delay has passed), none after 10 seconds, and attempts at most 100 due
+  webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each drain's bound it takes one due
+  row from each tenant in turn, the tenants in a fresh random order every tick (the sweep's tenants too), so one tenant's backlog or slow endpoint
+  cannot keep another's work waiting tick after tick. Each drain lists tenants (a transaction each, about four calls on
+  the RDS Data API) for at most half of what is left of its window, runs what it listed, and lists on if time is left: past the
+  number of tenants it can list in that time, it serves a fresh random set of them each tick, not none, and the rest
+  wait for a later tick. What a tick leaves is not touched and the next tick takes it; the
+  route's JSON says how much it left (`deferred`, at least that many, for schedules and inside `retries` and
+  `deliveries`; the sweep's is not reported) and why (`stoppedBy`: `'items'`, `'time'` or `null`). A server with a different limit passes its own
+  bounds: `runScheduledTick({ budget: { maxDeliveries: 50, deliveriesWindowMs: 40_000 } })`, every field optional, and one that is not a usable bound (`NaN`, `0`) throws.
 - **In `pnpm dev`** nothing ticks it unless you ask. The dev server runs no scheduler. Its Simulator panel's Jobs tab
   advances the world clock and runs what is then due, or runs what is due without moving it, once per click. To run
   the route itself, three ways to ask:
@@ -752,7 +779,8 @@ the showcase carries the same route over the same function.
       that one is running and leaves it to be stopped where it was started. Your app's Simulator has no such control; the
       route is the showcase's app code, and an app that wants one copies it.
 
-    The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
+    The answer is `{"ok":true,"spawned":0,"failed":0,"deferred":0,"stoppedBy":null,"retries":{…},"deliveries":{…}}`, which
+    `pnpm tick` prints as one line. In a
     simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick
     honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line; the tick
     itself succeeded, so the exit code stays 0. The next tick retries a failed delivery, and a schedule whose failure
@@ -809,6 +837,16 @@ domain" is a proof.
 
 SSSB's file opens with a worked row — closed, dated, owned, with a proof column that was thought through
 rather than restated. Read it once for the level of detail each row deserves before you fill in your own.
+
+**Running real mode under `next dev`.** Set `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1` for the whole of your `dev:real`
+script, the preflight included (the showcase's, in SSSB's repository, exports it first). Under `next dev`
+(`NODE_ENV=development`) Clerk's keyless fallback would read request data under a key Clerk publishes, so on a path your
+proxy's matcher skips a forged `x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter
+refuses to read a session or call Clerk's Backend API there until the variable is set, and also in any process with no
+`CLERK_SECRET_KEY`, and names what is missing when it refuses. A production build (`next build`, then `next start`) needs
+nothing, and neither does another process with the secret key set, such as a job program on CodeBuild or an ops script.
+`sssb check-real-env` reports it: as a failure if it runs with `NODE_ENV=development`, and otherwise as a `notice:` saying
+what `next dev` would do.
 
 ### Ports your app does not use
 
@@ -969,8 +1007,10 @@ strings, so list every origin each deployment is served from (its custom domain,
 `<id>.cloudfront.net` while people use it, each preview host), each as the browser's `Origin` header names it (scheme,
 lower-case host and any port, with no path or trailing slash), and `http` only for `localhost`, `127.0.0.1` or `[::1]`.
 A malformed list (a path, a trailing slash, upper case, a wildcard, a duplicate, an empty entry or an empty value) fails
-every request the server answers, and `sssb check-real-env`, naming the entry; unset it to turn the check off. Verify it
-under cutover row `auth-dev`.
+every request the server answers, and `sssb check-real-env`, naming the entry; unset it to turn the check off, and
+`sssb check-real-env` then says so in a `notice:` line after it passes (as it does for a variable spelled like it and not
+it, such as `CLERK_AUTHORISED_PARTIES`), without failing: it reads the environment it runs in, so run it with the
+server's. Verify it under cutover row `auth-dev`.
 
 The same settings run in `pnpm dev` when your dev environment sets `AUTH_TENANCY`, `AUTH_ORG_SOURCE` and their slugs:
 the simulated world then places its seeded people the same way. With a single tenancy, seed them in that tenant; with a

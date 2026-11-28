@@ -770,6 +770,132 @@ describe('fake llm', () => {
         const { fakeLlm } = await import('./llm')
         await expect(fakeLlm.complete({ purpose: 'never-recorded', messages: [] })).rejects.toThrow(/llm:record/)
     })
+
+    test('takes a timeoutMs and checks it as the real adapter does, so a bad one fails in dev, not first in production', async () => {
+        const { fakeLlm } = await import('./llm')
+        const request = { purpose: 'fixture-echo', messages: [{ role: 'user' as const, content: 'q' }] }
+        expect((await fakeLlm.complete({ ...request, timeoutMs: 120_000 })).text).toContain('deterministic')
+        await expect(fakeLlm.complete({ ...request, timeoutMs: 0 })).rejects.toThrow(RangeError)
+        await expect(
+            fakeLlm.runToolLoop({ ...request, tools: [], execute: async () => '', timeoutMs: -5 }),
+        ).rejects.toThrow(RangeError)
+        await expect(
+            (async () => {
+                for await (const chunk of fakeLlm.stream({ ...request, timeoutMs: Number.NaN })) void chunk
+            })(),
+        ).rejects.toThrow(RangeError)
+    })
+})
+
+describe('fake llm failure entries', () => {
+    const tools = [{ name: 'lookup', description: 'd', inputSchema: { type: 'object' as const } }]
+    const write = (entries: object[]) => {
+        const dir = makeTestTmpDir('fake-llm-failure-')
+        mkdirSync(path.join(dir, 'llm'), { recursive: true })
+        writeFileSync(path.join(dir, 'llm', 'failing.json'), JSON.stringify({ purpose: 'failing', entries }))
+        return dir
+    }
+    const request = { purpose: 'failing', messages: [{ role: 'user' as const, content: 'q' }] }
+
+    test('a failing default entry fails complete before any text, and stream after its partial answer', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const dir = write([{ name: 'd', request: null, response: 'Half an ', failure: { reason: 'timed-out' } }])
+        const llm = createFakeLlm({ fixturesDir: dir, catchRequests: false })
+        await expect(llm.complete(request)).rejects.toMatchObject({ name: 'LlmUnavailableError', reason: 'timed-out' })
+        const chunks: string[] = []
+        const streamed = (async () => {
+            for await (const chunk of llm.stream(request)) chunks.push(chunk)
+        })()
+        await expect(streamed).rejects.toMatchObject({ reason: 'timed-out' })
+        expect(chunks.join('')).toBe('Half an ')
+    })
+
+    test('a failing tool-loop entry runs its recorded tool calls live, then fails in place of the answer', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const dir = write([
+            {
+                name: 'd',
+                request: null,
+                response: null,
+                conversation: [
+                    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'lookup', input: { q: 1 } }] },
+                    { role: 'assistant', content: [{ type: 'text', text: 'never delivered' }] },
+                ],
+                failure: { reason: 'overloaded' },
+            },
+        ])
+        const llm = createFakeLlm({ fixturesDir: dir, catchRequests: false })
+        const executed: string[] = []
+        await expect(
+            llm.runToolLoop({
+                ...request,
+                tools,
+                execute: async (call) => {
+                    executed.push(call.name)
+                    return '{}'
+                },
+            }),
+        ).rejects.toMatchObject({ name: 'LlmUnavailableError', reason: 'overloaded' })
+        expect(executed).toEqual(['lookup'])
+    })
+
+    test('a failing default entry with no answer at all fails typed from all three methods (#249)', async () => {
+        const { createFakeLlm } = await import('./llm')
+        for (const entry of [
+            { name: 'd', request: null, response: null, failure: { reason: 'overloaded' } },
+            { name: 'd', request: null, failure: { reason: 'overloaded' } },
+            { name: 'd', request: null, response: null, conversation: [], failure: { reason: 'overloaded' } },
+        ]) {
+            const llm = createFakeLlm({ fixturesDir: write([entry]), catchRequests: false })
+            const typed = { name: 'LlmUnavailableError', reason: 'overloaded' }
+            await expect(llm.complete(request)).rejects.toMatchObject(typed)
+            await expect(
+                (async () => {
+                    for await (const chunk of llm.stream(request)) void chunk
+                })(),
+            ).rejects.toMatchObject(typed)
+            await expect(llm.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toMatchObject(typed)
+        }
+    })
+
+    test('a failure with no reason is no failure, and two default entries are read the same way by every method', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const malformed = createFakeLlm({
+            fixturesDir: write([{ name: 'd', request: null, response: null, failure: {} }]),
+            catchRequests: false,
+        })
+        await expect(malformed.complete(request)).rejects.toThrow(/no matching llm fixture/)
+        const two = createFakeLlm({
+            fixturesDir: write([
+                { name: 'a', request: null, response: null },
+                { name: 'b', request: null, response: null, failure: { reason: 'timed-out' } },
+            ]),
+            catchRequests: false,
+        })
+        await expect(two.complete(request)).rejects.toMatchObject({ reason: 'timed-out' })
+        await expect(two.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toMatchObject({
+            reason: 'timed-out',
+        })
+    })
+
+    test('a default entry with no answer and no failure is still the plain "no default entry" error', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const llm = createFakeLlm({
+            fixturesDir: write([{ name: 'd', request: null, response: null }]),
+            catchRequests: false,
+        })
+        await expect(llm.complete(request)).rejects.toThrow(/no matching llm fixture/)
+        await expect(llm.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toThrow(
+            /no matching llm tool-loop fixture/,
+        )
+    })
+
+    test('an entry without a failure still answers, so only the entries that say so fail', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const dir = write([{ name: 'd', request: null, response: 'Fine.' }])
+        const llm = createFakeLlm({ fixturesDir: dir, catchRequests: false })
+        expect(await llm.complete(request)).toEqual({ text: 'Fine.' })
+    })
 })
 
 describe('fake llm request catch', () => {

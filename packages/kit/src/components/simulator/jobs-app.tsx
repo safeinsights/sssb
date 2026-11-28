@@ -25,7 +25,8 @@ export interface WorldJobLike {
 export interface ScheduleRowLike {
     id: string
     kind: string
-    spec: ScheduleSpec
+    /** Null when the stored spec does not parse (the server's world view; such a schedule is turned off). */
+    spec: ScheduleSpec | null
     nextRunAt: string
     enabled: boolean
     tenantSlug: string
@@ -100,8 +101,9 @@ function statusColor(status: string): string {
 }
 
 /** Localized one-line summary of a schedule's timing rule. UTC throughout (see packages/kit/src/core/schedules). */
-function ScheduleSpecSummary({ spec }: { spec: ScheduleSpec }) {
+function ScheduleSpecSummary({ spec }: { spec: ScheduleSpec | null }) {
     const t = useTranslations('simulator')
+    if (spec === null) return <>{t('scheduleUnparseable')}</>
     if (spec.type === 'interval') return <>{t('scheduleInterval', { minutes: spec.everyMinutes })}</>
     const time = `${String(spec.atUtcHour).padStart(2, '0')}:${String(spec.atUtcMinute).padStart(2, '0')}`
     if (spec.type === 'daily') return <>{t('scheduleDaily', { time })}</>

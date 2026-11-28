@@ -78,13 +78,21 @@ describe('POST /api/escalations/[id]/cancel', () => {
         )
     })
 
-    test('403 when a restricted member tries to withdraw', async () => {
-        h.requireUser.mockResolvedValue(user({ role: 'restricted', restricted: true }))
+    // safeinsights/sssb#137: a person who may not withdraw learns nothing about whether the id exists.
+    test.each([
+        ['a restricted member', user({ role: 'restricted', restricted: true })],
+        ['a person with no standing (none)', user({ role: 'none', restricted: true })],
+        ['a member of the responder side', user({ orgSlug: 'platform' })],
+    ])('%s gets the same 404 for an existing id as for a missing one', async (_, who) => {
+        h.requireUser.mockResolvedValue(who)
+        const existing = await post()
+        h.escalationForActiveOrg.mockResolvedValue(null)
+        const missing = await post()
 
-        const response = await post()
-
-        expect(response.status).toBe(403)
+        expect(existing.status).toBe(404)
+        expect([existing.status, await existing.json()]).toEqual([missing.status, await missing.json()])
         expect(h.transitionEscalation).not.toHaveBeenCalled()
+        expect(h.recordAuditEvent).not.toHaveBeenCalled()
     })
 
     test("404 when the active org is not a party to the escalation (or it's absent)", async () => {

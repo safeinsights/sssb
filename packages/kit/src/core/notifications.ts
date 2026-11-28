@@ -54,7 +54,8 @@ export function isNotificationKind(value: string): value is NotificationKind {
 /** Per-kind payload shapes for the framework kinds. Kept small and serializable (jsonb). */
 interface FrameworkNotificationPayloadMap {
     'org.invited': { email: string; role: string; orgName: string }
-    'job.completed': { jobId: string; jobKind: string; status: 'completed' | 'failed' }
+    /** `attempts`: how many attempts a kind that retries made, when more than one (safeinsights/sssb#135). */
+    'job.completed': { jobId: string; jobKind: string; status: 'completed' | 'failed'; attempts?: number }
 }
 
 /** The composed payload map (framework + app), so NotificationPayload covers every registered kind. */
@@ -168,12 +169,14 @@ function copyKeys(kind: NotificationKind, payload: NotificationPayload): Notific
         case 'job.completed': {
             const p = payload as FrameworkNotificationPayloadMap['job.completed']
             const failed = p.status === 'failed'
+            // A kind that retried says how many attempts it made before it gave up.
+            const afterAttempts = failed && typeof p.attempts === 'number' && p.attempts > 1
             return {
                 titleKey: failed ? 'titleJobFailed' : 'titleJobCompleted',
-                bodyKey: failed ? 'bodyJobFailed' : 'bodyJobCompleted',
-                smsKey: failed ? 'smsJobFailed' : 'smsJobCompleted',
+                bodyKey: afterAttempts ? 'bodyJobFailedAfterAttempts' : failed ? 'bodyJobFailed' : 'bodyJobCompleted',
+                smsKey: afterAttempts ? 'smsJobFailedAfterAttempts' : failed ? 'smsJobFailed' : 'smsJobCompleted',
                 subjectKey: failed ? 'subjectJobFailed' : 'subjectJobCompleted',
-                values: { jobKind: p.jobKind },
+                values: afterAttempts ? { jobKind: p.jobKind, attempts: String(p.attempts) } : { jobKind: p.jobKind },
             }
         }
         default:

@@ -49,7 +49,7 @@ export async function createAttachment(
 /**
  * Resolves an attachment id to its storage key + status ONLY when it belongs to `orgId` within
  * `tenantId` — returns null both when the attachment is absent AND when it belongs to another org (a
- * foreign org's attachment must be indistinguishable from a missing one, so ids can't be probed; the
+ * foreign org's attachment must be indistinguishable from a missing one, so another org's ids can't be probed; the
  * jobForOrg doctrine). The confirm route uses the returned key to verify the upload actually landed.
  */
 export async function attachmentForOrg(

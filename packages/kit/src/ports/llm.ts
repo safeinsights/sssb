@@ -16,6 +16,15 @@ export interface LlmRequest {
     system?: string
     messages: LlmMessage[]
     maxTokens?: number
+    /**
+     * The deadline for the whole call, in milliseconds: the adapter's retries, a stream's last chunk, and for a tool
+     * loop every turn and every `execute` between them. Past it the call throws `LlmUnavailableError('timed-out')`.
+     * Defaults to 25 s (`LLM_DEFAULT_TIMEOUT_MS`), under the 30 s the app server's function has, so a route answers
+     * instead of being killed. A job handler on the CodeBuild runner, where no person waits, passes a longer one; a
+     * request, or a job the in-process runner runs, that passes more than its function's own limit gets the kill. Not
+     * a positive number of milliseconds a timer can wait (at most 2^31 - 1): a `RangeError`.
+     */
+    timeoutMs?: number
 }
 
 // --- Tool use --------------------------------------------------------------------------------
@@ -68,6 +77,15 @@ export interface LlmToolLoopRequest {
     maxTokens?: number
     /** Upper bound on model↔tool round-trips before the loop gives up (default 6). */
     maxTurns?: number
+    /**
+     * The deadline for the whole call, in milliseconds: the adapter's retries, a stream's last chunk, and for a tool
+     * loop every turn and every `execute` between them. Past it the call throws `LlmUnavailableError('timed-out')`.
+     * Defaults to 25 s (`LLM_DEFAULT_TIMEOUT_MS`), under the 30 s the app server's function has, so a route answers
+     * instead of being killed. A job handler on the CodeBuild runner, where no person waits, passes a longer one; a
+     * request, or a job the in-process runner runs, that passes more than its function's own limit gets the kill. Not
+     * a positive number of milliseconds a timer can wait (at most 2^31 - 1): a `RangeError`.
+     */
+    timeoutMs?: number
     /** APP-supplied tool executor. The port relays the model's call and takes back the result
      *  STRING; it never runs a tool itself. Throwing here surfaces to the caller. */
     execute: (call: { name: string; input: unknown }) => Promise<string>
@@ -75,6 +93,15 @@ export interface LlmToolLoopRequest {
 
 export interface LlmPort {
     complete(request: LlmRequest): Promise<{ text: string }>
+    /**
+     * The answer as it arrives, a chunk of text at a time. A stream that fails after some text was delivered ENDS IN A
+     * THROWN ERROR from the iteration, never in an end that reads as a complete answer: `LlmUnavailableError` for a
+     * provider's rate limit or overload and for the deadline (`timeoutMs`), any other failure as the provider's SDK threw
+     * it. The text already delivered stays delivered and is never sent again. A route that has begun its response has no
+     * status left to change, so it reports the failure in the body, as the showcase's assistant route does with a final
+     * `{ "error": ... }` line. The fake adapter and the static demo's replay fail the same way, for a fixture entry with a
+     * `failure` (`LlmFixtureEntry`); the conformance check `llm-stream-failure` holds the three to it.
+     */
     stream(request: LlmRequest): AsyncIterable<string>
     /**
      * Drive a tool-using conversation to its final text. Returns `text` (the FINAL assistant turn's

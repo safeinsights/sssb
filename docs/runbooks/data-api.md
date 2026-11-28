@@ -137,6 +137,45 @@ rds execute-statement --database "$DB" --sql "SELECT (ARRAY[10,20,30])[1 : hi] F
 Pass when the first call fails for want of a parameter `hi` and the second returns the elements 10 and 20. If the
 first succeeds, AWS's parser is more forgiving than the emulator; correct the addendum's limit.
 
+Last, the one shape where the Data API is known to read a literal differently from Postgres
+(`safeinsights/sssb#201`). A plain `'…'` literal ending in a backslash is complete to Postgres, since a
+backslash is an ordinary character outside an `E'…'` string. Seen live on 2026-11-24, in an app's query with
+`ESCAPE '\'` and a parameter after it: `syntax error at or near ":"`. The emulator reproduces that by finding
+parameters the way the Data API appears to, with a backslash escaping the next character in a plain literal
+too (`dataApiReading` in `sqlSegments`, `packages/kit/src/adapters/real/rds-data-codec.ts`). The three calls
+below are the check, and `a` is the one that tells you the rule:
+
+```bash
+# a: a parameter after the literal. Expect: syntax error at or near ":"
+rds execute-statement --database "$DB" \
+  --sql "SELECT length('\\') AS n WHERE :p::int = 1" \
+  --parameters '[{"name":"p","value":{"longValue":1}}]'
+# b: the same with the backslash spelled so both scanners agree. Expect: n = 1, and no error
+rds execute-statement --database "$DB" \
+  --sql "SELECT length(E'\\\\') AS n WHERE :p::int = 1" \
+  --parameters '[{"name":"p","value":{"longValue":1}}]'
+# c: nothing after the literal, no parameter at all. Not known; record what it does
+rds execute-statement --database "$DB" --sql "SELECT length('\\') AS n"
+```
+
+(In a double-quoted shell string `\\` reaches AWS as one backslash, so `a` sends `length('\')` and `b` sends
+`length(E'\\')`.)
+
+What is proven and what is inferred, so a result can correct the right line:
+
+- **Observed once (2026-11-24, an app's query; the issue records the error and the `ESCAPE '\'`, not the statement's full text):** a plain literal
+  ending in a backslash, a parameter after it, `syntax error at or near ":"`. `a` repeats it.
+- **Inferred, and what the emulator does about it:** that the Data API's scanner treats `\'` as an escaped
+  quote in every plain literal, so the literal runs on to the next quote and a `:name` inside that stretch is
+  not substituted. The emulator refuses a statement only when such a `:name` exists. `b` confirms the spelling
+  that is safe; the emulator accepts `'\\'`, `E'\\'` and `chr(92)`.
+- **Not known, so not refused:** `c` (no parameter after the literal, or a parameter only before it), and
+  whether the scanner also misreads a `$$` body or an `E'…'` string beyond what the checks above test (it is assumed
+  not to). If `a` does not fail, remove `dataApiReading` from the emulator's
+  scan; if `c` fails, the emulator should refuse that too.
+
+Pass when `a` fails as said and `b` returns 1. Record the date and what `c` did in the `data-api` row.
+
 ## 3. The wire format matches the emulator's
 
 ```bash
@@ -299,7 +338,9 @@ Measured on 2026-11-21, before this wait was reworked: the cluster resumed in 12
 took 26.0 seconds of the server's 30. A request makes one wait, however many calls it makes, unless it carries on after
 one has run out or the database refuses again after answering the poll: the dialect polls with `SELECT 1` after 1, 2
 and 4 seconds and then every second, every call that waits shares that poll, and a call outside a transaction that is
-not yet sent waits for a known resume first (`packages/kit/src/adapters/real/rds-data-resume.ts`).
+not yet sent waits for a known resume first (`packages/kit/src/adapters/real/rds-data-resume.ts`). A probe that has not
+answered in two seconds is left running while the next is sent, and is aborted after six, so a wait that never hears from
+the database keeps at most three requests out.
 
 **Setting the budget.** A call waits 18 seconds by default, then fails. `DATABASE_RESUME_BUDGET_MS` on the server
 changes it (a whole number of milliseconds, 0 to fail at once, at most 900000). In `apps/<app>/infra/app.ts`, with the

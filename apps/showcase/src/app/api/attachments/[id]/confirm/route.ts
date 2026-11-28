@@ -8,14 +8,15 @@ import { requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
  * The CONFIRM step of a two-step upload. After the browser has sent the file (a POST or a PUT) to the mint
- * step's upload target, it calls this to finalize the pending attachment row. We resolve the row
- * org-scoped (a foreign org's id is indistinguishable from a missing one — jobForOrg doctrine),
- * re-authorize the same create ability (finalizing one's own upload), then VERIFY the object actually
- * landed in storage, and is within the ceiling, before recording its true size and flipping status to ready.
- * Verifying here is what stops a caller minting + confirming without ever uploading, which would leave a dead
- * download link. The size is checked from `head` (the bytes are not read), because a PUT upload target holds the
- * ceiling only as far as the store honours the signed length (`StoragePort.createUploadTarget`): an object over
- * it is deleted and refused, never marked ready.
+ * step's upload target, it calls this to finalize the pending attachment row. We re-authorize the same
+ * create ability (finalizing one's own upload) FIRST, against the active org, so a person who may not
+ * finalize gets the same 403 whether or not the id exists; then resolve the row org-scoped (a foreign
+ * org's id is indistinguishable from a missing one — jobForOrg doctrine, safeinsights/sssb#137); then
+ * VERIFY the object actually landed in storage, and is within the ceiling, before recording its true size and
+ * flipping status to ready. Verifying here is what stops a caller minting + confirming without ever uploading,
+ * which would leave a dead download link. The size is checked from `head` (the bytes are not read), because a PUT
+ * upload target holds the ceiling only as far as the store honours the signed length
+ * (`StoragePort.createUploadTarget`): an object over it is deleted and refused, never marked ready.
  */
 export async function POST(_request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
     return withPortErrors(async () => {
@@ -26,12 +27,12 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         if (resolved instanceof Response) return resolved
         const { tenantId, orgId } = resolved
 
-        const attachment = await attachmentForOrg(db, tenantId, orgId, id)
-        if (!attachment) return Response.json({ error: 'not found' }, { status: 404 })
-
-        // Authorization choke point: only a non-restricted member of the owning org may
+        // Authorization choke point, before the lookup: only a non-restricted member of the owning org may
         // finalize an upload — the same ability that gated minting it.
         authorize(user, orgId, 'create', { type: 'Attachment', orgId })
+
+        const attachment = await attachmentForOrg(db, tenantId, orgId, id)
+        if (!attachment) return Response.json({ error: 'not found' }, { status: 404 })
 
         // A row that is no longer pending is already finalized: a re-confirm (double-click, retried request) is
         // idempotent and touches nothing in storage. It must never reach the ceiling check below, which deletes: a

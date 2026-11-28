@@ -28,6 +28,16 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   real adapter only with `import()`, a fake, and the real adapter in `adapters/real/`, the one directory that imports
   the SDK. Nothing imports `adapters/real/` statically, and a fake never imports it at all. Add the SDK to the ban in
   the app's own `package.json`: `"sssb": { "vendors": ["stripe", "stripe/*"] }`.
+- An LLM call (`llm.complete`, `llm.stream`, `llm.runToolLoop`) has a deadline of 25 s by default, under the 30 s the
+  server function has. The deadline is per call: a route that makes two calls passes each a `timeoutMs` that keeps their
+  sum under the function's limit. A provider rate limit, an overloaded provider and a call past its deadline all arrive as
+  `LlmUnavailableError` (`@sssb/kit/ports/errors`), which `withPortErrors` answers with a 503 and `Retry-After`: let it
+  propagate. A job handler run by the CodeBuild runner, where no person waits and the process lives longer, passes a
+  longer `timeoutMs` on the request; a route, and a job the in-process runner runs inside the server's function, never
+  pass more than that function allows. `stream` throws it from the iteration, after the text it had already delivered, so a route that has begun its
+  response cannot change the status: say the failure in the response's body, and test that path with a fixture entry that
+  has a `failure` (`{ "failure": { "reason": "overloaded" } }`), which the fake adapter replays as the deployed adapter
+  fails.
 - Read `process.env` only in `adapters/real/` (and never the run mode there), in Next's instrumentation hooks, in
   tests and in the app-root tool configs (Playwright, Vite). Every other module imports the resolved value: deployment
   parameters from `config/params.ts`, the run mode from `isSimulated`.
@@ -48,6 +58,18 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `@sssb/kit/core/jobs`. `'failure'` notifies only a failed job (one the in-process runner's sweep fails as lost included) and `'never'` nothing; a kind not
   named, and an app with no export, is `'always'`, and the framework's own kinds never notify. A refused run makes no
   `listMembers` call. If the static demo starts the kind, pass the same map as `useDemoWorld`'s `jobNotify`.
+- A job kind is tried once unless the seam's optional `jobRetry` export in `src/app-config/jobs.ts` lets it retry:
+  `export const jobRetry: Partial<Record<AppJobKind, JobRetry>> = { 'sweep-items': { attempts: 3, delaysMs: [60_000, 600_000] } }`,
+  with `JobRetry` from `@sssb/kit/core/jobs` (at most 10 attempts and delays of at most 30 days, or the entry is ignored
+  and the kind runs once; with no `delaysMs`, the webhook deliveries' backoff).
+  Each attempt is a job row of its own, queued until its delay has passed (a service caller's job list leaves it out
+  until then), and the scheduled tick starts it, so the tick's period (five minutes by default) is the floor under every delay. A retried handler runs again over whatever
+  the failed attempt left behind: a kind that retries must be idempotent, and keys its side effects on
+  `ctx.firstJobId`, the same on every attempt (`ctx.attempt` says which one it is). Only the last attempt's outcome
+  notifies, so `jobNotify`'s `'failure'` means a failure with no attempts left. A job whose run was lost (the
+  in-process runner's invocation ended, or a CodeBuild build ended without posting its webhook) is failed by the
+  runner's sweep on the scheduled tick, and retried like any failure. If the static demo starts the kind,
+  pass the same map as `useDemoWorld`'s `jobRetry`.
 - A route that submits a job for a person passes `requestedBy: user.id` to `submitJob` (`@sssb/kit/db/jobs`): when the
   team has no admin to tell (a fixed org source, `params.auth`, has none), the job's end reaches the person who started
   it, and a job submitted without one reaches no one. Under a fixed org source SSSB's `Job` rule admits no one (its
@@ -102,10 +124,11 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 
 ## Authorization
 
-- Every exported mutating route handler (POST, PUT, PATCH, DELETE) in a `route.ts` anywhere under `src/app`, not only
-  under `src/app/api`, calls `authorize(...)` from `@sssb/kit/authz/authorize` on its own path, as
-  `src/app/api/items/route.ts` does (the generated app's; once you have removed it, read it in SSSB's repository at your
-  release). The conformance suite's `authz-mutations` check reads each handler: a string, a
+- Every exported route handler in a `route.ts` anywhere under `src/app`, not only under `src/app/api`, calls
+  `authorize(...)` from `@sssb/kit/authz/authorize` on its own path: a mutation (POST, PUT, PATCH, DELETE) and a read
+  (GET, HEAD, OPTIONS) alike, as `src/app/api/items/route.ts` does for both (the generated app's; once you have removed
+  it, read it in SSSB's repository at your release). The conformance suite's `authz-mutations` check reads each
+  handler: a string, a
   comment, a dead branch or a helper in another module does not count. Neither does a call whose denial cannot stop
   the handler: in an `async` helper or a callback whose promise the handler neither awaits nor returns, in a callback
   handed to a function the route file defines, in a callback a timer, a listener, `after()` or a `.catch`/`.finally`
@@ -113,19 +136,100 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   answer the 403. Over many items, `await Promise.all(items.map(...))`; `Promise.allSettled` does not count, and
   neither does a `.then(...)` chained after it.
 - The check proves that a handler can reach `authorize(...)`, not that every path through it does, nor that it
-  comes before the mutation. Call it before the mutation and before any `try`, on a path every request takes: after
-  `auth.requireUser()` and the lookups that give it the org, never inside a condition or a loop.
+  comes before the mutation. Call it before the mutation and before any `try` (except one whose `catch` always
+  rethrows, as in the next rule), on a path every request takes: after `auth.requireUser()` and the lookups that give it the org, never
+  inside a condition or a loop.
+- A person who may not act gets the same answer, status and body, whether or not a thing the request names exists:
+  a row by its id in the path, an org by a slug in the body, anything a lookup keyed by request input finds. So no such
+  lookup answers before `authorize` when the session alone can decide: authorize on the active org the session
+  resolves to first, then look the thing up, scoped to the active org (another org's row is missing too). When the
+  decision needs the row itself (a two-sided subject, whose requester and responder orgs only the row knows), the
+  lookup comes first, and a missing row and a refusal are the one error:
+  `if (!row) throw new NotFoundError()`, then
+  `try { authorize(…) } catch (error) { throw error instanceof ForbiddenError ? new NotFoundError() : error }`, both
+  errors from `@sssb/kit/ports/errors`, so `withPortErrors` gives both one answer. That `catch` always rethrows, so the
+  check still counts the call. The check cannot see the order of a lookup and an `authorize`, so this rule is kept by
+  hand; pin it with a route test that sends an existing id and a missing one as a person who may not act, and expects
+  identical answers.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
-  app serves routes from `src/app` alone: a root-level `app/` directory, a `pages/api` directory, or a file named
-  `route.<ext>` the check does not read (`route.mts`, a custom `pageExtensions`) fails it.
+  app serves routes and pages from `src/app` alone: a root-level `app/` directory, a `pages` directory beside `src` or
+  inside it (the Pages Router), a file named `route.<ext>` with an extension the check does not read (`route.mts`), a
+  page file below named with `.mts`, `.cts`, `.cjs`, `.mdx` or `.md` (`page.mdx`), or a `next.config` that sets
+  `pageExtensions` at all (the check does not read custom extensions) fails it. A private folder
+  (`_lib`), which Next does not route, holds no route or page the check reads; a Server Action there is still judged.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
-  `src/app/api`), with a reason and a `mustMatch` gate. A mutating route outside `src/app/api` can match no
-  exemption.
+  `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names (a `reads-only`
+  entry, reads only), each judged on
+  its own. A mutating route outside `src/app/api` can match no exemption.
 - A route or screen that reads org-scoped data authorizes the read too, as `src/app/api/items/route.ts`'s GET does
   (`authorize(user, orgId, 'read', …)`): the session's org says where a person is placed, not that they may read there.
   The role `none` (a fixed org source gives it to every signed-in user by default: `params.auth`) is placed in the home
-  org with no standing in it.
+  org with no standing in it. The check enforces it for route handlers and pages (the next rule), and does not guess
+  which reads are org-scoped: a read handler that names an import (other than those below), a helper, `fetch` or
+  `process.env` authorizes. A
+  read of the caller's own things authorizes its self-only subject (`Notification`, `NotificationPref`), and a service
+  caller its machine actor. A read handler that reads nothing passes without it: it names nothing from outside itself
+  but inert globals (`Response`, `Date`, `URL`, `JSON`), a `const` bound to a primitive literal (not an object or
+  array), `NextResponse`, `redirect`, `permanentRedirect` and `notFound` from `next/navigation`, and SSSB's `appMode`
+  and `isSimulated`, so it works only on its request, as a liveness probe does, or a CORS preflight whose headers are
+  written inline (under the `service/` prefix too, where any other read is wrapped by `withServiceCaller`). Any other read that is genuinely not org-scoped (a public one, a preflight whose headers object comes from a module,
+  a provider's verification handshake) names an exemption with a `reads-only` gate,
+  `{ kind: 'reads-only', names: { corsHeaders: '@/lib/cors' } }`: the read may then name, besides those inert
+  values, only the listed imports (by exported name; not a default import), each from the module the entry pins it to,
+  so the reason covers exactly what it reads; every name listed must be in use. A pin is the specifier the import
+  writes when it is not relative and resolves (`'next/headers'`, `'@sssb/kit/adapters/fake/auth'`, an alias's
+  `'@/lib/cors'`), or the path from the app's directory, with its extension, of the file the import resolves to or of
+  the one that declares the name under that name (`'src/seed/index.ts'`); a pin that is the path of a file in the app
+  is only ever a path. An import of the name from any other module fails the read and the entry. The gate holds for a handler that is a function: one exported as a
+  wrapper's result (`export const GET = withPortErrors(…)`) cannot use it. A
+  value of the route's own file (a headers object, a helper) cannot be listed, since code of the file can change it:
+  put it in a module and list the import. Such an
+  entry applies to reads only (a mutation at its path keeps the gate it had), and it is the one kind that may sit
+  outside `src/app/api`, under `outsideApi: { files, prefixes }` with keys relative to `src/app`, or name one file
+  under SSSB's `webhooks/` prefix (a provider's verification handshake). A key names a dynamic segment literally
+  (`[locale]/feed.xml/route.ts`), and a route group's `(name)` or a slot's `@name` is not part of it, as it is not
+  part of the URL. A route under an
+  intercepting segment (`(.)x`, `(..)x`) fails the check: serve the handler from a route that does not intercept.
+- A page is a read too. Every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `global-not-found`,
+  `forbidden` and `unauthorized` file under `src/app`, and every metadata route (`sitemap`, `robots`, `manifest`,
+  `opengraph-image`, `twitter-image`, `icon`, `apple-icon`), with a route's extensions: its `default` export,
+  `generateMetadata`, `generateImageMetadata`, `generateSitemaps` and `generateViewport` are each judged as a read
+  handler is, and fail the check the same way. A `'use client'` component file is not judged: it reaches data only
+  through routes (a metadata route always is). Besides the inert values above, a page reads nothing when it names only
+  the session (`auth.getCurrentUser()`, `auth.requireUser()`, `auth.signInPath()`, `auth.refusal()` and
+  `auth.listMyOrgs()`, never `auth` itself, another member of it, or an `auth` from any other module: `auth.listMembers`
+  is a team's member list), its copy and locale (`setRequestLocale`, `getTranslations`, `getMessages` and `getLocale`
+  from `next-intl/server`, `hasLocale` and `useTranslations` from `next-intl`, `routing.locales`), React's `use` (a sync
+  page's `use(params)`; not `headers()` or `cookies()` from `next/headers`, whose Cookie and Authorization carry the
+  session's credential: a page that reads them names them in its entry, `{ headers: 'next/headers' }`),
+  `canInActiveOrg`, `isDemoMode`, `sameOriginPath`, `getTenantTheme`, Mantine's `mantineHtmlProps` and a default-imported stylesheet or
+  image named by a relative specifier or a tsconfig `paths` alias, with no `?` or `#`, whose file exists and is not
+  code beside one of the same name (a bare specifier, a package's asset included, is never one); a component it only
+  renders as a JSX tag, declared in a `'use client'` module (a barrel's re-export is followed to it), in an installed
+  package (under a `node_modules` at the app or above it, not a workspace link or a pnpm `file:` or `link:`
+  dependency, which are your own code) or in SSSB's kit; a component of its own file it only renders, which is read as part of it; a real adapter's component it loads with
+  `const { Form } = await import('…')` (alone, or in an awaited `Promise.all`) only to render it; and an imported Server
+  Action it only hands on as a JSX attribute's whole value (`<form action={saveItem}>`, never called), declared in a
+  `'use server'` module under `src` (a barrel's re-export is followed to it) or opening its own body with
+  `'use server'`, written as such (an escaped `'use\x20server'` is no directive). A component it hands the action to may
+  call it, even while rendering; that is safe because the check judges the action itself, which must reach `authorize`
+  on its own path. Anything else it names
+  (the seed, a port, a data helper, a server component of your own, in the app or a workspace package) means it
+  authorizes, as `src/app/[locale]/(protected)/dashboard/page.tsx` would before reading the team's data, or, only if
+  it reads nothing org-scoped, has a `reads-only` entry under `outsideApi` keyed by its file, as `authz-exemptions.mjs`
+  names the sign-in page's, or an `outsideApi.prefixes` entry above it, which covers the pages under it as it covers the
+  routes. A route group is dropped from the key, so a group's layout shares its parent's (`[locale]/layout.tsx`). A page
+  under an intercepting segment (`(.)x`) can match no entry: it authorizes or reads nothing. `auth` used any other way,
+  and a value of the page's own file, are refused outright: no entry can excuse them, so such a page authorizes. For a
+  value of the file (a `const LINKS = [...]`), write it inline where the page uses it, or move it into a module and
+  list the import in the page's entry; a `const` bound to a primitive literal is already inert.
+- A component from an installed package, SSSB's kit or a `'use client'` module is out of the check's sight, as a
+  helper in another module is. A server component of your own (in the app, or a workspace package it links or reaches
+  by a path or an alias) is named instead, since it may load its own data: load the data in the page,
+  authorize there, and hand the component the rows. A person the page's `authorize` refuses gets its `ForbiddenError`
+  instead of the page, so a page a person without standing may open checks `canInActiveOrg` first and sends them
+  where they have something to see.
 - In `appAbilityRules`, grant org-scoped access through the `sameOrg` you are handed, never by a role alone: `sameOrg` is
   false for a person without standing, and a rule that grants because a role is not some other role would grant
   `none` too.

@@ -7,8 +7,36 @@ export declare function writeTickerMarker(file: string, seconds: number): void
 /** Removes the record, if this process wrote it: another ticker's marker is not ours to delete. */
 export declare function removeTickerMarker(file: string): void
 
-/** The live ticker a marker records, or null when there is none or its process is gone. */
-export declare function liveTickerMarker(file: string): { pid: number; seconds: number; startedAt: string } | null
+/**
+ * The live ticker a marker records, or null when there is none, its process is gone, or the process now at its pid is not
+ * the one that wrote the marker (the OS reused the pid): a marker found so is cleared. A marker whose process cannot be
+ * told apart from the one at its pid is live. `tokenOf` gives the start token of the process at a pid
+ * (default `processStartToken`).
+ */
+export declare function liveTickerMarker(
+    file: string,
+    tokenOf?: (pid: number) => string | null,
+): { pid: number; seconds: number; startedAt: string; startToken?: string | null } | null
+
+/**
+ * Removes the marker at `file` if it is still the stale one described (`pid` and `startedAt`), by moving it aside and
+ * judging the copy, so a marker another wrapper writes meanwhile is not removed with it (it is put back if the name is
+ * still free). Exported for its test;
+ * `hooks.afterClaim` runs between the move and the judgment.
+ *
+ * @internal
+ */
+export declare function clearStaleMarker(
+    file: string,
+    stale: { pid: number; startedAt: string },
+    hooks?: { afterClaim?: () => void },
+): void
+
+/**
+ * A token for when the process at `pid` began, to compare for equality: the same for one process, another for a process
+ * that took the pid later, and not moved by a wall clock that is stepped. null when it cannot be told.
+ */
+export declare function processStartToken(pid: number): string | null
 
 /**
  * Throws while a dev ticker is live in this app's data directory: a Playwright config calls it so a ticking dev

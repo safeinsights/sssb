@@ -552,16 +552,26 @@ test('the fake object store keeps what it is given', async () => {
     )
     // A route that serves through the registry, so `next build` compiles the app-owned adapter, its
     // dynamic import of real/ and the vendor SDK against the packed framework. (A unit test cannot load
-    // the registry: SSSB's adapters import `server-only`, which throws outside a server component.)
+    // the registry: SSSB's adapters import `server-only`, which throws outside a server component.) It
+    // authorizes its read, as the conformance suite's `authz-mutations` check requires of every read handler
+    // that reads something (safeinsights/sssb#103).
     write(
         path.join(dir, 'src/app/api/objects/route.ts'),
-        `import { auth } from '@sssb/kit/adapters/index'
+        `import { auth, db } from '@sssb/kit/adapters/index'
+import { authorize } from '@sssb/kit/authz/authorize'
+import { orgIdForSlug } from '@sssb/kit/db/org-lookup'
+import { tenantIdForSlug } from '@sssb/kit/db/tenant-lookup'
 import { objectStore } from '@/adapters'
 import { withPortErrors } from '../respond'
 
 export async function GET(): Promise<Response> {
     return withPortErrors(async () => {
         const user = await auth.requireUser()
+        const tenantId = await tenantIdForSlug(db, user.tenantSlug)
+        if (!tenantId) return Response.json({ error: 'unknown tenant' }, { status: 404 })
+        const orgId = await orgIdForSlug(db, tenantId, user.orgSlug)
+        if (!orgId) return Response.json({ error: 'unknown org' }, { status: 404 })
+        authorize(user, orgId, 'read', { type: 'Item', orgId })
         return Response.json({ value: await objectStore.get(user.tenantSlug) })
     })
 }

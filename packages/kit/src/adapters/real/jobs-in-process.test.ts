@@ -179,6 +179,61 @@ describe('the in-process jobs runner', () => {
         expect(notified).toContainEqual({ tenantId, jobId: id, status: 'failed' })
     })
 
+    test('a bounded sweep fails at most its count and nothing after its deadline; the next sweep takes the rest (#252)', async () => {
+        const { ports, notify, createInProcessJobs, view, tenantId, orgId } = await harness()
+        const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')
+        const { submitJob } = await import('../../db/jobs')
+        const dying = { start: async () => Promise.reject(new Error('invocation ended')) }
+        const ids: string[] = []
+        for (let i = 0; i < 3; i++) {
+            await submitJob(ports.db, dying, { tenantId, orgId, kind: 'export-dockets', payload: {} }).catch(
+                () => undefined,
+            )
+        }
+        for (const j of await listOrgJobs(ports, tenantId, orgId)) if (j.status === 'queued') ids.push(j.id)
+        expect(ids.length).toBeGreaterThanOrEqual(3)
+        const jobs = createInProcessJobs(ports, notify)
+        const later = new Date(Date.now() + IN_PROCESS_LOST_AFTER_MS + 60_000)
+        expect(await jobs.sweep!(later, { maxItems: 2, deadline: 0, clock: () => 1 }), 'past its deadline').toBe(0)
+        expect(await jobs.sweep!(later, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })).toBe(2)
+        expect(await jobs.sweep!(later)).toBe(ids.length - 2)
+        for (const id of ids) expect((await view(id)).status).toBe('failed')
+    })
+
+    test('a bounded sweep visits the tenants in a fresh random order (#252)', async () => {
+        const { ports, createInProcessJobs, tenantId, orgId } = await harness()
+        const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')
+        const { submitJob } = await import('../../db/jobs')
+        const owner = ports.db.getDb()
+        await owner
+            .updateTable('jobs')
+            .set({ status: 'completed' })
+            .where('status', 'in', ['queued', 'running'])
+            .execute()
+        const lakeside = await owner
+            .selectFrom('tenants')
+            .innerJoin('organizations', 'organizations.tenant_id', 'tenants.id')
+            .select(['tenants.id as tenantId', 'organizations.id as orgId'])
+            .where('tenants.slug', '=', 'lakeside')
+            .executeTakeFirstOrThrow()
+        const dying = { start: async () => Promise.reject(new Error('invocation ended')) }
+        for (let i = 0; i < 2; i++) {
+            for (const where of [{ tenantId, orgId }, lakeside]) {
+                await submitJob(ports.db, dying, { ...where, kind: 'export-dockets', payload: {} }).catch(
+                    () => undefined,
+                )
+            }
+        }
+        const failedIn: string[] = []
+        const jobs = createInProcessJobs(ports, async (input: Notified) => void failedIn.push(input.tenantId))
+        const later = new Date(Date.now() + IN_PROCESS_LOST_AFTER_MS + 60_000)
+        // Of two tenants, a random of 0 visits the later id first and one near 1 the earlier; each still has a loss.
+        expect(await jobs.sweep!(later, { maxItems: 1, deadline: Number.MAX_SAFE_INTEGER, random: () => 0 })).toBe(1)
+        expect(await jobs.sweep!(later, { maxItems: 1, deadline: Number.MAX_SAFE_INTEGER, random: () => 0.99 })).toBe(1)
+        expect(failedIn).toHaveLength(2)
+        expect(failedIn[0]).not.toBe(failedIn[1])
+    })
+
     test("a schedule's job whose start() failed is failed by the sweep, never left queued", async () => {
         const { ports, notify, notified, createInProcessJobs, view, tenantId, orgId } = await harness()
         const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')

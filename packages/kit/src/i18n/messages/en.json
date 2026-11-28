@@ -227,6 +227,7 @@
         "scheduleInterval": "Every {minutes} min",
         "scheduleDaily": "Daily · {time} UTC",
         "scheduleWeekly": "{weekday} · {time} UTC",
+        "scheduleUnparseable": "Spec does not parse",
         "scheduleEnabled": "enabled",
         "scheduleDisabled": "disabled",
         "scheduleNextRun": "next {when}",
@@ -382,8 +383,10 @@
         "smsJobCompleted": "Your {jobKind} job completed.",
         "titleJobFailed": "Job failed",
         "bodyJobFailed": "Your {jobKind} job did not finish.",
+        "bodyJobFailedAfterAttempts": "Your {jobKind} job did not finish after {attempts} attempts.",
         "subjectJobFailed": "Your {jobKind} job failed",
         "smsJobFailed": "Your {jobKind} job failed.",
+        "smsJobFailedAfterAttempts": "Your {jobKind} job failed after {attempts} attempts.",
         "emailFooter": "You can manage notification preferences in your profile."
     },
     "agreements": {
