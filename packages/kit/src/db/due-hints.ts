@@ -10,9 +10,9 @@ import { DUE_HINTS_PAGE, family } from './family'
  *
  * A drain that uses them reads, in one transaction (`tenantsToList`), the tenants with no hint, a hint that has come, a hint
  * further off than `MAX_SKIP_MS` (a simulated world whose clock was moved back), or an event that has come, and the
- * snapshot that read was taken in. The events are only probed, a tenant with events at a time (never scanned, and never
- * once per tenant of `tenants`); the read is paged by tenant id, and gives up after half of what is left of the drain's
- * window, when it reads every tenant with its hint instead (the drain then lists everyone and still settles). It lists those. Then (`settleHints`,
+ * snapshot that read was taken in. Whether a tenant has an event that has come is one index probe for that tenant (the
+ * planner is left no other path); the read is paged by tenant id, and gives up after half of what is left of the
+ * drain's window, when it reads every tenant with its hint instead (the drain then lists everyone and still settles). It lists those. Then (`settleHints`,
  * one statement per 200 tenants) it sets each listed tenant's hint: to the epoch when it had rows due (so it is listed
  * again, whatever a Simulator's clock does next), else to its next due time, at most `MAX_SKIP_MS` on; and deletes the
  * events of those tenants that the snapshot could see, which their listing accounted for, `EVENTS_PER_STATEMENT` a
