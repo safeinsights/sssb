@@ -4347,6 +4347,12 @@ describe('the page shapes the authorization review found failing (Z1), and a pre
             }),
         ).toBe('names: saveItem')
         expect(pageDefault(handsOn('./src/missing'))).toBe('names: saveItem')
+        // A 'use server' module that has no such export: nothing is judged under the name.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': "'use server'\nexport async function other() { return 1 }\n",
+            }),
+        ).toBe('names: saveItem')
     })
 
     it('keeps refusing a module-level const of the page file, and names the ways through', () => {
