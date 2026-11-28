@@ -14,6 +14,9 @@ const IMPORTS_VENDOR = "import { S3Client } from '@aws-sdk/client-s3'\nexport co
 const LOADS_VENDOR = "export const load = () => import('@aws-sdk/client-s3')\n"
 const READS_ENV = 'export const region = process.env.AWS_REGION\n'
 const TAKES_RAW_DB = 'export const load = (db) => db.getDb()\n'
+const READS_ORIGIN =
+    "export const from = (request) => request.headers.get('X-Forwarded-For')\n" +
+    'export const origin = (request) => new URL(request.url).origin\n'
 const IMPORTS_KIT_REAL =
     "import { createS3Storage } from '@sssb/kit/adapters/real/s3-storage'\nexport const s3 = createS3Storage\n"
 const SCREEN =
@@ -28,7 +31,7 @@ export const PROBES = [
     {
         path: `src/domain/${PROBE}.ts`,
         code:
-            `${IMPORTS_VENDOR}${LOADS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}` +
+            `${IMPORTS_VENDOR}${LOADS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}${READS_ORIGIN}` +
             "import { kv } from '@/adapters/real/kv'\nexport { kv }\n" +
             "import { Inter } from 'next/font/google'\nexport const font = Inter\n" +
             "export const suite = () => import('../../node_modules/@sssb/kit/src/testing/conformance/suite')\n",
@@ -41,6 +44,7 @@ export const PROBES = [
             'sssb/no-real-adapter-import',
             'sssb/no-kit-real-adapter-import',
             'sssb/no-next-font-google',
+            'sssb/no-raw-request-origin',
         ],
     },
     {
@@ -50,12 +54,13 @@ export const PROBES = [
     },
     {
         path: `src/app/api/${PROBE}/route.ts`,
-        code: `${IMPORTS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}`,
+        code: `${IMPORTS_VENDOR}${READS_ENV}${TAKES_RAW_DB}${IMPORTS_KIT_REAL}${READS_ORIGIN}`,
         fires: [
             'sssb/no-vendor-import',
             'sssb/no-process-env',
             'sssb/no-raw-db-handle',
             'sssb/no-kit-real-adapter-import',
+            'sssb/no-raw-request-origin',
         ],
     },
     {

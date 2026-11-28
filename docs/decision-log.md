@@ -8580,3 +8580,366 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
 - **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
   the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
   and #267. Then a claims pass over the prose.
+## The ticker marker is written whole and cleared without a gap; a failing default fixture always fails typed (2026-11-27, `fix/marker-atomic-and-fake-failure`)
+
+`safeinsights/sssb#258`, `#257` and `#249`: three leftovers of the `#146` and `#145` work.
+
+- **`#258`: the marker is written to a name beside it and renamed onto it** (`writeTickerMarker`; `<file>.<pid>.<random>.tmp`),
+  so a Playwright config that loads in that instant reads the marker that was there or the whole new one, never half of
+  it (a half-written file read as "no marker", and the config passed over a ticking dev server). A process killed between
+  the write and the rename leaves the `.tmp` file, which nothing reads. Pinned by standing inside the write
+  (`tests/tooling/ticker-marker-atomic.test.ts`): `writeFileSync` is wrapped to write half of its data, look at the marker as
+  a reader would, then write the rest; written straight onto the marker the reader sees half of a JSON document
+  (checked by making the write direct). Rejected: a stress test with a child process writing in a loop and the parent
+  reading, which can pass for a long time on the code it is meant to catch. Left as it was, and open in the issue: an
+  unparseable marker (damaged by anything else) still reads as no marker, not as "a ticker may be starting".
+- **`#257`: the stale marker is moved aside, and judged from the copy** (`clearStaleMarker`). Read-then-`rm` left a gap in
+  which a wrapper's new marker could be written and then removed. A rename is atomic and takes whatever file is there at
+  that instant: if it is the stale one it is deleted; if it is a newer one (written between the judgment and the move)
+  it is put back with `link`, which fails rather than overwrite, so a still newer marker written meanwhile wins and the
+  copy is dropped; a marker written after the move finds the name free and is never touched. Where a file system has no
+  hard links the put-back is a copy that fails rather than overwrite. **What it costs, found in review and filed as
+  `safeinsights/sssb#260`:** in that race a reader that looks while the newer marker is out of place sees none (a stress
+  run of one writer and four clearers spinning found the marker absent most of the time, which no real use approaches: a
+  clearer runs only after a marker was judged stale); a ticker that stops in that instant has its marker put back
+  (fails safe: the config refuses until the process exits); and two clearers meeting a newer and a newer-still marker
+  may leave the older. A write that fails now leaves no `.tmp` beside the marker. `clearStaleMarker` is exported, with a `hooks.afterClaim` seam, for its tests, which interleave a
+  writer at each step. Not changed: `removeTickerMarker` (the owner removing its own, by pid) has the same read-then-remove
+  shape, but only another wrapper's write into the same data directory in those microseconds could be lost, and the
+  token logic cannot tell one live ticker from two. `ps`'s start is to the second on macOS, so two processes born in the
+  same second share a token; a pid reused in the second it was released is not a case.
+- **`#249`: a default entry with a `failure` (one with a `reason`; `{}` is none) fails typed whatever answer it has, and every method reads the same default entry,** in `complete`, `stream` and
+  `runToolLoop`: `response: null` and no `conversation` (or an empty one) used to end in the plain "no default entry"
+  `Error`, which hid the failure the person wrote the entry to see. A default entry with no answer and no failure still
+  throws that error. (`response: null` is the recorder's "to record" marker and the recorder skips failing entries, so the
+  fixture is not rewritten.)
+
+## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
+
+safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind
+address and port (3000), never the visitor's host, and the first `X-Forwarded-For` entry is whatever the visitor wrote. Both issues
+left a choice open; the maintainer's standing instruction is to decide and record.
+
+- **One module, in the adapters directory: `@sssb/kit/adapters/edge-headers`.** It reads two settings from the
+  server's environment, which only an adapters module may, and holds both helpers, since they rest on one promise:
+  that every request crossed `SssbApp`'s viewer-request function. Rejected: **a `server-lib` module** taking its
+  settings from the caller, which would hand every app the job of reading `PUBLIC_ORIGIN` and the trust switch right.
+- **Both sources for the origin (#131's open question), configuration first.** `PUBLIC_ORIGIN` when set, in a request or
+  outside one; behind `SssbApp`, `https://` and `x-forwarded-host`; anywhere else, `request.url`'s origin. Configuration
+  wins over the header because a deployment served on two origins (its custom domain and `*.cloudfront.net`, both in
+  `CLERK_AUTHORIZED_PARTIES`) should mail one. Outside a request with no `PUBLIC_ORIGIN`, and behind `SssbApp` on a
+  request that never crossed the distribution (the scheduled tick invokes the server directly), it throws, naming the
+  setting. "Crossed" needs proof (both reviews of round 1 found it): Next fills a missing `x-forwarded-host` from `Host`
+  (`next/dist/server/base-server.js`), the Function URL's own on the tick's request, so the forwarded host is taken only
+  beside a valid `x-sssb-viewer-address`, which nothing but the function writes, and only when it is not `Host`. Rejected: **the header alone**, which a job cannot read; **the setting alone**, which a first deploy on
+  `*.cloudfront.net` cannot set (the server's environment cannot name the distribution's host without a dependency
+  cycle, as the authorized-parties entry above found); and **`NEXT_PUBLIC_PUBLIC_ORIGIN`**: nothing on the client needs
+  it, and a client bundle's value is fixed at build, not per deployment.
+- **Forwarded headers are believed only when the deployment says so: `SSSB_EDGE=cloudfront`, set by `SssbApp`.**
+  Without it (`pnpm dev`, `dev:real`, a host of the adopter's own) neither helper reads a forwarded header at all, so a
+  client cannot choose the answer. Rejected: **believing them whenever `!isSimulated`**, which would trust headers any
+  client writes on a real-mode server that is not behind `SssbApp`; and **believing them always**, the dev-mode hole
+  #131's fallback would otherwise have. Any other value of `SSSB_EDGE` is refused, at boot by `assertRealEnv` (cutover
+  row `domains-and-certs`) and on first use, rather than read as on or off; so is `SSSB_EDGE` off Lambda (no
+  `AWS_LAMBDA_FUNCTION_NAME`), where a deployment's environment copied into `dev:real` would otherwise trust any client.
+  Rejected: **letting an adopter set it behind a proxy of their own** (the first cut), a promise SSSB cannot check.
+  The promise it does make is checked at synth: `SssbApp` fails a behavior of any distribution in its stack, an origin
+  group's included, that reaches the server without the function. A distribution in another stack names the Function
+  URL by an import, which the check does not follow; it would also need its own origin access grant.
+- **The address comes from a header of SSSB's own, `x-sssb-viewer-address`, written by the CloudFront Function from
+  `event.viewer.ip` (#132's open question).** CloudFront's docs say neither whether a viewer's own
+  `CloudFront-Viewer-Address` is overwritten nor, by name, that `AllViewerExceptHostHeader` forwards it; and counting
+  `X-Forwarded-For` from the right depends on how many entries the Function URL appends, which only a live request would
+  show. The function already runs on every behavior that reaches the server (the synth test holds it) and already
+  overwrites `x-forwarded-host`; writing one more header there rests on nothing undocumented. Rejected:
+  **`CloudFront-Viewer-Address`**, and **the rightmost-minus-N `X-Forwarded-For` entry**, for those reasons. The
+  helper returns `undefined`, never a guess, when the header is missing or is not one IP address.
+- **A lint rule, `sssb/no-raw-request-origin`, not a conformance check.** It flags a visitor header named as a string
+  in `.get`/`.has`/`.getAll` or a computed key (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `Forwarded`,
+  `Host`, `CloudFront-Viewer-Address`, `x-sssb-viewer-address` and the other `X-Forwarded-*`, in any case), and the
+  `origin`, `host`, `hostname` or `href` of `new URL(<x>.url)` or `<x>.nextUrl` (by member or destructuring),
+  `new URL(path, <x>.url)` and `baseUrl: <x>.url`, in every module of an app's `src/` but its tests, and in the framework
+  but the module itself. A header read counts only on something plainly a request's headers (`<x>.headers`,
+  `headers()`, a variable named for headers), so `searchParams.get('host')` and `process.env['HOST']` pass. In the app's
+  proxy alone, `new URL(path, request.url)` handed straight to a `redirect` or `rewrite` passes too: Next relativizes a
+  same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`), so a route handler's would
+  send the visitor to the server's bind address (round 2). A name held in a variable gets past, as any alias does. Path
+  and search parameters stay allowed. Rejected: **a conformance check**, which would re-implement the same syntax match at
+  test time; the lint preset is where the other syntax fences are, and `sssb check-fences` probes it.
+- **Live proof is a cutover row, not this change's.** Both issues ask for it; no SSSB session deploys. The
+  `domains-and-certs` row now names the proof: forged headers through the distribution's domain, and what the server
+  and the helpers see.
+- **Every reader moved.** The showcase's invite and preset routes, and the kit's own Simulator host
+  (`simulatorApi`'s preset load, which arrived with `feat/simulator-host-snapshots` while this was in review and which
+  the rule flagged), build their links on `publicOrigin`. `clerk-proxy.ts` hands Clerk `request.url` unchanged: Clerk
+  derives its own URL from `x-forwarded-host` and `x-forwarded-proto` (`@clerk/backend` 3.29, `deriveUrlFromHeaders`).
+- **Accepted, not fixed.** A real-mode server off `SssbApp` with no `PUBLIC_ORIGIN` builds links on `request.url`'s
+  origin, the bind address, as before this change: Next names it `localhost` either way, so the helper cannot tell a
+  local `dev:real` from a host of the adopter's own, and SSSB deploys only through `SssbApp`. The adopting reference
+  tells such a host to set `PUBLIC_ORIGIN`. And in `next dev`, `X-Forwarded-Proto` still flips `request.url`'s scheme
+  (Next reads it), so a peer on the developer's network can make `publicOrigin` say `https://localhost:<port>`: one bit,
+  on a developer's machine.
+
+## The Simulator host serves Snapshots, presets and tours (2026-11-27, `feat/simulator-host-snapshots`)
+
+`safeinsights/sssb#127`: `simulatorApi` serves `reset`, `snapshots` (+ `restore`, `delete`), `flags`, `agreements`
+(+ `bump`) and `presets`, and `SimulatorHost` wires the Snapshots and Tours tabs, so a generated app's `pnpm dev` has
+them. Decisions the issue left open:
+
+- **`flags` carries the feature flags, in the panel's shape** (`{ flags: [{ flag, enabled }] }`), and `events` will
+  not (`safeinsights/sssb#128` asked which). The Snapshots tab owns the knobs, so its own GET answers them and opening
+  it fetches no Events payload. Rejected: **the showcase's split** (its `flags` GET answers a `{ name: boolean }`
+  record no client reads, and the tab takes its list from `events`), which ties the Snapshots tab to the Events tab's
+  route and would be the one path whose shape differs between the two.
+- **The Snapshots tab is fetched when it opens and after each of its own actions, never polled**, as the showcase's
+  glue does: the tab's own actions refetch it or reload the page, and a change made elsewhere (an agreement edited on an
+  app's page) shows the next time it opens. Rejected: **adding it to the open-tab poll**, which reads every tenant's
+  agreements every four seconds (`EXPANDED_POLL_MS`) for a list that rarely moves while the tab is open.
+- **A snapshot's name is judged by the snapshot store, not the route**: a missing or non-string name is a 400, and a
+  name outside the world-start pattern, or one that `reset` or a registered preset already means, is the store's 403,
+  as the showcase's routes answer. Rejected: **checking the pattern in the route first** (a 400), which would answer a
+  different status from the showcase's for the same request and leave two places that say what a name may be.
+- **A preset's links point at `request.url`**, as the showcase's route did (`applyDemoPreset`'s `baseUrl`). On
+  `pnpm dev` that is the server the browser called. If a public-origin helper lands (`safeinsights/sssb#131`), this
+  call is one of its readers.
+- **No `tours` or `presets` registration is needed for the tab to be right**: an app with none gets no Tours tab and
+  no presets section (both are the seam's off-switches already), and a reset is the one world start every host has.
+
+## Teams are writable inside their tenant, and an exempt table declares its writes (2026-11-27, `feat/org-write-rls`)
+
+`safeinsights/sssb#124`: `app_user` held `SELECT` only on `organizations`, so a route that created, renamed or deleted
+a team failed with `permission denied`, and the coverage check could only hold an exempt table to `SELECT`-only.
+
+- **The writes are tenant-scoped by row-level security; the read stays open.** Migration 0018 grants `INSERT`,
+  `UPDATE` and `DELETE` (as column grants, next item), enables RLS on `organizations`, and adds one policy per command: `SELECT` is `USING (true)`
+  (callers are resolved before a tenant context exists, and a request joins another team of its own tenant), and each
+  write compares `tenant_id` with `app.current_tenant`, in `WITH CHECK` for `INSERT` and `UPDATE` and in `USING` for
+  `UPDATE` and `DELETE`. Rejected: **the issue's proposal, the grant with no row-level security**, leaving who may write
+  to `authorize(...)`. A team is not a hostile boundary, but the tenant is, and with no policy a request in one tenant
+  could rename or delete every other tenant's teams through the sanctioned `withTenant`, which is the cross-tenant
+  write the coverage check exists to refuse on every other table. With the policies, `authorize(...)` decides only
+  which person may write which team of their own tenant.
+- **Column grants: `INSERT (tenant_id, slug, name)`, `UPDATE (name)`, `DELETE`.** A request names a new team's
+  tenant, slug and name, and renames it by its name. The slug is how the auth provider and the inbound mail address
+  (`<org-slug>+<handler>@`) name a team, and the id is what every other table holds, so neither is a request's to set
+  or change. Rejected: **table-level `INSERT, UPDATE`**, which round-1 review showed let a request change a team's
+  slug or mint an id another tenant's deleted team once had.
+- **A new team's slug may not be one another tenant's team holds** (a `NOT EXISTS` in the INSERT policy). Inbound
+  mail resolves the slug across every tenant and refuses two matches, so without it one tenant could silence another
+  team's mail by taking its slug (round-1 Fable review). It is a policy, not a constraint: two tenants creating the
+  same new slug at once can both pass, a slug freed by a delete is free to any tenant, and the owner bypasses it.
+  Rejected here: **a global unique index on `slug`**, whose migration fails on any database already holding one slug
+  in two tenants; the real fix, resolving the tenant from the recipient, is `safeinsights/sssb#211`.
+- **ENABLE, not FORCE.** FORCE would hold the table's owner to the write policies too, and the owner seeds
+  teams with no tenant context (`packages/kit/src/db/seed.ts`). An app's routes do not write as the owner: `getDb()`
+  is banned in an app's `src` bar the exceptions it names, and `withTenant` switches to `app_user`. Rejected: **FORCE with
+  an owner-only policy**, which would need the owner's role name in a framework migration, which differs per
+  deployment. A dedicated non-owner app role (the cutover checklist's `db-role-not-superuser`) is held to the
+  policies, which is the safer side: its raw reads are unchanged (`USING (true)`), and it had no write before.
+- **`TRUNCATE` is not granted, and cannot be declared**: it ignores row-level security, so it would empty every
+  tenant's teams.
+- **The coverage check: an exempt entry declares `writes`, and a declared write is proved, not trusted.**
+  `RLS_EXEMPT` entries became `{ reason, writes? }`, `writes` drawn from `INSERT`, `UPDATE`, `DELETE`. A table with no
+  declaration is still held to `SELECT`-only; a declared write must be held (else a stale declaration), on a table with
+  RLS enabled, admitted by some permissive policy, and every permissive policy admitting it (its command's or `ALL`)
+  must read the tenant setting in each expression that command evaluates (an absent one admits every row). The
+  pinned list carries the declared writes (`public.organizations (DELETE, INSERT, UPDATE)`), so a new declaration is
+  a two-file edit with `SECURITY.md`, as a new exemption already was. Rejected: **a declaration that only silences the
+  `SELECT`-only failure**, which would let a later `FOR ALL USING (true)` policy, or a disabled RLS, open every
+  tenant's teams with the gate green. A declared write also fails when `app_user` holds the owner's privileges (a
+  member of the owning role), which skip every policy that is not forced (round-1 review). The policy text is read as
+  the tenant tables' is (it mentions the setting), with the same limit: a policy that mentions it and filters nothing
+  passes; the behavioural proofs are what show 0018 isolates, and `safeinsights/sssb#212` would read the predicate.
+- **The composite uniqueness constraint is taken**: `organizations_tenant_id_id_unique` over `(tenant_id, id)`, so an
+  app table can declare `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)` and Postgres refuses
+  a row whose team is another tenant's. It costs one index on a small table and rejects nothing the primary key
+  accepts. SSSB's own tables keep their plain `org_id` references, so another tenant can still hold a team's id and
+  block its deletion; moving them is `safeinsights/sssb#213`.
+- **A `DELETE` succeeds only for a team nothing references**: every framework table that names an org holds a plain
+  foreign key with no cascade, and the audit trail is append-only, so a request cannot delete a team with history.
+  That is the intended posture, not a gap: an app that retires teams records that in a table of its own.
+
+## The upload target's PUT form (2026-11-27, `feat/storage-put-upload`, `safeinsights/sssb#134`)
+
+`UploadTarget` becomes `PostUploadTarget | PutUploadTarget`, `STORAGE_UPLOAD_TARGET` gains `put`, and the showcase
+takes a PUT end to end (mint, browser, the fake's endpoint, confirm). What was decided, and what was rejected:
+
+- **A union with `method` optional on the POST form.** A POST target keeps its shape exactly (`{ url, fields }`, and the
+  real adapter now also says `method: 'POST'`), so a browser written to it, an app's own storage adapter and a target
+  stored as JSON keep working; `method: 'PUT'` is the discriminant and a PUT has `headers`, not `fields`. The cost is
+  a compile break for server code that reads `.fields`: filed as Action `required` (a `minor`) in the changeset.
+  Rejected: **a second method** (`createPutTarget`), which makes the caller guess the store's form, when the
+  deployment's setting is what knows it; and **`fields` kept on the PUT form** (empty), which a browser that ignores
+  `method` would then POST without error.
+- **The size is signed into the URL, and the app's `head` check is the backstop.** The issue's two candidates: signing
+  the exact `Content-Length`, or staging under another key, `head` and `copy`. R2 could not be measured (no live store,
+  and nothing in CI calls one), so the choice does not rest on R2 honouring a signed length. What was verified is the
+  SDK's side, locally: the presigner signs `content-length;content-type;host` once told to (`signableHeaders`; by default
+  it signs `content-length;host` and not the content type), and it must not carry the checksum the SDK's default settings add (`x-amz-checksum-crc32=AAAAAA==`, the
+  checksum of an empty body, which no real upload matches). So `UploadConstraints.sizeBytes` is the client's exact size,
+  the port says plainly that a PUT's ceiling is held by the store only where it honours a signed length, and the
+  showcase's confirm route reads `head` and deletes an object over the ceiling (it read the whole object with `get`
+  before). Rejected: **staging plus `copy` as the port's mechanism**, which moves a two-step flow into every app whether
+  or not its store honours a signed length, and stores the bytes first; it remains the app's answer on a store that
+  ignores the length, and the cutover row asks which R2 is.
+- **`sizeBytes` is optional on the type, refused by a PUT mint when absent.** Optional so a POST store's callers and an
+  app's own adapter compile unchanged; an adapter that mints a PUT throws a plain `Error` naming it, never mints a URL
+  that signs no length. The showcase's mint route now requires `sizeBytes` (400 `invalid-size`), since its client
+  always sent it.
+- **The setting picks the form, and the default client changes for `put` only.** `createS3Storage({ uploadTarget: 'put' })`
+  defaults `requestChecksumCalculation` to `WHEN_REQUIRED` on a client it builds; a client the caller built is used as
+  it is, and a signed URL that carries a checksum makes `createUploadTarget` throw, naming the setting, instead of
+  minting a URL every upload would fail on. Rejected: **a presign-only client cloned from the given one's config**
+  (the SDK's resolved config does not survive being passed to a new client: it failed in a probe), and **stripping the
+  checksum with a middleware** (the presigner added it after, in a probe).
+- **The fake serves both forms, chosen by `createFakeStorage({ uploadTarget })`.** `fakeStorage` stays POST, so no app's
+  simulated mode changes; the PUT form is signed in the URL's query, with a `PUT` marker and the size in the signed
+  string so a POST signature never verifies as a PUT or back. The showcase's `/api/storage-upload` gained a `PUT` that
+  answers as S3 would, approximately: 403 for a changed key, size, type or signature, 411 with no length, 400 for a
+  body that is not as long as it declared. Not done: **a Simulator switch to run the showcase on the PUT form**; the
+  browser's PUT branch is unit-tested (`send-to-upload-target.test.ts`) but no e2e runs it.
+- **The `head` check is a moment, not a seal (round-1 review).** On a store that ignores a signed length, a second PUT to
+  the same URL inside its 15 minutes can replace the object after confirm. The showcase does not close that (it would
+  stage under another key and `copy` with `ifMatch` at confirm, so the URL never addresses the live object); the port's
+  comment says so and names the staging answer, and it is filed as an issue to do once R2's behaviour is measured.
+  Confirm of a row that is already `ready` now returns idempotently before reading storage, because it would otherwise
+  reach the delete and remove a good object (a later, lower ceiling does the same).
+
+## The webhook secret's variable, and a Standard Webhooks verifier (2026-11-27, `feat/webhook-verifier`)
+
+Issues `safeinsights/sssb#121` and `safeinsights/sssb#122`, built as one change: both come from the same migrated
+future task (service-auth flexibility), touch the same module family, the same lint exemption list and the same
+adopter-reference section. Rejected: **two PRs**, which would have raced each other on those files for no review gain.
+
+- **`withWebhookSecret(handler, { secretEnv })`, a name, not a value.** An app may not read `process.env` outside
+  `adapters/real/` (the guide), so a value would have to come from somewhere the app cannot reach; the name is what the
+  issue asked for. It defaults to `WEBHOOK_SECRET`, which stays in `REQUIRED_ENV` and the required-environment snapshot
+  (the cron route and the jobs webhook use it), so the snapshot is unchanged and the changeset is a `patch`. A custom
+  name is not added to `assertRealEnv`: the framework cannot see which names an app's routes pass, so the adopter
+  reference says it is the app's own cutover row. **The name is checked** (`[A-Z_][A-Z0-9_]*`, never `NEXT_PUBLIC_*`,
+  which Next inlines into the browser bundle) when the wrapper is built, so a typo fails as the route module loads, not
+  as a 401 in production. Rejected: **accepting any string**, which turns `'partner-secret'` into a route that refuses
+  everything with no error.
+- **The Standard Webhooks verifier ships in the kit.** It is not vendor code: Standard Webhooks is an open
+  specification, verified with `node:crypto` and no SDK, so the vendor-code tests in `docs/development-approach.md` do
+  not govern it. It is a member of a class SSSB already teaches (the verified machine caller), and the default auth
+  vendor's own webhooks are Svix-signed (`@clerk/backend` 3.29's `webhooks` module verifies `svix-id`,
+  `svix-timestamp` and `svix-signature`), so the first product that syncs users from Clerk needs it. Rejected: **a recipe**, which every such app would hand-roll, and hand-rolled HMAC checks are where the
+  constant-time compare and the replay window get dropped.
+- **`node:crypto`, not the pure-TS HMAC in `@sssb/kit/core/webhook-hmac`.** That one exists for the static demo, which
+  never receives a webhook, and keys the HMAC with a string's UTF-8 bytes, while a Standard Webhooks key is the
+  base64-decoded bytes of the `whsec_` secret. The verifier is server-only, as `webhook.ts` already is.
+- **The replay store keys on the sender, the id AND the timestamp.** A replay is the same signed message sent again,
+  and that carries the same timestamp. A sender's retry is re-signed with a new timestamp (its schedule runs for hours,
+  past any window), so it passes and reaches the handler, which the adopter reference tells to dedupe by `webhook.id`,
+  the idempotency key the specification names. Rejected: **keying on the id alone**, which answers a legitimate retry
+  401 (after a 2xx that the sender never saw, say) and leaves the sender retrying until it disables the endpoint. The
+  sender (the sorted `secretEnv` names) is in the key so that two senders' ids never collide, and one sender cannot
+  claim keys another will use (round-2 review). A claim lasts until the signature stops verifying
+  (`max(now, timestamp) + tolerance`, as Mailgun's guard) plus a minute, because a shared store judges expiry by its
+  own clock, after its own latency (round-2 review). The freshness check and the in-process claim use one clock reading
+  taken after the body has arrived, and the headers are judged before the body is read (round-1 review: a body sent
+  slowly let a replay past a claim pruned by a later clock). A claim is released when the handler throws or answers
+  5xx, so the sender's resend of that message is processed; the cost is that a captured copy of a failing message can
+  run the handler again inside the window, which handler idempotency covers.
+- **The default store is per process; a shared one is a follow-up.** `SssbApp` runs the server on Lambda, where every
+  concurrent execution environment has its own memory, so in a deployment the default guard holds per environment and
+  handler idempotency is the defence across them. `replayStore` (two functions) lets an app pass a shared store, and
+  `safeinsights/sssb#205` is the kit shipping one over a framework table, for Mailgun's guard too. Rejected: **only
+  documenting the limit**, as Mailgun's guard does, when an interface of two functions lets an app close it now; and
+  **building the table here**, a framework migration with its own RLS and contract-suite proofs, outside these issues.
+- **`secretEnv` has no default here.** Each sender has its own secret, and two routes falling back to one default name
+  would silently share it. It takes one name or several, and each value may hold several whitespace-separated
+  secrets, so a rotation is "add the new one beside the old". A secret that is not base64 (after an optional `whsec_`)
+  matches nothing, and neither does a key under 16 bytes (round-1 review: `changeme` is valid base64 for a six-byte
+  key). The specification recommends 24 to 64 bytes; 16 is the floor below which a value is guessable, and every
+  sender following the specification is above it. Rejected: **no minimum**, the first cut. `toleranceMs` must be
+  positive and finite, checked when the wrapper is built (round 1: `NaN` turned the freshness check off).
+- **Svix's `svix-*` headers are read when no `webhook-*` header is present**, as Svix's own libraries do. One header of
+  a family selects it, so the two are never mixed.
+- **An id may contain a dot.** `{id}.{timestamp}.{body}` lets digits move across a dot, and the same signature then
+  covers another (id, timestamp, body). The moved timestamp must be fresh, so it takes a body that begins with a current
+  Unix time and a dot (which a Standard Webhooks payload, a JSON object, never does) or an id that ends with a dot and a
+  current Unix time (and the re-parsed body is then not JSON). Rejected: **refusing dotted ids**, which the
+  specification allows and which would lock out such a sender with no workaround, for a forgery that needs a sender's
+  ids to end in a timestamp and yields a body no JSON handler accepts.
+- **The wrapper is the kit's, as `withWebhookSecret` is**, not app-side as the showcase's Mailgun wrapper is, and the
+  `webhooks/` exemption names it beside the other two (`packages/kit/test-fixture/api/webhooks/wharf-signals/route.ts`
+  demonstrates the gate).
+
+## The Simulator host serves Events, Messages, inbound mail, Hooks and Errors (2026-11-27, `feat/simulator-host-subsystem-tabs`)
+
+`safeinsights/sssb#128`: `simulatorApi` serves `events`, `audit`, `messages`, `inbound`, `inbound/compose`, `webhooks`,
+`webhooks/fail`, `webhooks/run-due` and `error-scenario`, and `SimulatorHost` wires the tabs, so a generated app's
+`pnpm dev` has every framework tab but the ones `safeinsights/sssb#152` owns (an app's own tabs, the dev ticker).
+Decisions the issue left open:
+
+- **`events` carries no feature flags**; the Snapshots tab reads them from `flags`, as the stage before this decided.
+  Rejected: **the reference app's payload**, `{ events, flags }`, which made the Snapshots tab fetch the Events tab's
+  route; its glue moves onto the host with `safeinsights/sssb#129`.
+- **`inbound/compose` takes mail in through `intakeInboundEmail`**, the function the real inbound webhook calls (the
+  reference app's `api/webhooks/email` route), addressed with `formatInboundRecipient` on the demo domain. So it
+  reaches the app's handlers through `@sssb/kit/inbound-email/handlers` and no other way, and a handler the app does
+  not register is intake's to judge (kept as `unmatched`), never an error of the route's. Rejected: **calling the
+  handler from the registry directly**, a second way in that would skip intake's filing, status and fault isolation.
+- **The Mail tab shows inbound mail only when the app registers an inbound handler.** An empty registration is the
+  off switch for a capability; with no handler, nothing the form sends can reach the app. Rejected: **always showing
+  the compose form**, whose every message a starter would file as `unmatched` under a handler name it never had (the
+  form's default, `note`, is no app's: the reference app registers `support` and `feedback`).
+- **A failed Errors scenario leaves the tab as it was**: `ErrorsApp` now catches the promise it is handed. The
+  reference app's glue rejects it too when its server has stopped, and nothing caught that either.
+
+## The showcase runs on the kit's Simulator host (2026-11-27, `feat/simulator-host-showcase`)
+
+`safeinsights/sssb#129`: the showcase mounts `api/simulator/[...path]/route.ts` and renders SSSB's `SimulatorHost` from
+its locale layout, and its 873-line `simulator-glue.tsx`, 17 of its 21 `api/simulator/` route directories and two
+helper modules are gone. The issue asked for this once `safeinsights/sssb#127`, `#128` and `#152` served every path the
+glue called; `#152` (the dev ticker and an app's own tabs) is undecided and unowned, so this lands without it, by the
+manager's call, and leaves `#152`'s question open:
+
+- **What stays the showcase's**: the server half of the dev ticker (`api/simulator/ticker`, whose policy builds on
+  `@sssb/tools`, which the kit may not import), the routes the Actors tab's drivers call (`actors/*`,
+  `service-token`, `webhook-secret`), the actor pages, and a short glue that hands the host the Actors tab and keeps the
+  panel out of the actor frames. Next routes each static segment before the catch-all, so those route files win.
+- **The ticker's client control moved into the host**, shown only where the app's own `ticker` route answers (the
+  catch-all answers 404 there, and the host then stops asking, as the glue did). That moves no policy: the server half
+  is still the app's, so `#152`'s three options for it stand. Rejected: **keeping the control in the showcase's glue**,
+  which would have to own the Jobs tab, and with it the whole panel again.
+- **`SimulatorHost` takes `extraTabs`** (the panel's own `SimulatorExtraTab[]`), and an app's tab content reads the
+  world's jobs with `useSimulatorWorld()`, from the same subpath. Both are provisional public surface until `#152`
+  decides how an app's tabs reach the host, and say so where they are declared. They are named exports of subpaths
+  already published (`@sssb/kit/components/simulator/simulator-host` and `.../simulator-panel`), so the `exports` map
+  does not change. Rejected: **a render-function prop** handed the host's state, which cannot call hooks (the Actors tab
+  needs translations), and **a hook passed as a prop**, which breaks the rules of hooks the React Compiler checks.
+- **The mail-link check moved into the kit** (`packages/kit/src/components/simulator/mail-link.ts`, not published), with
+  its tests, and the host's link handler uses it; the showcase's copy and its `server-redirect` helper (`sameOriginPath`
+  on a body's `redirectTo`, which the host does inline) are deleted.
+- **The route tests that only asserted the real-mode 404** are covered by the kit host's dispatch tests; the ones with
+  more (jobs held, run-pending, mail seen for a person and an invite, the viewpoint's remembered path) have kit
+  equivalents in `packages/kit/src/server-lib/simulator-api.test.ts`.
+- **jscpd, re-measured as the issue asked** (2026-11-27, `pnpm jscpd` with the repository's `.jscpd.json`): 41 clones,
+  654 duplicated lines (1.40%) on this branch, against 50 clones and 758 lines (1.57%) on `int-platform` before it.
+  Nine fewer clones in all, which counts the showcase-and-starter pairs `safeinsights/sssb#114` tracks among them.
+
+## Main (0.9.1) into int-fixes: where the job retries' Simulator call went (2026-11-28, `merge/main-into-int-fixes`)
+
+Main moved the Simulator's clock and run-due routes out of the showcase into the kit's host (`simulator-api.ts`, served by
+each app's `api/simulator/[...path]` route, safeinsights/sssb#129) while int-fixes added due job retries to those routes
+(safeinsights/sssb#135; the entry above, "Job retries with backoff, a new row per attempt", names them). The merge takes the deletion: both
+routes are gone, and the host's `runDueAtWorldNow`, which its `clock` and `schedules/run-due` handlers share, runs due
+schedules, then due retries, then due deliveries, as the two routes did. `simulator-api.test.ts` proves it through the
+host: run-due alone leaves a retry that is not yet due, and moving the clock past its backoff starts it (red with the call
+taken out). The static twin's clock runs its own retry drain, which main did not touch.
+
+The other conflicts: the migrations registry and the family fence list main's `0018_organizations_write` (unchanged)
+with int-fixes' 0019 to 0021; the attachment confirm route authorizes before its lookup (int-fixes, safeinsights/sssb#137)
+and then takes main's pending check, `head` and size ceiling; the export count is 148 (145 at the merge base, one added
+by int-fixes, two by main), and the internal-module count 99, as `public-surface.test.ts` computes it.
+
+**A database that ran int-fixes' 0019 to 0021 before 0018 cannot take 0018.** The migrator runs the two sequences
+(framework, app) unordered against each other, but in order within each (`packages/kit/src/db/migrate.ts`, "migrations
+out of order within their sequence"), so 0018 after 0019 is refused, loudly, at the first query. Every released database
+is fine: 0.9.1's has 0018 and takes 0019 to 0021 after it, and an older one takes all four in order. What is refused is a
+world, local or deployed, built from int-fixes before this merge: this checkout's own e2e world failed exactly so until
+it was wiped (CLAUDE.md's rule after a migration change). Nothing in the code changes: 0019 to 0021 already come after 0018, which is right for every released database.
+Such a world is wiped; whether a deployment runs int-fixes, and so must be kept, is for its owner to say.

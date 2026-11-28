@@ -3,8 +3,9 @@ import type { SimulatorRouteContext } from '@sssb/kit/server-lib/simulator-api'
 
 /**
  * The Simulator panel's server side on this app's own `pnpm dev`: every `/api/simulator/<path>` call the panel makes
- * lands here and is answered by SSSB's `simulatorApi` (People, Mail, and Jobs with the world clock). A route file of
- * this app's own beside it, `api/simulator/<name>/route.ts`, still wins for its path.
+ * lands here and is answered by SSSB's `simulatorApi` (every framework tab: People, Mail, Messages, Events, Jobs with
+ * the world clock, Hooks, Errors, Snapshots, and Tours once the app registers one). A route file of this app's own beside it,
+ * `api/simulator/<name>/route.ts`, still wins for its path.
  *
  * Each handler opens with the simulated-mode 404 and loads SSSB's handler only after it, so a real build never loads
  * it. That first line is also the gate the authorization scan checks: these handlers are

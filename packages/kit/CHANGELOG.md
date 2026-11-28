@@ -1,5 +1,294 @@
 # @sssb/kit
 
+## 0.9.1
+
+### Patch Changes
+
+- f50b8d9: ### 0.9.1 is 0.9.0's release
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** Nothing an adopter runs. v0.9.0's release commit failed one of SSSB's own tests, a test that named
+    0.9.0 as "some other version", so its tag was never published. 0.9.1 publishes the same changes, and the test now
+    derives that other version from the generator's own.
+
+    **To adopt.** Nothing beyond 0.9.0's notes (`docs/releases/v0.9.0.md`), which list every change in this release.
+
+    **Now deletable.** Nothing.
+
+## 0.9.0
+
+### Minor Changes
+
+- 7fdb607: ### `publicOrigin` and `clientAddress`, and a lint rule against reading the raw request
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** A new subpath, `@sssb/kit/adapters/edge-headers`, gives an app the visitor's origin
+    (`publicOrigin(request)`) and address (`clientAddress(request)`). Behind `SssbApp`, `request.url` and `nextUrl` name the
+    server's own bind address and port (3000), never the visitor's host, and the first `X-Forwarded-For` entry is whatever the visitor
+    wrote. A new rule in the app preset, `sssb/no-raw-request-origin`, fails a module under `src/` (tests aside) that:
+
+    - reads a forwarded header by name from a request's headers (`request.headers.get('x-forwarded-for')`, `X-Real-IP`,
+      `CF-Connecting-IP`, `Forwarded`, `Host`, the other `X-Forwarded-*`);
+    - takes the `origin`, `host`, `hostname` or `href` of `new URL(request.url)` or of `request.nextUrl`, by member or
+      destructuring;
+    - builds `new URL(path, request.url)` (or on `request.nextUrl`), a redirect included, except in the app's own
+      `src/proxy.ts` (or `src/middleware.ts`), where Next relativizes a same-origin redirect or rewrite and nowhere else: a
+      route handler's `NextResponse.redirect(new URL('/en/dashboard', request.url))` sends the visitor to the server's bind
+      address;
+    - passes `baseUrl: request.url`.
+
+    "The request" is an object named `req`, `request` or `nextRequest` (with or without a leading `_`), or a `.req` or
+    `.request` member (`ctx.request`): the `url` of a webhook, a row or a form field is someone else's, and reading its
+    origin is correct code. The rule reads names, not types, so a request held under another name gets past it, as does
+    the request's URL stored in a variable and used later, or a `request.nextUrl.clone()` handed to a redirect
+    (safeinsights/sssb#242).
+
+    **To adopt.** Run `pnpm lint` after upgrading. For each finding:
+
+    ```ts
+    import { clientAddress, publicOrigin } from '@sssb/kit/adapters/edge-headers'
+
+    // A link a visitor follows: an email, a URL you store.
+    const link = new URL(`/${locale}/accept-invite`, publicOrigin(request)).toString()
+
+    // A rate limit, a lockout, an audit record's "from". undefined means unknown: never a free pass.
+    const from = clientAddress(request)
+    ```
+
+    A redirect needs neither: `redirect('/path')` (from `next/navigation`) and a relative `Location` are right as they are; in
+    a route handler, write `NextResponse.redirect(new URL('/en/dashboard', publicOrigin(request)))`. Reading `pathname` or
+    `searchParams` from the request's URL is still allowed. Outside a request (a job), `publicOrigin()` needs the server's
+    `PUBLIC_ORIGIN` (the operator entry of this release). In `pnpm dev`, `publicOrigin` is the dev server's own origin and
+    `clientAddress` is `undefined`.
+
+    **Now deletable.** A helper that builds the app's origin from `x-forwarded-host` and `x-forwarded-proto`, or from
+    `request.url`; one that takes the client's address from `X-Forwarded-For`, `X-Real-IP` or `CF-Connecting-IP`; and a
+    `baseUrl: request.url` passed to `sendOrgInvite` or `applyDemoPreset` (pass `publicOrigin(request)`).
+
+- 266f4dd: ### A request can create, rename and delete teams in its own tenant
+
+    **Kind.** migration
+
+    **Action.** optional
+
+    **What changed.** Framework migration `0018_organizations_write` grants `app_user` `INSERT` (of a team's tenant, slug
+    and name), `UPDATE` (of its name) and `DELETE` on `organizations`, behind row-level security that confines each write
+    to the request's tenant: reads stay open across tenants, as before, a new team may not take a slug another tenant's
+    team holds, and `TRUNCATE` is not granted. It also adds a
+    unique constraint over `(tenant_id, id)`, so an app table can pin its team to its own tenant with a composite foreign
+    key. Before this, a route that wrote a team inside `withTenant` failed with `permission denied`.
+
+    **To adopt.** Nothing to do for the migration: it runs with the others. A route that creates, renames or deletes a
+    team writes it inside `db.withTenant(tenantId, ...)`, after `authorize(...)` on its own subject. A team's slug and id
+    are not a request's to change: the slug names the team to the auth provider and in its inbound mail address. To keep a table's team
+    in its own tenant, declare `FOREIGN KEY (tenant_id, org_id) REFERENCES organizations (tenant_id, id)` in a new
+    migration of yours. If a database role other than the table owner writes `organizations` outside `withTenant` (a sync
+    through a raw handle on a separate application role you granted writes yourself), that write is now held to the tenant
+    policies: run it inside `withTenant` for the team's tenant, or as the owner.
+
+    **Now deletable.** A raw-client exception (an entry in `lint-exceptions.mjs`) that exists only so a route can write
+    `organizations` as the table owner.
+
+- 7fdb607: ### `PUBLIC_ORIGIN`, and the visitor's address from `SssbApp`'s edge
+
+    **Kind.** operator
+
+    **Action.** required
+
+    **What changed.** `SssbApp`'s viewer-request CloudFront Function now also writes `x-sssb-viewer-address`, the address
+    CloudFront took from the visitor's connection, over any a visitor sent, and the construct sets `SSSB_EDGE=cloudfront` on
+    the server, which tells `@sssb/kit`'s `publicOrigin` and `clientAddress` to believe that header and `x-forwarded-host`.
+    Without `SSSB_EDGE` (in `pnpm dev`, or on a host of your own) neither reads a forwarded header, and the server refuses
+    `SSSB_EDGE` off Lambda. A new optional server setting, `PUBLIC_ORIGIN`, is the origin `publicOrigin` returns wherever
+    it is set, in a request and outside one. A malformed `PUBLIC_ORIGIN`, or an `SSSB_EDGE` other than `cloudfront` or off
+    Lambda, fails `sssb check-real-env` and the server's boot, naming cutover row `domains-and-certs`. `cdk synth` now
+    fails a behavior that reaches the server without `sssbApp.forwardedHost` on `viewer-request`, on any distribution in
+    the construct's stack, an origin group's included.
+
+    **To adopt.** Redeploy with this `@sssb/cdk`. Once the deployment has a custom domain, set the server's `PUBLIC_ORIGIN`
+    to its origin, a bare origin with no trailing slash (`PUBLIC_ORIGIN=https://app.example.org`), so every link names it
+    rather than the host a visitor came in on; set it too wherever a job, or the cron route the scheduled tick calls, builds
+    a link. If synth now fails naming a behavior, give that behavior the function:
+    `functionAssociations: [{ function: sssbApp.forwardedHost, eventType: FunctionEventType.VIEWER_REQUEST }]`. Without it,
+    a visitor writes the host and address the server believes. Never set `SSSB_EDGE` yourself.
+
+- 394e053: ### `STORAGE_UPLOAD_TARGET=put` for a store that takes a presigned PUT
+
+    **Kind.** operator
+
+    **Action.** optional
+
+    **What changed.** `STORAGE_UPLOAD_TARGET` (read with `STORAGE_PROVIDER=s3-compatible`) accepts `put` beside `post` and
+    `none`: `createUploadTarget` then mints a presigned PUT, which Cloudflare R2 accepts and a presigned POST it does not.
+    It is not a new required variable, so the required-environment snapshot is unchanged. `createS3Storage` takes the same
+    choice as `uploadTarget: 'put'`; the client it builds then defaults `requestChecksumCalculation` to `WHEN_REQUIRED`,
+    and a client you pass in must already be set so (the SDK's default signs the checksum of an empty body into the URL,
+    and `createUploadTarget` throws, naming the setting, when it sees one).
+
+    **To adopt.** On R2, set `STORAGE_UPLOAD_TARGET=put`, pass `sizeBytes` when you mint (see the `UploadTarget` change),
+    and give the bucket a CORS rule that lets your app's origin `PUT` with the `Content-Type` header. Check on a real
+    bucket that an upload lands at the key, that a body of another length or type is refused, and whether R2 holds the
+    signed length or your `head` check does; cutover row `storage-compatible-store` says how.
+
+    **Now deletable.** A route that receives the file and calls `put` only because the store had no presigned POST.
+
+- 394e053: ### `UploadTarget` has a PUT form, for stores without presigned POST
+
+    **Kind.** seam
+
+    **Action.** required
+
+    **What changed.** `StoragePort.createUploadTarget` returns an `UploadTarget` that is now one of two shapes: a
+    `PostUploadTarget` (`{ url, fields }`, with an optional `method: 'POST'`, unchanged for a store that has presigned
+    POST) or a `PutUploadTarget` (`{ method: 'PUT', url, headers }`: the browser PUTs the file as the body). Code that
+    reads `target.fields` no longer typechecks until it narrows. An app that stays on `s3` or a POST store gets the same
+    value at run time, plus `method: 'POST'` (a test that compares the whole target must expect it). `UploadConstraints` gains an optional `sizeBytes`, the exact size of the file the browser
+    will send. A PUT has no size policy, so its URL signs that size, and an adapter minting a PUT refuses a call without
+    it. `createFakeStorage({ uploadTarget: 'put' })` (`@sssb/kit/adapters/fake/storage`) is the fake's PUT form, and its
+    `/api/storage-upload` twin in the showcase serves it.
+
+    **To adopt.** Where your server passes `createUploadTarget`'s result through as JSON, change nothing but its type
+    (`UploadTarget`). Where it reads `.fields`, narrow first: `if (target.method === 'PUT') { … }` (a target whose
+    `method` is absent is a POST). In the browser, switch the same way: a POST appends `fields` and then the file to a
+    `FormData`; a PUT is `fetch(target.url, { method: 'PUT', headers: target.headers, body: file })`. If your mint route
+    has the client's file size, pass it as `sizeBytes` beside `maxBytes` (and refuse one over `maxBytes` first); a POST
+    store ignores it. A route that must hold the ceiling on a PUT store should `head` the object when the upload is
+    confirmed and `delete` one over `maxBytes`: the store holds a signed length only if it honours one. Your own storage
+    adapter (`@sssb/kit/ports/storage`) may keep returning the POST shape as it is.
+
+### Patch Changes
+
+- 2046326: ### The Simulator host takes an app's own tabs, and shows the dev ticker where the app serves it
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** `SimulatorHost` (`@sssb/kit/components/simulator/simulator-host`) takes `extraTabs`, the panel's own
+    `SimulatorExtraTab[]`, and exports `useSimulatorWorld()`, which an app's tab content calls to read the world's jobs
+    (polled while that tab is open). Both are provisional until safeinsights/sssb#152 decides how an app's tabs reach the
+    host, and may change shape then. The Jobs tab's dev ticker control now shows on the host wherever the app's own
+    `src/app/api/simulator/ticker/route.ts` answers; where it answers 404, as SSSB's catch-all does, there is no ticker,
+    as before.
+
+    **To adopt.** Nothing, unless your app registers its own Simulator tab (`@sssb/app-config/simulator` `tabs`) and kept
+    a glue of its own to show it: you can now pass the tab to `SimulatorHost` as `extraTabs` from your locale layout
+    instead, as SSSB's reference app does (in SSSB's repository at this release:
+    `apps/showcase/src/app/[locale]/simulator-glue.tsx`).
+
+    **Now deletable.** A Simulator glue that re-implements the panel's fetching, polling and notices only to add an app's
+    own tab or the dev ticker control, with every `api/simulator/<path>/route.ts` it called that SSSB's catch-all now
+    serves; keep the routes your own tab's pages call and the ticker route.
+
+- 27d0a99: ### Corrections from the release review
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** SSSB's plugin commands `/sssb:new-actor` and `/sssb:a11y-review` now describe the `pnpm dev`
+    Simulator panel as this release builds it: `SimulatorHost` takes an app's own tabs (`extraTabs`), and a generated
+    app's panel has every framework tab but Actors, and Tours until the app registers one. The starter's Simulator route
+    comment names Tours. A comment in `@sssb/cdk`'s viewer-request function no longer says `clientAddress` reads
+    `X-Forwarded-For`. Two client races in the Simulator host that this release added, never released, are fixed: a poll
+    of the dev ticker no longer overwrites a start or stop, and the Snapshots tab's refreshes no longer land out of order.
+
+- 07e44c6: ### The Simulator's Snapshots tab, demo presets and tours on an app's own `pnpm dev`
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `simulatorApi` (`@sssb/kit/server-lib/simulator-api`) now also serves the world's knobs: `reset`,
+    `snapshots` (GET a list, POST `{ name }` to save), `snapshots/restore` and `snapshots/delete` (`{ name }`), `flags`
+    (GET every known flag, POST `{ flag, enabled }`), `agreements` and `agreements/bump` (`{ agreementId }`), and `presets`
+    (`{ name, locale }`, answering `{ redirectTo }`). Each keeps the host's rules: simulated mode only (404 in a real
+    build), JSON-only POSTs (415 otherwise), no role gate. `SimulatorHost` wires them into a Snapshots tab (reset, save,
+    restore and delete snapshots, flip a feature flag, bump an agreement, load a demo preset) and, when the app registers
+    any tours, a Tours tab, whose tours start their world through the same reset, preset and restore calls. A reset, a
+    restore or a preset load reloads the page and says what it did in the panel; a flag reloads it too. An app that mounts
+    the catch-all route and `SimulatorHost` gets all of it with nothing to change.
+
+- f4d90ee: ### The Simulator's Events, Messages, inbound mail, Hooks and Errors tabs on an app's own `pnpm dev`
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** `simulatorApi` (`@sssb/kit/server-lib/simulator-api`) now also serves `events` and `audit` (the
+    Events tab, the audit trail beneath it), `messages` (every caught SMS), `inbound` and `inbound/compose` (inbound mail
+    beside the Mail tab, taken in through the same intake as the real inbound webhook), `webhooks`, `webhooks/fail` and
+    `webhooks/run-due` (the Hooks tab), and `error-scenario` (the Errors tab's server event, before and after scrubbing).
+    Each keeps the host's rules: simulated mode only (404 in a real build), JSON-only POSTs (415 otherwise), no role gate.
+    `SimulatorHost` wires the tabs, so an app that mounts the catch-all route and `SimulatorHost` has every framework tab
+    but the Actors tab and the Jobs tab's dev ticker. The Mail tab's inbound section appears only when the app registers
+    an inbound handler. `events` answers `{ events }` alone; the flags are on `flags`.
+
+- bfe9fd6: ### A verifier for Standard Webhooks senders
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** A new subpath, `@sssb/kit/service-auth/standard-webhooks`, verifies a sender that signs Standard
+    Webhooks (the scheme Svix signs with): the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers, or Svix's
+    `svix-*` names, over the exact body. `withStandardWebhookSignature(handler, { secretEnv })` refuses a timestamp more
+    than five minutes from the server's clock either way, a signature that does not match one of the configured `whsec_…`
+    secrets (keys of at least 16 bytes) in constant time, and the same signed message a second time, with the same opaque 401 the other webhook
+    wrappers answer. Several secrets, in one variable or several, verify side by side for a rotation. The `webhooks/`
+    exemption of the authorization scan accepts a handler that is this call, as it accepts `withWebhookSecret(…)`. It adds
+    nothing to the required environment.
+
+    **To adopt.** Put the sender's secret in a server variable of your choosing and wrap the route under
+    `src/app/api/webhooks/`; the handler gets the verified message and should treat its id as the idempotency key, since a
+    sender's retry is re-signed and reaches it again:
+
+    ```ts
+    import { withStandardWebhookSignature } from '@sssb/kit/service-auth/standard-webhooks'
+
+    export const POST = withStandardWebhookSignature(
+        async ({ webhook }) => {
+            // webhook.id, webhook.timestamp, webhook.body (the raw text)
+            return Response.json({ ok: true })
+        },
+        { secretEnv: 'PARTNER_WEBHOOK_SECRET' },
+    )
+    ```
+
+    Make the handler idempotent on `webhook.id` even so: the guard against a replayed message is in memory, and a deployment
+    runs on Lambda, where each concurrent execution environment keeps its own. Pass `replayStore` (`claim` and `release`
+    over a shared table) to make the guard hold across them.
+
+    **Now deletable.** A hand-rolled Standard Webhooks or Svix signature check (an HMAC over `id.timestamp.body`), and the
+    `svix` package where it was only used to verify.
+
+- bfe9fd6: ### A webhook route can read its shared secret from a variable of its own
+
+    **Kind.** seam
+
+    **Action.** optional
+
+    **What changed.** `withWebhookSecret` and `verifyWebhookCaller` (`@sssb/kit/service-auth/webhook`) take an optional
+    `{ secretEnv }`, the environment variable real mode reads the shared secret from. It defaults to `WEBHOOK_SECRET`, so
+    every existing route behaves as before, and simulated mode still uses the per-checkout dev secret. A name that is not
+    a server-only variable (lower case, a dash, or `NEXT_PUBLIC_*`) throws a `TypeError`: from `withWebhookSecret` when
+    the route module loads, from `verifyWebhookCaller` on each call.
+
+    **To adopt.** For a sender whose secret is already deployed under another name, pass that name and set it on the
+    server; SSSB's real-environment checks know only `WEBHOOK_SECRET`, so add the variable to your own cutover checklist:
+
+    ```ts
+    export const POST = withWebhookSecret(handler, { secretEnv: 'PARTNER_HOOK_SECRET' })
+    ```
+
+    **Now deletable.** A copy of the constant-time shared-secret check kept only to read a differently named variable.
+
 ## 0.8.0
 
 ### Minor Changes

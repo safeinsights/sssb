@@ -95,6 +95,7 @@ describe('every API route handler is authorized', () => {
             'org/invite/route.ts',
             'service/jobs/route.ts',
             'webhooks/jobs/route.ts',
+            'webhooks/wharf-signals/route.ts',
             'simulator/reset/route.ts',
             'simulator/world/route.ts',
             'health/route.ts',

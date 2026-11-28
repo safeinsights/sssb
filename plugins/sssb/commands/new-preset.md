@@ -12,10 +12,10 @@ marketplace to (in SSSB's own repository, read its local showcase app instead).
 
 A demo preset is a named starting world: the seed plus a script of operations. Every host replays it its own way:
 the server through the same code the product runs (`@sssb/kit/server-lib/demo-presets`), the single-file `file://`
-demo through its in-memory twin (`@sssb/kit/demo-static/world`). A tour can start from it. In a generated app the
-only Snapshots tab is the static demo's, so a preset loads from **Simulator → Snapshots → Start from a preset** there
-(`pnpm build:demo-static`); the Simulator on `pnpm dev` has People, Mail and Jobs but no Snapshots tab (the reference
-app's own panel has one), and the server replay is exercised by the conformance suite instead (step 8). The contract and every operation kind's rules
+demo through its in-memory twin (`@sssb/kit/demo-static/world`). A tour can start from it. A preset loads from
+**Simulator → Snapshots → Start from a preset** on both: the Simulator on the app's own `pnpm dev` (SSSB's host, behind
+`src/app/api/simulator/[...path]/route.ts`) and the static demo's (`pnpm build:demo-static`); the conformance suite
+exercises the server replay too (step 8). The contract and every operation kind's rules
 are in `@sssb/kit/core/presets`; the reference app's presets are the worked examples
 (`https://github.com/safeinsights/sssb/tree/<ref>/apps/showcase/src/app-config/presets`).
 
@@ -138,9 +138,9 @@ are in `@sssb/kit/core/presets`; the reference app's presets are the worked exam
       filter that skips its other checks fails it by design.
     - Assert what the preset VISIBLY did in the static demo, in a load test beside the loop (load it from the
       Snapshots tab as the loop does, then check the screen), and run both with
-      `pnpm build:demo-static && pnpm e2e:demo-static`. A server-side e2e spec that loads a preset needs the server
-      Simulator's Snapshots tab, which a generated app's `pnpm dev` panel does not have; once the app has the
-      reference's server Simulator glue, model it on the reference's `presets:` test in
-      `https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/tests/e2e/destructive/simulator-snapshots.spec.ts`
-      (it resets the world, so it runs on its own; it leans on that app's spec helpers, which you would copy too).
+      `pnpm build:demo-static && pnpm e2e:demo-static`. A server-side e2e spec can load it from the Snapshots tab on
+      `pnpm dev` too: open the panel as `tests/e2e/simulator.spec.ts` does, click `preset-load-<id>`, and wait for
+      the page the preset lands on. The reference's `presets:` test is a worked example
+      (`https://github.com/safeinsights/sssb/blob/<ref>/apps/showcase/tests/e2e/destructive/simulator-snapshots.spec.ts`;
+      it resets the world, so it runs after the specs that share it, and it leans on that app's spec helpers).
     - Finish with `pnpm check:demo-size` and `pnpm verify`.

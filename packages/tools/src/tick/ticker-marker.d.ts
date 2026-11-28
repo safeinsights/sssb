@@ -19,6 +19,20 @@ export declare function liveTickerMarker(
 ): { pid: number; seconds: number; startedAt: string; startToken?: string | null } | null
 
 /**
+ * Removes the marker at `file` if it is still the stale one described (`pid` and `startedAt`), by moving it aside and
+ * judging the copy, so a marker another wrapper writes meanwhile is not removed with it (it is put back if the name is
+ * still free). Exported for its test;
+ * `hooks.afterClaim` runs between the move and the judgment.
+ *
+ * @internal
+ */
+export declare function clearStaleMarker(
+    file: string,
+    stale: { pid: number; startedAt: string },
+    hooks?: { afterClaim?: () => void },
+): void
+
+/**
  * A token for when the process at `pid` began, to compare for equality: the same for one process, another for a process
  * that took the pid later, and not moved by a wall clock that is stepped. null when it cannot be told.
  */

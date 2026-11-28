@@ -1,3 +1,5 @@
+import { originProblem as appOriginProblem } from '../origin-form'
+
 /**
  * The origins whose Clerk session tokens this deployment accepts: `CLERK_AUTHORIZED_PARTIES`, the app's own origins,
  * comma-separated (`https://app.example.org,https://preview.example.org`), handed to Clerk's middleware as
@@ -34,21 +36,8 @@ export function clerkAuthorizedParties(value: string | undefined): string[] | un
     return entries
 }
 
-/** The hosts a browser reaches on the machine itself, the only ones served over plain `http` in a real run. */
-const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
-
 function originProblem(entry: string): string | null {
     if (entry === '') return 'is empty (an empty list would turn the check off)'
     if (entry.includes('*')) return 'is a wildcard, which Clerk does not expand: list each origin'
-    let url: URL
-    try {
-        url = new URL(entry)
-    } catch {
-        return 'is not a URL'
-    }
-    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOOPBACK.has(url.hostname))) {
-        return 'is not https (http is for localhost, 127.0.0.1 and [::1] only)'
-    }
-    if (url.origin !== entry) return `is not a bare origin: write it as ${url.origin}`
-    return null
+    return appOriginProblem(entry)
 }

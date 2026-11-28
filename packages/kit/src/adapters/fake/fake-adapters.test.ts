@@ -3,6 +3,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { makeTestTmpDir } from '../../testing/tmp-dir'
 import { NotFoundError, PreconditionFailedError } from '../../ports/errors'
+import type { PostUploadTarget, UploadConstraints, UploadTarget } from '../../ports/storage'
 
 // Point all fake-adapter state at a throwaway dir BEFORE importing the adapters.
 const tmp = makeTestTmpDir('app-fakes-')
@@ -12,6 +13,12 @@ beforeAll(() => {
 afterAll(() => {
     delete process.env['APP_DATA_DIR']
 })
+
+/** Narrow a target to its POST form, failing the test if the fake minted a PUT. */
+function postTarget(target: UploadTarget): PostUploadTarget {
+    if (target.method === 'PUT') throw new Error('expected a POST upload target')
+    return target
+}
 
 describe('fake storage', () => {
     test('put/get round-trip preserves body and content type', async () => {
@@ -548,10 +555,13 @@ describe('fake storage', () => {
 
     test('createUploadTarget mints the local endpoint + signed fields that verify round-trip', async () => {
         const { fakeStorage, verifyUploadFields } = await import('./storage')
-        const target = await fakeStorage.createUploadTarget('uploads/t/u/report.csv', {
-            contentType: 'text/csv',
-            maxBytes: 1000,
-        })
+        const target = postTarget(
+            await fakeStorage.createUploadTarget('uploads/t/u/report.csv', {
+                contentType: 'text/csv',
+                maxBytes: 1000,
+            }),
+        )
+        expect(target.method).toBe('POST')
         expect(target.url).toBe('/api/storage-upload')
         expect(target.fields['key']).toBe('uploads/t/u/report.csv')
         expect(target.fields['content-type']).toBe('text/csv')
@@ -565,12 +575,106 @@ describe('fake storage', () => {
         })
     })
 
+    describe('the PUT form', () => {
+        const mint = async (constraints: UploadConstraints, key = 'uploads/t/u/put.bin') => {
+            const { createFakeStorage } = await import('./storage')
+            return createFakeStorage({ uploadTarget: 'put' }).createUploadTarget(key, constraints)
+        }
+        /** The signed values a PUT target carries in its URL's query, as the endpoint reads them. */
+        const queryOf = (target: UploadTarget) =>
+            Object.fromEntries(new URL(target.url, 'http://localhost').searchParams) as Record<string, string>
+
+        test('mints a PUT whose URL carries signed values that verify, and whose header is the content type', async () => {
+            const { verifyUploadFields } = await import('./storage')
+            const target = await mint({ contentType: 'text/csv', maxBytes: 1000, sizeBytes: 400 })
+            expect(target).toMatchObject({ method: 'PUT', headers: { 'Content-Type': 'text/csv' } })
+            expect(target.url.startsWith('/api/storage-upload?')).toBe(true)
+            expect(verifyUploadFields(queryOf(target))).toEqual({
+                key: 'uploads/t/u/put.bin',
+                contentType: 'text/csv',
+                maxBytes: 1000,
+                size: 400,
+            })
+        })
+
+        test('tampering with any signed value, the size included, fails verification', async () => {
+            const { verifyUploadFields } = await import('./storage')
+            const signed = queryOf(await mint({ contentType: 'text/csv', maxBytes: 1000, sizeBytes: 400 }))
+            expect(verifyUploadFields({ ...signed, size: '999' })).toBeNull()
+            expect(verifyUploadFields({ ...signed, size: '-1' })).toBeNull()
+            expect(verifyUploadFields({ ...signed, size: '4.5' })).toBeNull()
+            expect(verifyUploadFields({ ...signed, 'max-bytes': '5000' })).toBeNull()
+            expect(verifyUploadFields({ ...signed, key: 'uploads/t/u/evil.bin' })).toBeNull()
+            expect(verifyUploadFields({ ...signed, 'content-type': 'text/html' })).toBeNull()
+        })
+
+        test('a PUT signature is not a POST one, and a POST signature is not a PUT one', async () => {
+            const { fakeStorage, verifyUploadFields } = await import('./storage')
+            const withoutSize = queryOf(await mint({ contentType: 'text/csv', maxBytes: 1000, sizeBytes: 400 }))
+            delete withoutSize['size']
+            expect(verifyUploadFields(withoutSize)).toBeNull()
+            const post = postTarget(
+                await fakeStorage.createUploadTarget('uploads/t/u/put.bin', {
+                    contentType: 'text/csv',
+                    maxBytes: 1000,
+                }),
+            )
+            expect(verifyUploadFields({ ...post.fields, size: '400' })).toBeNull()
+            expect(verifyUploadFields(post.fields)).not.toBeNull()
+        })
+
+        test('expires after 15 minutes, as a POST target does', async () => {
+            vi.useFakeTimers()
+            try {
+                const { verifyUploadFields } = await import('./storage')
+                const signed = queryOf(await mint({ contentType: 'text/csv', maxBytes: 1000, sizeBytes: 400 }))
+                expect(verifyUploadFields(signed)).not.toBeNull()
+                vi.advanceTimersByTime(901_000)
+                expect(verifyUploadFields(signed)).toBeNull()
+            } finally {
+                vi.useRealTimers()
+            }
+        })
+
+        test('refuses a call without sizeBytes, or one that is not a size within maxBytes', async () => {
+            await expect(mint({ contentType: 'text/csv', maxBytes: 1000 })).rejects.toThrow(
+                /needs constraints\.sizeBytes/,
+            )
+            for (const bad of [-1, 1.5, Number.NaN, 1001]) {
+                await expect(mint({ contentType: 'text/csv', maxBytes: 1000, sizeBytes: bad })).rejects.toThrow(
+                    /sizeBytes must be an integer from 0 to maxBytes \(1000\)/,
+                )
+            }
+            await mint({ contentType: 'text/csv', maxBytes: 1000, sizeBytes: 0 })
+            await mint({ contentType: 'text/csv', maxBytes: 1000, sizeBytes: 1000 })
+        })
+
+        test('the default fake still mints a POST, and ignores a sizeBytes it is given', async () => {
+            const { fakeStorage } = await import('./storage')
+            const target = await fakeStorage.createUploadTarget('uploads/t/u/p.bin', {
+                contentType: 'text/csv',
+                maxBytes: 1000,
+                sizeBytes: 5,
+            })
+            expect(target.method).toBe('POST')
+            expect(Object.keys(postTarget(target).fields).sort()).toEqual([
+                'content-type',
+                'expires',
+                'key',
+                'max-bytes',
+                'signature',
+            ])
+        })
+    })
+
     test('verifyUploadFields rejects tampering and missing fields', async () => {
         const { fakeStorage, verifyUploadFields } = await import('./storage')
-        const target = await fakeStorage.createUploadTarget('uploads/t/u/a.bin', {
-            contentType: 'application/octet-stream',
-            maxBytes: 500,
-        })
+        const target = postTarget(
+            await fakeStorage.createUploadTarget('uploads/t/u/a.bin', {
+                contentType: 'application/octet-stream',
+                maxBytes: 500,
+            }),
+        )
         // A re-pointed key, a raised ceiling, a swapped type, or an extended life all invalidate
         // the signature.
         expect(verifyUploadFields({ ...target.fields, key: 'uploads/t/u/evil.bin' })).toBeNull()
@@ -585,10 +689,12 @@ describe('fake storage', () => {
         vi.useFakeTimers()
         try {
             const { fakeStorage, verifyUploadFields } = await import('./storage')
-            const target = await fakeStorage.createUploadTarget('uploads/t/u/late.bin', {
-                contentType: 'application/octet-stream',
-                maxBytes: 500,
-            })
+            const target = postTarget(
+                await fakeStorage.createUploadTarget('uploads/t/u/late.bin', {
+                    contentType: 'application/octet-stream',
+                    maxBytes: 500,
+                }),
+            )
             expect(verifyUploadFields(target.fields)).not.toBeNull()
             // 900s is the ceiling a real S3 presigned POST gets — one second past it, the same
             // untampered fields are dead, so a minted target is not a forever-capability to swap
@@ -731,6 +837,57 @@ describe('fake llm failure entries', () => {
             }),
         ).rejects.toMatchObject({ name: 'LlmUnavailableError', reason: 'overloaded' })
         expect(executed).toEqual(['lookup'])
+    })
+
+    test('a failing default entry with no answer at all fails typed from all three methods (#249)', async () => {
+        const { createFakeLlm } = await import('./llm')
+        for (const entry of [
+            { name: 'd', request: null, response: null, failure: { reason: 'overloaded' } },
+            { name: 'd', request: null, failure: { reason: 'overloaded' } },
+            { name: 'd', request: null, response: null, conversation: [], failure: { reason: 'overloaded' } },
+        ]) {
+            const llm = createFakeLlm({ fixturesDir: write([entry]), catchRequests: false })
+            const typed = { name: 'LlmUnavailableError', reason: 'overloaded' }
+            await expect(llm.complete(request)).rejects.toMatchObject(typed)
+            await expect(
+                (async () => {
+                    for await (const chunk of llm.stream(request)) void chunk
+                })(),
+            ).rejects.toMatchObject(typed)
+            await expect(llm.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toMatchObject(typed)
+        }
+    })
+
+    test('a failure with no reason is no failure, and two default entries are read the same way by every method', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const malformed = createFakeLlm({
+            fixturesDir: write([{ name: 'd', request: null, response: null, failure: {} }]),
+            catchRequests: false,
+        })
+        await expect(malformed.complete(request)).rejects.toThrow(/no matching llm fixture/)
+        const two = createFakeLlm({
+            fixturesDir: write([
+                { name: 'a', request: null, response: null },
+                { name: 'b', request: null, response: null, failure: { reason: 'timed-out' } },
+            ]),
+            catchRequests: false,
+        })
+        await expect(two.complete(request)).rejects.toMatchObject({ reason: 'timed-out' })
+        await expect(two.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toMatchObject({
+            reason: 'timed-out',
+        })
+    })
+
+    test('a default entry with no answer and no failure is still the plain "no default entry" error', async () => {
+        const { createFakeLlm } = await import('./llm')
+        const llm = createFakeLlm({
+            fixturesDir: write([{ name: 'd', request: null, response: null }]),
+            catchRequests: false,
+        })
+        await expect(llm.complete(request)).rejects.toThrow(/no matching llm fixture/)
+        await expect(llm.runToolLoop({ ...request, tools, execute: async () => '{}' })).rejects.toThrow(
+            /no matching llm tool-loop fixture/,
+        )
     })
 
     test('an entry without a failure still answers, so only the entries that say so fail', async () => {

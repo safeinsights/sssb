@@ -25,6 +25,7 @@ import {
 } from '../../packages/tools/src/tick/ticker.js'
 import {
     assertNoLiveDevTicker,
+    clearStaleMarker,
     liveTickerMarker,
     processStartToken,
     removeTickerMarker,
@@ -756,6 +757,87 @@ describe('the ticker marker: what keeps a ticking dev server out of the e2e suit
             expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ startToken: 'linux:boot:999' })
         })
 
+        // safeinsights/sssb#257: the clearing moves the file aside and judges the copy, so a marker written at any moment
+        // of it is never the one removed.
+        describe('clearing a stale marker', () => {
+            const stale = { pid: 4242, startedAt: '2026-11-27T10:00:00.000Z' }
+            const dirOf = (file: string) => readdirSync(path.dirname(file)).sort()
+
+            it('removes the marker it judged, and leaves nothing beside it', () => {
+                const file = freshFile()
+                at(file, stale.pid, { startedAt: stale.startedAt })
+                clearStaleMarker(file, stale)
+                expect(dirOf(file)).toEqual([])
+            })
+
+            it('does nothing for a marker that is already gone', () => {
+                const file = freshFile()
+                clearStaleMarker(file, stale)
+                expect(dirOf(file)).toEqual([])
+            })
+
+            it('leaves a marker written after the move: the name was free, and it is never touched', () => {
+                const file = freshFile()
+                at(file, stale.pid, { startedAt: stale.startedAt })
+                clearStaleMarker(file, stale, {
+                    afterClaim: () => at(file, process.ppid, { startedAt: '2026-11-27T11:00:00.000Z' }),
+                })
+                expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ pid: process.ppid })
+                expect(dirOf(file)).toEqual(['dev-ticker.json'])
+            })
+
+            it('puts back a newer marker it took by mistake (written between the judgment and the move)', () => {
+                const file = freshFile()
+                at(file, process.ppid, { startedAt: '2026-11-27T11:00:00.000Z', startToken: 'linux:b:1' })
+                clearStaleMarker(file, stale)
+                expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({
+                    pid: process.ppid,
+                    startToken: 'linux:b:1',
+                })
+                expect(dirOf(file)).toEqual(['dev-ticker.json'])
+            })
+
+            it('lets a still newer marker, written while it was put back, win over the one it took', () => {
+                const file = freshFile()
+                at(file, process.ppid, { startedAt: '2026-11-27T11:00:00.000Z' })
+                clearStaleMarker(file, stale, {
+                    afterClaim: () => at(file, process.pid, { startedAt: '2026-11-27T12:00:00.000Z' }),
+                })
+                expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ pid: process.pid })
+                expect(dirOf(file)).toEqual(['dev-ticker.json'])
+            })
+
+            it('leaves no temporary file behind when the marker cannot be written, and says so', () => {
+                const file = freshFile()
+                // a non-empty directory where the marker should go: the write succeeds, the rename onto it cannot
+                mkdirSync(path.join(file, 'in-the-way'), { recursive: true })
+                expect(() => writeTickerMarker(file, 5)).toThrow()
+                expect(dirOf(file)).toEqual(['dev-ticker.json'])
+            })
+
+            it('puts nothing over a marker that is there when it comes to put one back', () => {
+                const file = freshFile()
+                at(file, process.ppid, { startedAt: '2026-11-27T11:00:00.000Z' })
+                clearStaleMarker(file, stale, {
+                    afterClaim: () => at(file, process.pid, { startedAt: '2026-11-27T12:00:00.000Z' }),
+                })
+                expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ pid: process.pid })
+            })
+
+            it('does not clear a marker another wrapper wrote between the read and the move, through liveTickerMarker', () => {
+                const file = freshFile()
+                at(file, other, { startToken: 'linux:boot:100' })
+                expect(
+                    liveTickerMarker(file, () => {
+                        at(file, other, { startedAt: new Date().toISOString(), startToken: 'linux:boot:999' })
+                        return 'linux:boot:999'
+                    }),
+                ).toBeNull()
+                expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ startToken: 'linux:boot:999' })
+                expect(dirOf(file)).toEqual(['dev-ticker.json'])
+            })
+        })
+
         it('writes the token of the process that wrote the marker, and that process is live by it', () => {
             const file = freshFile()
             writeTickerMarker(file, 7)
@@ -768,6 +850,8 @@ describe('the ticker marker: what keeps a ticking dev server out of the e2e suit
         it('reads a token that one process keeps, another process does not share, and a gone pid does not have', async () => {
             expect(processStartToken(process.pid)).toBe(processStartToken(process.pid))
             expect(processStartToken(2 ** 22 + 12345)).toBeNull()
+            // `ps` answers to the second on macOS: let a second pass, so the child is not born in this process's own.
+            await new Promise((resolve) => setTimeout(resolve, 1100))
             const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' })
             try {
                 await vi.waitFor(() => expect(processStartToken(child.pid as number)).not.toBeNull())
