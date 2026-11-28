@@ -61,8 +61,10 @@ const ENDED = new Set(['SUCCEEDED', 'FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT'])
  * CodeBuild console and in CloudTrail, so a job's payload must never carry a secret or personal data: pass an id the
  * build reads with its own access instead.
  *
- * LOST BUILDS (safeinsights/sssb#231). `start` records the build behind the job in `jobs.runner_ref`: `starting` before
- * StartBuild is called, the build's id once it returns. The scheduled tick calls `sweep`, which asks CodeBuild
+ * LOST BUILDS (safeinsights/sssb#231). The runner records the build behind the job in `jobs.runner_ref`: `starting` from
+ * the row's own first write (this port's `startingRef`, which `submitJob`, a schedule's spawn and a retry's claim write
+ * with the row, so no separate write can fail before StartBuild: safeinsights/sssb#251), then the build's id once
+ * StartBuild returns. The scheduled tick calls `sweep`, which asks CodeBuild
  * (BatchGetBuilds, which the server's role must be allowed) about each of the runner's jobs still queued or running
  * and quiet for `CODEBUILD_LOST_AFTER_MS`, and fails as lost:
  *

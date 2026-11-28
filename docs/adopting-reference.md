@@ -729,8 +729,9 @@ the showcase carries the same route over the same function.
   construct never puts the secret's value in an environment, so getting it into the server's `WEBHOOK_SECRET` is
   yours, as for your other secrets. Without the option nothing in a deployment ticks the route: the `scheduled-tick`
   row of the [cutover checklist](cutover-checklist.md).
-- **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick
-  spawns at most 100 due schedules, in its first 6 seconds, starts at most 100 due job retries (a failed attempt of a
+- **How much one tick does** is bounded, so a backlog cannot run the route past the server's 30-second limit: a tick's
+  sweep for lost jobs fails at most 100, judging none after its first 2 seconds; it spawns at most 100 due schedules, in
+  its first 6 seconds, starts at most 100 due job retries (a failed attempt of a
   kind whose `jobRetry` lets it retry, once its delay has passed), none after 10 seconds, and attempts at most 100 due
   webhook deliveries, starting none after 16 seconds (a delivery's POST may take 10). Inside each bound it takes one due
   row from each tenant in turn, the tenants in a fresh random order every tick, so one tenant's backlog or slow endpoint

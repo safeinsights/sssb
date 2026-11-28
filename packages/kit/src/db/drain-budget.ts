@@ -65,8 +65,9 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
 /*
  * The default windows, from the tick's start, in which each drain may START work. They are sized to the server's
  * 30-second limit (@sssb/cdk's `SssbApp`, `packages/cdk/src/sssb-app.js:526` in SSSB's repository; the tick runs inside
- * the cron route's request), counted from the start of the request: schedules first, then job retries, then deliveries,
- * so schedules may start work for 6 seconds, retries until 10 and deliveries until 16. A delivery started at 16 seconds
+ * the cron route's request), counted from the start of the request: the jobs port's sweep first (`SWEEP_WINDOW_MS`, its
+ * first 2 seconds, safeinsights/sssb#252), then schedules, then job retries, then deliveries, so schedules may start work
+ * until 6 seconds, retries until 10 and deliveries until 16. A delivery started at 16 seconds
  * may take the POST's 10 (`WEBHOOK_TIMEOUT_MS`, ../server-lib/webhook-dispatch.ts) plus its claim, record and audit
  * transactions, which leaves about four seconds for those, a listing query begun just before the deadline, and the
  * response. Giving each drain a window of its own means none can spend the whole tick: retries always get from where

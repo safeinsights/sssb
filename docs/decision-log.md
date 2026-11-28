@@ -8524,3 +8524,43 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   had it got through. The parity table (`tests/lint/framework-fence.test.ts`) now has a vendor block: 27 specifiers,
   three files, import, `import()` and `require()` each, with the expected answer pinned, not only the agreement
   (mutation-checked: un-anchoring `/pg` fails it, un-anchoring an app's entries fails `check-fences.test.ts`).
+
+## A CodeBuild job marked from its first write, and a bounded sweep (2026-11-28, `fix/codebuild-starting-and-sweep-bound`)
+
+The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
+
+- **safeinsights/sssb#251: the `starting` mark goes in the row's own write.** The CodeBuild runner used to write
+  `jobs.runner_ref = 'starting'` as a statement of its own, just before StartBuild. If that statement failed after
+  `submitJob`'s transaction committed, `start` threw before anything reached CodeBuild. The job then stayed queued
+  with no ref, which the sweep never judges (so that jobs from before migration 0020 are left alone).
+    - The jobs port now declares what a job's row starts as: `JobsPort.startingRef`, optional, `starting` for the
+      CodeBuild runner. Every writer of a row the runner will start writes it in the same statement: `submitJob`'s
+      insert, a schedule spawn's insert, and the retry drain's claim (the update that readies a waiting retry). `start`
+      itself writes nothing before StartBuild.
+    - A start that throws, for whatever reason, therefore leaves a job the sweep judges: `refused` after five minutes
+      when CodeBuild said so, `starting` after the hour otherwise.
+    - Rejected: **judging a NULL-ref queued job created after some cutoff**, which needs a cutoff the sweep can know
+      (the migration's apply time is not recorded anywhere it can read). Also rejected: **catching the write and
+      calling StartBuild anyway**, which leaves the same hole when the second write (the build id) fails too.
+- **safeinsights/sssb#252: the sweep takes a budget from the tick.** `JobsPort.sweep(now, budget?)`, where `budget`
+  is the drains' shape (`SweepBudget`, restated in the port so it imports nothing). The tick gives it a window of its
+  own, its first two seconds (`SWEEP_WINDOW_MS`), and at most 100 jobs failed (`maxSweep`, `sweepWindowMs` on the tick's
+  budget).
+    - Both runners' sweeps take tenants in a fresh random order (the drains' `shuffled`) and stop judging once the budget
+      is spent: before each tenant, each BatchGetBuilds call and each failure. What a sweep leaves, the next tick's sweep
+      finds; nothing it skips is lost, since a lost job stays lost.
+    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the
+      schedules at least four seconds of theirs.
+    - `lazyJobs` passes the budget through. A sweep called with no budget judges everything, as before.
+    - Not changed: the sweep still lists every tenant once a tick within its window (the drains' due hints,
+      safeinsights/sssb#263, do not extend to it).
+- **Proofs.**
+    - `adapters/real/jobs.test.ts`:
+        - the starting ref written by `submitJob`, a schedule spawn and a retry claim;
+        - a job whose start threw before writing anything, failed by the sweep after the hour;
+        - a bounded sweep failing at most its count, nothing after its deadline, and the rest next time.
+    - `adapters/real/jobs-in-process.test.ts`: the in-process sweep, bounded the same way.
+    - `server-lib/scheduled-tick.test.ts`: the tick hands the sweep its budget.
+    - `adapters/lazy-jobs.test.ts`: the budget passes through.
+    - Removing any of these turns them red: the ref from each of the three writers, either runner's bound, the tick's
+      deadline, or the pass-through.
