@@ -155,8 +155,8 @@ export function shuffled<T>(items: readonly T[], budget: DrainBudget, idOf: (ite
  * deadline it does that in passes: each lists for at most `LISTING_SHARE` of what is left of the window, then runs what
  * it listed; when that is done with time to spare, the next pass lists on from where the last stopped, in the same
  * order. So a drain over more tenants than it can list starts work in every tick, and one over fewer that runs out of
- * listed rows early goes back for the rest. Every tenant listed is handed to `onListed`, with what its listing found, so a
- * drain with due hints can set them once it is done (./due-hints.ts). `run` isolates its own
+ * listed rows early goes back for the rest. A tenant listed with nothing due, whose listing also said when it next has
+ * work (`nextDue`), is handed to `listedNothing`, which raises its due hint (./due-hints.ts). `run` isolates its own
  * failures (each drain counts them); one that throws anyway stops the drain, as an unhandled error did before.
  */
 export async function drainFairly<T, Tenant extends { id: string }>(
@@ -165,7 +165,7 @@ export async function drainFairly<T, Tenant extends { id: string }>(
     listOne: (tenantId: string) => Promise<{ rows: readonly T[]; nextDue?: Date | null }>,
     rowKey: (row: T) => string,
     run: (row: T, tenantId: string) => Promise<void>,
-    onListed?: (tenant: Tenant, listing: { rows: readonly T[]; nextDue?: Date | null }) => void,
+    listedNothing?: (tenant: Tenant, nextDue: Date | null) => Promise<void>,
 ): Promise<DrainLeft> {
     const bounded = Number.isFinite(budget.maxItems) || Number.isFinite(budget.deadline)
     const clock = budget.clock ?? Date.now
@@ -189,7 +189,7 @@ export async function drainFairly<T, Tenant extends { id: string }>(
             // bound every row runs, so they keep their oldest-first order.
             if (rows.length > 0)
                 queues.push({ tenantId: tenant.id, rows: bounded ? shuffled(rows, budget, rowKey) : rows })
-            onListed?.(tenant, listed)
+            else if (listedNothing && listed.nextDue !== undefined) await listedNothing(tenant, listed.nextDue)
         }
         const left = await runRoundRobin(queues, { ...budget, maxItems: budget.maxItems - started }, run)
         if (left.stoppedBy !== null || next >= order.length) return left

@@ -15,7 +15,7 @@ import type { DbPort } from '../ports/db'
 // TYPE-ONLY import (erased): keeps packages/kit/src/db free of a runtime @/adapters dependency — see WebhookDispatch.
 import type { WebhookDispatch } from '../server-lib/webhook-dispatch'
 import { recordAuditEvent } from './audit'
-import { type HintRead, type ListedTenant, settleHints, tenantsToList } from './due-hints'
+import { type HintedTenant, raiseHint, tenantsToList } from './due-hints'
 import {
     beforeDeadline,
     type DrainBudget,
@@ -124,19 +124,12 @@ export async function runDueDeliveries(
     await db.ready()
     // With due hints (the tick's), only the tenants whose hint has come are listed (./due-hints.ts, #202).
     const hinted = limit.dueHints === true
-    const read: HintRead = hinted
+    const tenants: HintedTenant[] = hinted
         ? await tenantsToList(db, 'deliveries', now)
-        : {
-              tenants: (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({
-                  id: t.id,
-                  hintVersion: null,
-              })),
-              snapshot: null,
-          }
-    const listed: ListedTenant[] = []
+        : (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({ id: t.id, hintVersion: null }))
     const perTenant = listingLimit(limit)
     const left = await drainFairly(
-        read.tenants,
+        tenants,
         limit,
         (tenantId) =>
             db.withTenant(tenantId, async (trx) => {
@@ -173,12 +166,9 @@ export async function runDueDeliveries(
             }
         },
         hinted
-            ? (tenant, listing) =>
-                  void listed.push({ tenant, hadRows: listing.rows.length > 0, nextDue: listing.nextDue ?? null })
+            ? (tenant: HintedTenant, nextDue: Date | null) => raiseHint(db, tenant, 'deliveries', now, nextDue)
             : undefined,
     )
-    // Once, for the whole drain: each listed tenant's hint, and the events its listing accounted for.
-    if (hinted) await settleHints(db, 'deliveries', now, read, listed)
     return { ...counts, ...left }
 }
 

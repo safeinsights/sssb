@@ -4,7 +4,7 @@ import { InvalidTransitionError } from '../core/state-machine'
 import type { DbPort } from '../ports/db'
 import { NotFoundError } from '../ports/errors'
 import { type JobsPort, mayHaveStarted } from '../ports/jobs'
-import { type HintRead, type ListedTenant, settleHints, tenantsToList } from './due-hints'
+import { type HintedTenant, raiseHint, tenantsToList } from './due-hints'
 import {
     beforeDeadline,
     type DrainBudget,
@@ -237,19 +237,12 @@ export async function runDueRetries(
     await db.ready()
     // With due hints (the tick's), only the tenants whose hint has come are listed (./due-hints.ts, #202).
     const hinted = limit.dueHints === true
-    const read: HintRead = hinted
+    const tenants: HintedTenant[] = hinted
         ? await tenantsToList(db, 'retries', now)
-        : {
-              tenants: (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({
-                  id: t.id,
-                  hintVersion: null,
-              })),
-              snapshot: null,
-          }
-    const listed: ListedTenant[] = []
+        : (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({ id: t.id, hintVersion: null }))
     const perTenant = listingLimit(limit)
     const left = await drainFairly(
-        read.tenants,
+        tenants,
         limit,
         (tenantId) =>
             db.withTenant(tenantId, async (trx) => {
@@ -284,12 +277,9 @@ export async function runDueRetries(
             }
         },
         hinted
-            ? (tenant, listing) =>
-                  void listed.push({ tenant, hadRows: listing.rows.length > 0, nextDue: listing.nextDue ?? null })
+            ? (tenant: HintedTenant, nextDue: Date | null) => raiseHint(db, tenant, 'retries', now, nextDue)
             : undefined,
     )
-    // Once, for the whole drain: each listed tenant's hint, and the events its listing accounted for.
-    if (hinted) await settleHints(db, 'retries', now, read, listed)
     return { started, failed, ...left }
 }
 
