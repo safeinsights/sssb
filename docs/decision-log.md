@@ -8996,6 +8996,31 @@ world, local or deployed, built from int-fixes before this merge: this checkout'
 it was wiped (CLAUDE.md's rule after a migration change). Nothing in the code changes: 0019 to 0021 already come after 0018, which is right for every released database.
 Such a world is wiped; whether a deployment runs int-fixes, and so must be kept, is for its owner to say.
 
+## The chromium project's and the starter's e2e budgets from CI's numbers (2026-11-28, `fix/e2e-budgets-chromium-starter`)
+
+`safeinsights/sssb#235`, the rest of what `#100` did for the destructive project: the showcase's `chromium` project and the
+starter ran on CI's production build with the budgets sized for `next dev`.
+
+- **Measured on CI** (PR #272, a temporary reporter printing each test's duration and every wait of a second or more;
+  five runs, one push and four reruns, no retry, no failure): the showcase's 60 tests, slowest 5.7 s (`simulator-mail`,
+  5.4 to 5.7 s), the next 4.8 s; its slowest assertion 4.3 s (the mail `toPass`, which has its own 15 s), every
+  default-budget one under 1 s. The starter's 5 tests, slowest 3.6 s; its slowest default-budget assertion 2.3 s, its
+  reload after a reset 1.5 s.
+- **The budgets on a production build**, under `next dev` all as they were: a chromium test 20 s (3.5x), a starter test
+  15 s (4.2x), an assertion 10 s in both apps (one value in `budgets.ts` for both showcase projects now, since the
+  destructive project's was already 10 s). The compile-only waits take the assertion budget through `coldRoute`: the
+  a11y actor shell (30 s on dev), the Simulator panel's hydration `toPass` (30 s), `people.ts`' hydration wait,
+  `untilNewDocument` and both `org-switcher` waits (45 s), and the escalation form's `toPass` in `escalations.spec.ts` and
+  in its copy in the destructive `notifications.spec.ts` (45 s). Kept, as waits for the app's own work: the mail
+  `toPass` (15 s, 3.5x what it took) and the analytics event (15 s). The starter's Simulator spec gets the same split
+  locally (`onDev`), and its `test.setTimeout(120_000)` is dev-only.
+- **The starter's test budget is set on its project, not at the top level**, so the top-level `timeout: 60_000` line,
+  which `sssb remove-items`' patch matches as context, stays as every generated workspace has it. Changing that line
+  (the first cut) made `remove-items` refuse on any workspace generated before this change (found in review).
+- **At the new budgets**, five more CI runs: every shard green each time (showcase 60, destructive 16, starter 5),
+  none flaky. Locally under `next dev`, `pnpm verify` green. Not measured: more than one worker (`E2E_WORKERS`,
+  safeinsights/sssb#99) on these budgets.
+
 ## A CodeBuild job marked from its first write, and a bounded sweep (2026-11-28, `fix/codebuild-starting-and-sweep-bound`)
 
 The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
@@ -9246,3 +9271,11 @@ and #248/#268's CodeBuild sweep meet.
 - **Review.** One Opus round: the MEDIUM (passes) and the LOW (the `sweep` condition) above, both fixed. Then a claims
   pass. The release-notes findings J8 (the schedules' window stated as 8 s) and J2 (a paused cluster's first tick) are
   fixed in `bounded-tick-drains.md` and `job-retries.md` on the same branch.
+
+## The due hints are withdrawn from 0.11.0 and ship separately (2026-11-28, `revert/due-hints`)
+
+The tick listing's due hints (#263: migration 0022, `due_hints`, the scheduled tick listing due tenants first) and
+its review fix (#311) are reverted on `int-followups`, both merges, newest first, so 0.11.0 does not carry them. The
+work is kept, not dropped: it ships in a release of its own, and the history of both PRs stays in this log and in git.
+The revert restores the drain at 0.10.0's `LISTING_SHARE` passes, the migrations index at 0021, `SECURITY.md` and
+the changesets as they were before #263; nothing of the hints is left in `packages/` or `apps/`.

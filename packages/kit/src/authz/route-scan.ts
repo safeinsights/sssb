@@ -1276,6 +1276,8 @@ class RootScanner {
                 return []
             }
             const captured = specifier.slice(head.length, specifier.length - tail.length)
+            // `String.replace`, as TypeScript's `paths` and Next's webpack do it: a `$&` or `$$` in the captured text is
+            // read as a pattern there too, so the scan names the file they load.
             return targets.map((target) => target.replace('*', captured))
         })
         return mapped.length === 0 ? undefined : mapped.map((target) => path.resolve(this.pathsBase, target))

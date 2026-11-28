@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test'
+import { coldRoute } from './budgets'
 
 /**
  * Opens the Simulator panel without racing hydration. The pill is a client component: Next SSRs
@@ -14,5 +15,5 @@ export async function openSimulatorPanel(page: Page): Promise<void> {
         if (await panel.isVisible()) return
         await page.locator('[data-testid="simulator-pill"][data-hydrated]').click({ timeout: 2_000 })
         await expect(panel).toBeVisible({ timeout: 2_000 })
-    }).toPass({ timeout: 30_000 })
+    }).toPass({ timeout: coldRoute(30_000) })
 }

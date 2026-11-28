@@ -1,6 +1,7 @@
 import { makeTestTmpDir } from '../testing/tmp-dir'
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
     type Gate,
@@ -4038,6 +4039,41 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/gone.png') }, {}, options))).toMatch(
             /^refusal: `asset` is a default import/,
         )
+        // The `*` takes the whole captured subpath.
+        expect(
+            defaultOf(
+                scanCase(
+                    { 'page.tsx': ASSET_PAGE('@/img/deep/logo.png'), 'assets/img/deep/logo.png': 'png' },
+                    {},
+                    options,
+                ),
+            ),
+        ).toBe('reads nothing')
+        // The scan names the file the resolvers it models name. TypeScript substitutes the capture with
+        // `String.replace` (its `replaceFirstStar`; Next's webpack does the same, which is not tested here), so `$&` in it is a pattern: `@/a$&b` lands on `assets/a*b`, not `assets/a$&b`.
+        const resolvedFrom = (files: string[]) =>
+            ts.resolveModuleName(
+                '@/a$&b',
+                '/app/page.tsx',
+                {
+                    moduleResolution: ts.ModuleResolutionKind.Bundler,
+                    baseUrl: '/app',
+                    paths: { '@/*': ['./assets/*'] },
+                },
+                {
+                    fileExists: (file) => files.includes(file),
+                    readFile: () => undefined,
+                    directoryExists: (dir) => files.some((file) => file.startsWith(`${dir}/`)),
+                },
+            ).resolvedModule?.resolvedFileName
+        expect(resolvedFrom(['/app/assets/a*b.ts'])).toBe('/app/assets/a*b.ts')
+        expect(resolvedFrom(['/app/assets/a$&b.ts'])).toBeUndefined()
+        expect(
+            defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/a$&b.png'), 'assets/a*b.png': 'png' }, {}, options)),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/a$&b.png'), 'assets/a$&b.png': 'png' }, {}, options)),
+        ).toMatch(/^refusal: `asset` is a default import/)
         // A bare specifier is never an asset here, whatever it resolves to (round 3).
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toMatch(
             /^refusal: `asset` is a default import/,
