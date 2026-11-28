@@ -34,6 +34,12 @@ export const MAX_SKIP_MS = 24 * 60 * 60_000
 /** How many tenants one settling statement covers, so no statement grows past what a transport takes. */
 const SETTLE_CHUNK = 200
 
+/**
+ * The most events of one tenant a settle deletes (for one drain): a tenant that has piled up more costs a tick no
+ * more than this, and keeps the rest, which only means it is listed again and settles more next tick.
+ */
+export const EVENTS_SETTLED_PER_TENANT = 500
+
 /** A tenant a drain lists, with the version of its hint as read (null when it has none). */
 export interface HintedTenant {
     id: string
@@ -96,16 +102,25 @@ export async function settleHints(
     for (let i = 0; i < settled.length; i += SETTLE_CHUNK) {
         const rows = settled.slice(i, i + SETTLE_CHUNK).map((l) => ({
             tenantId: l.tenant.id,
-            listAfter: l.hadRows ? now : l.nextDue !== null && l.nextDue.getTime() < cap.getTime() ? l.nextDue : cap,
+            // A tenant listed with rows is listed again whatever the clock does next: the epoch, not `now`, which a
+            // Simulator's clock reset can move back past.
+            listAfter: l.hadRows
+                ? LISTED_AGAIN
+                : l.nextDue !== null && l.nextDue.getTime() < cap.getTime()
+                  ? l.nextDue
+                  : cap,
             version: l.tenant.hintVersion,
         }))
         try {
-            await family.settleDueHints(raw, drain, read.snapshot, rows)
+            await family.settleDueHints(raw, drain, read.snapshot, rows, EVENTS_SETTLED_PER_TENANT)
         } catch (error) {
             console.warn(`SSSB tick: could not set the ${drain} drain's due hints: ${messageOf(error)}`)
         }
     }
 }
+
+/** A hint that has always come: the tenant is listed by the next tick, whatever its clock. */
+const LISTED_AGAIN = new Date(0)
 
 function messageOf(error: unknown): string {
     return error instanceof Error ? error.message : String(error)

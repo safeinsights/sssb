@@ -946,6 +946,52 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
             expect(armed?.retry).not.toBeNull()
         })
 
+        test("one tenant's piled-up events cost a tick only the settle's bound, so the next drain starts in its window", async () => {
+            await realDb.migrateToLatest()
+            const piled = await hintTenant()
+            const other = await hintTenant()
+            const now = new Date('2033-01-05T00:00:00.000Z')
+            const admin = realDb.getDb()
+            // The review's shape, scaled to a contract run: millions of events of one tenant, already due.
+            const count = 2_000_000
+            await sql`
+                INSERT INTO due_hint_events (tenant_id, drain, due)
+                SELECT ${piled.id}::uuid, 'schedules', ${new Date(now.getTime() - 60_000)}::timestamptz
+                FROM generate_series(1, ${count})
+            `.execute(admin)
+            // The other tenant has a retry due.
+            await admin
+                .insertInto('jobs')
+                .values({
+                    tenant_id: other.id,
+                    org_id: null,
+                    kind: 'flaky-dockets',
+                    payload: {},
+                    run_after: new Date(now.getTime() - 60_000),
+                })
+                .execute()
+            const { runDueSchedules } = await import('../../db/schedules')
+            const { runDueRetries } = await import('../../db/jobs')
+            const { EVENTS_SETTLED_PER_TENANT } = await import('../../db/due-hints')
+            const started: string[] = []
+            const jobs = { start: async (job: { tenantId: string }) => void started.push(job.tenantId) }
+            // As the tick runs them: windows measured from its start, the retries' 1.5 s on.
+            const tickStart = Date.now()
+            await runDueSchedules(realDb, jobs, now, { maxItems: 100, deadline: tickStart + 1_000, dueHints: true })
+            const retries = await runDueRetries(realDb, jobs, now, {
+                maxItems: 100,
+                deadline: tickStart + 1_500,
+                dueHints: true,
+            })
+            expect(retries.stoppedBy).not.toBe('time')
+            expect(started).toContain(other.id)
+            const { rows } = await sql<{ n: string }>`
+                SELECT count(*)::text AS n FROM due_hint_events WHERE tenant_id = ${piled.id}::uuid
+            `.execute(admin)
+            expect(Number(rows[0]!.n)).toBe(count - EVENTS_SETTLED_PER_TENANT)
+            await sql`DELETE FROM due_hint_events WHERE tenant_id = ${piled.id}::uuid`.execute(admin)
+        }, 180_000)
+
         test('a write committed while a drain lists keeps its event, so the next tick lists its tenant', async () => {
             await realDb.migrateToLatest()
             const t = await hintTenant()

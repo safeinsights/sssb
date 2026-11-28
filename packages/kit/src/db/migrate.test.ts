@@ -145,3 +145,28 @@ describe('a framework migration that arrives after an app gave a role default pr
         },
     )
 })
+
+describe('0022 refuses a database where app_user would reach the owner-only tables anyway', () => {
+    test('as a member of the role that owns them', { timeout: 60_000 }, async () => {
+        const ownerMembership: Migration = {
+            up: async (db) => {
+                const { rows } = await sql<{ owner: string }>`SELECT current_user AS owner`.execute(db)
+                await sql`GRANT ${sql.id(rows[0]!.owner)} TO app_user`.execute(db)
+            },
+        }
+        const registry: Record<string, Migration> = {
+            ...frameworkMigrations,
+            '1001_owner_to_app_user': ownerMembership,
+        }
+        const newest = Object.keys(frameworkMigrations).sort().at(-1)!
+        const upgraded = new Kysely<DB>({ dialect: new PGliteDialect(openPglite()) })
+        try {
+            await buildPreUpdate(upgraded, registry, newest)
+            await expect(migrateRegistryToLatest(upgraded, registry)).rejects.toThrow(
+                /app_user can still reach the due hints/,
+            )
+        } finally {
+            await upgraded.destroy()
+        }
+    })
+})

@@ -564,3 +564,59 @@ describe('the owner reads the real tables', () => {
         }
     })
 })
+
+describe('what a tick leaves, whatever its clock does and however much a tenant piles up', () => {
+    test("a tenant listed with rows left due is listed again after the Simulator's clock is moved back", async () => {
+        const { tenantId, orgId } = await world()
+        const { runDueSchedules } = await import('./schedules')
+        // The review's probe: two schedules due an hour before real time; a tick twelve hours ahead (an advanced world
+        // clock) runs one of them, then the clock goes back to real time.
+        const real = new Date('2042-01-05T00:00:00.000Z')
+        const ids = [
+            await insertSchedule(tenantId, orgId, new Date(real.getTime() - 60 * MINUTE)),
+            await insertSchedule(tenantId, orgId, new Date(real.getTime() - 60 * MINUTE)),
+        ]
+        const { fakeDb } = await world()
+        const ahead = stubJobs()
+        await runDueSchedules(fakeDb, ahead, new Date(real.getTime() + 12 * 60 * MINUTE), { ...HINTED, maxItems: 1 })
+        expect(ahead.calls).toHaveLength(1)
+        const left = ids.find((id) => id !== (ahead.calls[0]!.payload as { scheduleId: string }).scheduleId)!
+        const back = stubJobs()
+        const { db, listed } = await listingCounter()
+        await runDueSchedules(db, back, new Date(real.getTime() + MINUTE), HINTED)
+        expect(listed).toContain(tenantId)
+        expect(back.calls.map((c) => (c.payload as { scheduleId: string }).scheduleId)).toContain(left)
+    })
+
+    test("a settle deletes at most its bound of one tenant's events, and the tenant is listed until the rest are gone", async () => {
+        const { fakeDb, tenantId } = await world()
+        const { sql } = await import('kysely')
+        const { EVENTS_SETTLED_PER_TENANT } = await import('./due-hints')
+        const { runDueSchedules } = await import('./schedules')
+        const now = new Date('2043-01-05T00:00:00.000Z')
+        const piled = EVENTS_SETTLED_PER_TENANT * 2 + 200
+        await sql`
+            INSERT INTO due_hint_events (tenant_id, drain, due)
+            SELECT ${tenantId}::uuid, 'schedules', ${new Date(now.getTime() - MINUTE)}::timestamptz
+            FROM generate_series(1, ${piled})
+        `.execute(fakeDb.getDb())
+        const remaining = [piled]
+        for (let tick = 0; tick < 3; tick++) {
+            const { db, listed } = await listingCounter()
+            await runDueSchedules(db, stubJobs(), now, HINTED)
+            expect(listed).toContain(tenantId)
+            remaining.push((await events(tenantId, 'schedules')).length)
+        }
+        expect(remaining).toEqual([piled, piled - EVENTS_SETTLED_PER_TENANT, piled - 2 * EVENTS_SETTLED_PER_TENANT, 0])
+    })
+
+    test('the events table has no unique key, so an append can wait on no other transaction', async () => {
+        const { fakeDb } = await world()
+        const { sql } = await import('kysely')
+        const unique = await sql<{ indexname: string }>`
+            SELECT i.relname AS indexname FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid
+            WHERE x.indrelid = 'public.due_hint_events'::regclass AND (x.indisunique OR x.indisprimary)
+        `.execute(fakeDb.getDb())
+        expect(unique.rows).toEqual([])
+    })
+})

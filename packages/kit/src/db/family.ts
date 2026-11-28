@@ -52,13 +52,15 @@ export interface DbFamily {
     ): Promise<{ id: string; version: string | number | null; snapshot: string }[]>
     /**
      * Sets the listed tenants' hints for `drain` by compare-and-set on the version each was read at (an insert when none
-     * was), and deletes the events of the tenants it set that the read identified by `snapshot` could see. One statement.
+     * was), and deletes, for each tenant it set, at most `perTenant` of its events that the read identified by `snapshot`
+     * could see. One statement.
      */
     settleDueHints(
         db: Kysely<DB>,
         drain: string,
         snapshot: string,
         rows: readonly { tenantId: string; listAfter: Date; version: string | null }[],
+        perTenant: number,
     ): Promise<void>
     /** The selected rows, locked for the rest of the transaction (`FOR UPDATE` in Postgres). Use with `$call`. */
     lockRow<D, TB extends keyof D, O>(query: SelectQueryBuilder<D, TB, O>): SelectQueryBuilder<D, TB, O>
@@ -97,12 +99,14 @@ const postgresFamily: DbFamily = {
                     )
             `.execute(db)
         ).rows,
-    settleDueHints: async (db, drain, snapshot, rows) => {
+    settleDueHints: async (db, drain, snapshot, rows, perTenant) => {
         const values = sql.join(
             rows.map((r) => sql`(${r.tenantId}::uuid, ${r.listAfter}::timestamptz, ${r.version}::bigint)`),
         )
         // An event the snapshot could not see was committed after the read: its tenant's listing may not have seen
-        // its row, so it stays, and the tenant is listed again.
+        // its row, so it stays, and the tenant is listed again. At most `perTenant` a tenant, read along the events
+        // index, so one tenant's backlog costs this statement no more than any other's; the rest stay, and only mean
+        // the tenant is listed again.
         await sql`
             WITH v (tenant_id, list_after, version) AS (VALUES ${values}),
             updated AS (
@@ -118,10 +122,18 @@ const postgresFamily: DbFamily = {
                 ON CONFLICT (tenant_id, drain) DO NOTHING
                 RETURNING tenant_id
             )
-            DELETE FROM public.due_hint_events e
-            WHERE e.drain = ${drain}
-                AND e.tenant_id IN (SELECT tenant_id FROM updated UNION ALL SELECT tenant_id FROM inserted)
-                AND pg_visible_in_snapshot(e.writer, ${snapshot}::pg_snapshot)
+            DELETE FROM public.due_hint_events d
+            WHERE d.ctid = ANY (ARRAY(
+                SELECT x.ctid
+                FROM (SELECT tenant_id FROM updated UNION ALL SELECT tenant_id FROM inserted) s
+                CROSS JOIN LATERAL (
+                    SELECT e.ctid FROM public.due_hint_events e
+                    WHERE e.tenant_id = s.tenant_id AND e.drain = ${drain}
+                        AND pg_visible_in_snapshot(e.writer, ${snapshot}::pg_snapshot)
+                    ORDER BY e.due
+                    LIMIT ${perTenant}
+                ) x
+            ))
         `.execute(db)
     },
     currentTime: () => sql<string>`now()`,

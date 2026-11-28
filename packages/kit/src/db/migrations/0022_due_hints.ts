@@ -113,10 +113,12 @@ export async function up(db: Kysely<any>): Promise<void> {
                 EXECUTE format('REVOKE ALL ON FUNCTION public.sssb_note_due() FROM %I', pg_get_userbyid(holder));
             END LOOP;
             -- Whatever else lets app_user in (membership of the owning role itself), this migration does not finish.
-            IF has_table_privilege('app_user', 'public.due_hints', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE')
-                OR has_any_column_privilege('app_user', 'public.due_hints', 'SELECT, INSERT, UPDATE')
-                OR has_table_privilege('app_user', 'public.due_hint_events', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE')
-                OR has_any_column_privilege('app_user', 'public.due_hint_events', 'SELECT, INSERT, UPDATE')
+            IF has_table_privilege('app_user', 'public.due_hints',
+                    'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                OR has_any_column_privilege('app_user', 'public.due_hints', 'SELECT, INSERT, UPDATE, REFERENCES')
+                OR has_table_privilege('app_user', 'public.due_hint_events',
+                    'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                OR has_any_column_privilege('app_user', 'public.due_hint_events', 'SELECT, INSERT, UPDATE, REFERENCES')
                 OR has_function_privilege('app_user', 'public.sssb_note_due()', 'EXECUTE') THEN
                 RAISE EXCEPTION 'app_user can still reach the due hints after every grant was revoked: is it a member of the role that owns them?';
             END IF;
