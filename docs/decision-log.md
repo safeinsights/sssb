@@ -9144,6 +9144,7 @@ Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its modul
 - **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
   gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
   filed separately.
+
 ## The keyless guard refuses what Clerk leaves open, and no more (2026-11-27, `fix/review-keyless-guard`)
 
 Finding A3 of the whole-branch review of `int-fixes`, against safeinsights/sssb#193's fix (the entry "The Clerk adapter:
