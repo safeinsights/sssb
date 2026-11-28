@@ -1,4 +1,5 @@
 import type { DbPort } from '../ports/db'
+import { family } from './family'
 
 /**
  * Which tenants a drain of the scheduled tick lists (safeinsights/sssb#202). Each drain lists a tenant's due rows
@@ -99,8 +100,7 @@ export async function raiseHint(
                         .select('tenant_id')
                         .where('tenant_id', '=', tenant.id)
                         .where('drain', '=', drain)
-                        .forUpdate()
-                        .skipLocked(),
+                        .$call(family.lockRowsNotHeld),
                 )
                 .execute()
         }

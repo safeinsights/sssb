@@ -39,6 +39,11 @@ export interface DbFamily {
     readonly isolation: DbIsolation
     /** A JSON value as a column parameter (`jsonb` in Postgres), safe for an array as well as an object. */
     json<T>(value: T): RawBuilder<T>
+    /**
+     * Locks the rows a query selects unless another transaction holds them, which it skips (`FOR UPDATE SKIP LOCKED` in
+     * Postgres): for a write that must never wait, and for which a skipped row is no harm (../db/due-hints.ts's raise).
+     */
+    lockRowsNotHeld<D, TB extends keyof D, O>(query: SelectQueryBuilder<D, TB, O>): SelectQueryBuilder<D, TB, O>
     /** The selected rows, locked for the rest of the transaction (`FOR UPDATE` in Postgres). Use with `$call`. */
     lockRow<D, TB extends keyof D, O>(query: SelectQueryBuilder<D, TB, O>): SelectQueryBuilder<D, TB, O>
     /** The database's own clock, as a value to write (`now()` in Postgres: the transaction's start). */
@@ -63,6 +68,7 @@ const postgresFamily: DbFamily = {
     isolation: 'rls',
     json: jsonb,
     lockRow: (query) => query.forUpdate(),
+    lockRowsNotHeld: (query) => query.forUpdate().skipLocked(),
     currentTime: () => sql<string>`now()`,
     keysetSlice: (query, { orderColumn, after, take }) => {
         // ONE reference to the ordering column, used by the comparison, the cursor rendering and the ORDER BY.
