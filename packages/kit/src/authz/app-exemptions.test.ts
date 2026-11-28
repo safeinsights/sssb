@@ -27,6 +27,11 @@ function app(routes: Record<string, string>, exemptions?: string): string {
     return dir
 }
 
+/** A scratch app's seed, written at `src/seed.ts` (`SEED_FILE`, by path under src/app): what a page's entry pins. */
+const SEED_MODULE =
+    "export const tenants = [{ slug: 'x' }]\nexport function findTenant(slug: string) { return tenants.find((t) => t.slug === slug) }\n"
+const SEED_FILE = { '../seed.ts': SEED_MODULE }
+
 const PING_EXEMPTION =
     "{ reason: 'a liveness ping to the partner, no product resource', mustMatch: { kind: 'calls', callees: ['partner.ping'] } }"
 
@@ -209,8 +214,14 @@ describe("an app's own exemptions", () => {
 })
 
 describe('reads-only entries: a way through for reads that touch no org data (safeinsights/sssb#220)', () => {
-    const readsOnly = (names: string[], reason = 'a public read of the listed values only') =>
+    const readsOnly = (names: Record<string, string>, reason = 'a public read of the listed values only') =>
         `{ reason: '${reason}', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(names)} } }`
+    /** The modules the routes below import, by path under src/app: each pin names one of them. */
+    const MODULES = {
+        '../../posts.ts': "export async function publicPosts() { return '' }\n",
+        '../cors.ts': "export const corsHeaders = { allow: 'GET' }\nexport async function load() { return '' }\n",
+        '../config/params.ts': "export const params = { verifyToken: 't' }\n",
+    }
     const FEED =
         "import { publicPosts } from '../../../posts'\nexport async function GET() { return new Response(await publicPosts()) }\n"
     const PREFLIGHT =
@@ -221,43 +232,46 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         "return q.get('hub.verify_token') === params.verifyToken ? new Response(q.get('hub.challenge')) : new Response(null, { status: 403 }) }\n"
 
     it('pass a public read outside src/app/api under outsideApi, and only the read', async () => {
-        const exemptions = `export default { outsideApi: { files: { 'feed.xml/route.ts': ${readsOnly(['publicPosts'])} } } }\n`
+        const exemptions = `export default { outsideApi: { files: { 'feed.xml/route.ts': ${readsOnly({ publicPosts: 'posts.ts' })} } } }\n`
         const scan = await scanApp(
-            app({ 'api/dockets/route.ts': AUTHORIZED_POST, 'feed.xml/route.ts': FEED }, exemptions),
+            app({ ...MODULES, 'api/dockets/route.ts': AUTHORIZED_POST, 'feed.xml/route.ts': FEED }, exemptions),
         )
         expect(scan.exemptionProblems).toEqual([])
         expect(scan.failures).toEqual([])
         // A mutation beside it can match no exemption outside src/app/api, as before.
         const withPost = await scanApp(
-            app({ 'api/dockets/route.ts': AUTHORIZED_POST, 'feed.xml/route.ts': FEED + OPEN_POST }, exemptions),
+            app(
+                { ...MODULES, 'api/dockets/route.ts': AUTHORIZED_POST, 'feed.xml/route.ts': FEED + OPEN_POST },
+                exemptions,
+            ),
         )
         expect(withPost.failures).toHaveLength(1)
         expect(withPost.failures[0]).toMatch(/^acme: \.\.\/feed\.xml\/route\.ts POST exports a mutating handler/)
     })
 
     it('fail a read that names anything beyond the listed names, or a global off the inert list', async () => {
-        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders'])} } }\n`
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'src/cors.ts' })} } }\n`
         const extra =
             "import { corsHeaders, load } from '../../../cors'\nexport async function OPTIONS() { return new Response(await load(), { headers: corsHeaders }) }\n"
         const fetching =
             "import { corsHeaders } from '../../../cors'\nexport async function OPTIONS() { return fetch('http://x', { headers: corsHeaders }) }\n"
         for (const src of [extra, fetching]) {
-            const scan = await scanApp(app({ 'api/cors/route.ts': src }, exemptions))
+            const scan = await scanApp(app({ ...MODULES, 'api/cors/route.ts': src }, exemptions))
             expect(scan.failures).toHaveLength(1)
             expect(scan.failures[0]).toMatch(/sits under an exemption that holds only when the handler is a read/)
         }
-        const ok = await scanApp(app({ 'api/cors/route.ts': PREFLIGHT }, exemptions))
+        const ok = await scanApp(app({ ...MODULES, 'api/cors/route.ts': PREFLIGHT }, exemptions))
         expect(ok.failures).toEqual([])
     })
 
     it('pass a handshake GET under the framework webhooks/ prefix, while its POST keeps the framework gate', async () => {
-        const exemptions = `export default { files: { 'webhooks/meta/route.ts': ${readsOnly(['params'])} } }\n`
+        const exemptions = `export default { files: { 'webhooks/meta/route.ts': ${readsOnly({ params: 'src/config/params.ts' })} } }\n`
         const wrapped =
             "import { withWebhookSecret } from '../../respond'\nexport const POST = withWebhookSecret(async () => Response.json({}))\n"
-        const pass = await scanApp(app({ 'api/webhooks/meta/route.ts': HANDSHAKE + wrapped }, exemptions))
+        const pass = await scanApp(app({ ...MODULES, 'api/webhooks/meta/route.ts': HANDSHAKE + wrapped }, exemptions))
         expect(pass.exemptionProblems).toEqual([])
         expect(pass.failures).toEqual([])
-        const open = await scanApp(app({ 'api/webhooks/meta/route.ts': HANDSHAKE + OPEN_POST }, exemptions))
+        const open = await scanApp(app({ ...MODULES, 'api/webhooks/meta/route.ts': HANDSHAKE + OPEN_POST }, exemptions))
         expect(open.failures).toHaveLength(1)
         expect(open.failures[0]).toMatch(
             /webhooks\/meta\/route\.ts POST sits under an exemption that holds only when the handler is itself a call to an imported withWebhookSecret/,
@@ -269,14 +283,19 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
             {
                 outsideApi: {
                     files: { 'feed/route.ts': { reason: 'r', mustMatch: { kind: 'calls', callees: ['publicPosts'] } } },
-                    prefixes: { 'api/': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } } },
+                    prefixes: { 'api/': { reason: 'r', mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } } } },
                 },
                 files: {
                     'webhooks/a/route.ts': { reason: 'r', mustMatch: { kind: 'calls', callees: ['x'] } },
-                    'profile/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } },
-                    'service/jobs/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } },
+                    'profile/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } } },
+                    'service/jobs/route.ts': {
+                        reason: 'r',
+                        mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } },
+                    },
                 },
-                prefixes: { 'webhooks/meta/': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } } },
+                prefixes: {
+                    'webhooks/meta/': { reason: 'r', mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } } },
+                },
             },
             'x',
         )
@@ -299,7 +318,10 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         const { problems } = appExemptionsFrom(
             {
                 files: {
-                    'simulator/dump/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['world'] } },
+                    'simulator/dump/route.ts': {
+                        reason: 'r',
+                        mustMatch: { kind: 'reads-only', names: { world: 'src/world.ts' } },
+                    },
                 },
             },
             'x',
@@ -316,10 +338,18 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
             {
                 outsideApi: {
                     files: {
-                        '(g)/api/service/x/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['p'] } },
+                        '(g)/api/service/x/route.ts': {
+                            reason: 'r',
+                            mustMatch: { kind: 'reads-only', names: { p: 'src/p.ts' } },
+                        },
                     },
                 },
-                files: { '(g)/service/x/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['p'] } } },
+                files: {
+                    '(g)/service/x/route.ts': {
+                        reason: 'r',
+                        mustMatch: { kind: 'reads-only', names: { p: 'src/p.ts' } },
+                    },
+                },
             },
             'x',
         )
@@ -343,9 +373,16 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
     })
 
     it('take a dynamic segment literally in a key, so a public read under [locale] can be named', async () => {
-        const exemptions = `export default { outsideApi: { files: { '(site)/[locale]/feed.xml/route.ts': ${readsOnly(['publicPosts'])} } } }\n`
+        const exemptions = `export default { outsideApi: { files: { '(site)/[locale]/feed.xml/route.ts': ${readsOnly({ publicPosts: 'src/app/posts.ts' })} } } }\n`
         const scan = await scanApp(
-            app({ 'api/dockets/route.ts': AUTHORIZED_POST, '(site)/[locale]/feed.xml/route.ts': FEED }, exemptions),
+            app(
+                {
+                    'api/dockets/route.ts': AUTHORIZED_POST,
+                    '(site)/[locale]/feed.xml/route.ts': FEED,
+                    'posts.ts': MODULES['../../posts.ts'],
+                },
+                exemptions,
+            ),
         )
         expect(scan.exemptionProblems).toEqual([])
         expect(scan.failures).toEqual([])
@@ -366,7 +403,7 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
     })
 
     it('refuse two keys that name one route once groups and slots are dropped, and apply neither', () => {
-        const entry = { reason: 'r', mustMatch: { kind: 'reads-only', names: ['posts'] } }
+        const entry = { reason: 'r', mustMatch: { kind: 'reads-only', names: { posts: 'src/posts.ts' } } }
         const { problems, exemptions } = appExemptionsFrom(
             { files: { 'feed/route.ts': entry, '(g)/feed/route.ts': entry, '@s/feed/route.ts': entry } },
             'x',
@@ -380,12 +417,13 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
 
     it("count a prefix entry's names only from the reads it governs", async () => {
         const exemptions =
-            `export default { prefixes: { 'cors/': ${readsOnly(['corsHeaders'])} }, ` +
-            `files: { 'cors/own/route.ts': ${readsOnly(['corsHeaders'])} } }\n`
+            `export default { prefixes: { 'cors/': ${readsOnly({ corsHeaders: 'src/cors.ts' })} }, ` +
+            `files: { 'cors/own/route.ts': ${readsOnly({ corsHeaders: 'src/cors.ts' })} } }\n`
         const scan = await scanApp(
             app(
                 {
-                    'api/cors/own/route.ts': PREFLIGHT,
+                    ...MODULES,
+                    'api/cors/own/route.ts': PREFLIGHT.replace("'../../../cors'", "'../../../../cors'"),
                     'api/cors/other/route.ts': `import { authorize } from '@sssb/kit/authz/authorize'\nimport { corsHeaders } from '../../../../cors'\nconst user = null as never\nexport function GET() { authorize(user, 'depot', 'read', { type: 'Docket', orgId: 'depot' }); return new Response(null, { headers: corsHeaders }) }\n`,
                 },
                 exemptions,
@@ -398,62 +436,167 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
     })
 
     it('call no name unused beside a read the gate refuses outright', async () => {
-        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders'])} } }\n`
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'src/cors.ts' })} } }\n`
         const refused =
             "import { corsHeaders } from '../../../cors'\nexport function OPTIONS() { return fetch('http://x', { headers: corsHeaders }) }\n"
-        const scan = await scanApp(app({ 'api/cors/route.ts': refused }, exemptions))
+        const scan = await scanApp(app({ ...MODULES, 'api/cors/route.ts': refused }, exemptions))
         expect(scan.failures).toHaveLength(1)
         expect(scan.failures[0]).toMatch(/It cannot pass one: `fetch` is a global off the inert list/)
         expect(scan.exemptionProblems).toEqual([])
     })
 
-    it('refuse a listed name the reads under one entry import from two modules', async () => {
-        const exemptions = `export default { prefixes: { 'public/': ${readsOnly(['getPosts'])} } }\n`
+    it('pin each listed name to its module: a read importing it from another module fails, and so does the entry', async () => {
+        const exemptions = `export default { prefixes: { 'public/': ${readsOnly({ getPosts: 'src/lib/public-feed.ts' })} } }\n`
         const feed =
             "import { getPosts } from '../../../../lib/public-feed'\nexport async function GET() { return Response.json(await getPosts()) }\n"
         const leak =
             "import { getPosts } from '../../../../db/posts'\nexport async function GET() { return Response.json(await getPosts()) }\n"
+        const modules = {
+            '../lib/public-feed.ts': 'export async function getPosts() { return [] }\n',
+            '../db/posts.ts': 'export async function getPosts(org?: string) { return [org] }\n',
+        }
         const scan = await scanApp(
-            app({ 'api/public/feed/route.ts': feed, 'api/public/export/route.ts': leak }, exemptions),
+            app({ ...modules, 'api/public/feed/route.ts': feed, 'api/public/export/route.ts': leak }, exemptions),
         )
-        expect(scan.failures).toEqual([])
-        expect(scan.exemptionProblems).toEqual([
+        expect(scan.failures).toEqual([
             expect.stringMatching(
-                /prefixes `public\/` lists `getPosts`, which the reads it covers import from more than one module \(posts, public-feed\); each listed name must come from one/,
+                /^acme: public\/export\/route\.ts GET sits under an exemption .* It imports `getPosts` from '\.\.\/\.\.\/\.\.\/\.\.\/db\/posts' \(src\/db\/posts\.ts\), which the gate pins to src\/lib\/public-feed\.ts\./,
             ),
+        ])
+        expect(scan.exemptionProblems).toEqual([
+            "acme/authz-exemptions.mjs: prefixes `public/` pins `getPosts` to src/lib/public-feed.ts, but src/app/api/public/export/route.ts imports it from '../../../../db/posts' (src/db/posts.ts): the entry's reason was written for the module it pins, so it does not cover another. Import the name from src/lib/public-feed.ts, or, only if the reason covers the module the read imports, pin that one",
         ])
         const one = await scanApp(
             app(
-                { 'api/public/feed/route.ts': feed, 'api/public/other/route.ts': feed.replace('feed/route', 'x') },
+                {
+                    ...modules,
+                    'api/public/feed/route.ts': feed,
+                    'api/public/other/route.ts': feed,
+                },
                 exemptions,
             ),
         )
+        expect(one.failures).toEqual([])
         expect(one.exemptionProblems).toEqual([])
     })
 
+    it('match a pin by the file the import resolves to, the file that declares it, or a non-relative specifier', async () => {
+        const route = (specifier: string) =>
+            `import { corsHeaders } from '${specifier}'\nexport function OPTIONS() { return new Response(null, { headers: corsHeaders }) }\n`
+        const modules = {
+            '../lib/cors.ts': "export const corsHeaders = { allow: 'GET' }\n",
+            '../lib/index.ts': "export { corsHeaders } from './cors'\n",
+            '../../node_modules/acme-cors/package.json': JSON.stringify({ name: 'acme-cors', main: 'index.js' }),
+            '../../node_modules/acme-cors/index.js': "export const corsHeaders = { allow: 'GET' }\n",
+            '../../tsconfig.json': JSON.stringify({ compilerOptions: { paths: { '@/*': ['./src/*'] } } }),
+        }
+        const verdict = async (specifier: string, pin: string) => {
+            const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: pin })} } }\n`
+            const scan = await scanApp(app({ ...modules, 'api/cors/route.ts': route(specifier) }, exemptions))
+            return [...scan.failures, ...scan.exemptionProblems].length === 0
+        }
+        // The resolved file, and through the barrel to the file that declares it.
+        expect(await verdict('../../../lib/cors', 'src/lib/cors.ts')).toBe(true)
+        expect(await verdict('../../../lib', 'src/lib/index.ts')).toBe(true)
+        expect(await verdict('../../../lib', 'src/lib/cors.ts')).toBe(true)
+        // A package by its specifier; a relative specifier is never a pin, nor a path without its extension.
+        expect(await verdict('acme-cors', 'acme-cors')).toBe(true)
+        expect(await verdict('../../../lib/cors', 'src/lib/cors')).toBe(false)
+        expect(await verdict('../../../lib/cors', '../../../lib/cors')).toBe(false)
+        expect(await verdict('../../../lib/cors', 'src/lib/index.ts')).toBe(false)
+        expect(await verdict('acme-cors', 'node_modules/acme-cors/index.js')).toBe(false)
+        expect(await verdict('acme-cors', 'other-cors')).toBe(false)
+        // A tsconfig alias: by the specifier it writes, or the file it lands on.
+        expect(await verdict('@/lib/cors', 'src/lib/cors.ts')).toBe(true)
+        expect(await verdict('@/lib/cors', '@/lib/cors')).toBe(true)
+        expect(await verdict('@/lib', 'src/lib/cors.ts')).toBe(true)
+        expect(await verdict('@/lib/cors', '@/lib')).toBe(false)
+    })
+
+    it('does not let a nearer node_modules swap a package under its pin', async () => {
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'acme-cors' })} } }\n`
+        const pkg = (dir: string, body: string) => ({
+            [`${dir}/acme-cors/package.json`]: JSON.stringify({ name: 'acme-cors', main: 'index.js' }),
+            [`${dir}/acme-cors/index.js`]: body,
+        })
+        const scan = await scanApp(
+            app(
+                {
+                    ...pkg('../../node_modules', "export const corsHeaders = { allow: 'GET' }\n"),
+                    ...pkg('api/cors/node_modules', 'export async function corsHeaders(org) { return [org] }\n'),
+                    'api/cors/route.ts':
+                        "import { corsHeaders } from 'acme-cors'\nexport function OPTIONS() { return new Response(null, { headers: corsHeaders }) }\n",
+                },
+                exemptions,
+            ),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(
+                /It imports `corsHeaders` from 'acme-cors' \(a module no pin can name: outside the app, or through a node_modules nearer the file\), which the gate pins to acme-cors\./,
+            ),
+        ])
+        expect(scan.exemptionProblems).toEqual([
+            expect.stringMatching(
+                /pins `corsHeaders` to acme-cors, but src\/app\/api\/cors\/route\.ts imports it from 'acme-cors' \(a module no pin can name/,
+            ),
+        ])
+    })
+
     it('call a listed name stale when no read handler it covers names it', async () => {
-        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders', 'db'])} } }\n`
-        const scan = await scanApp(app({ 'api/cors/route.ts': PREFLIGHT }, exemptions))
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'src/cors.ts', db: 'src/db.ts' })} } }\n`
+        const scan = await scanApp(app({ ...MODULES, 'api/cors/route.ts': PREFLIGHT }, exemptions))
         expect(scan.failures).toEqual([])
         expect(scan.exemptionProblems).toEqual([
             'acme/authz-exemptions.mjs: files `cors/route.ts` lists `db`, which no read handler it covers names; list only what the read uses',
         ])
     })
 
-    it('refuse a reads-only gate whose names are not names', () => {
-        for (const names of [[], ['a.b'], [''], [3]]) {
+    it('refuse a reads-only gate whose names are not a map of names to pinned modules', () => {
+        for (const names of [
+            [],
+            ['corsHeaders'],
+            {},
+            null,
+            'corsHeaders',
+            { 'a.b': 'src/a.ts' },
+            { a: '' },
+            { a: 3 },
+            { a: ' src/a.ts' },
+            { a: '../lib/a.ts' },
+            { a: 'src/../a.ts' },
+            { a: './a.ts' },
+            { a: '/abs/a.ts' },
+            { a: 'src\\a.ts' },
+            { a: 'src//a.ts' },
+        ]) {
             const { problems } = appExemptionsFrom(
                 { files: { 'a/route.ts': { reason: 'r', mustMatch: { kind: 'reads-only', names } } } },
                 'x',
             )
-            expect(problems, JSON.stringify(names)).toEqual([expect.stringMatching(/has no checkable mustMatch gate/)])
+            expect(problems, JSON.stringify(names)).toEqual([
+                expect.stringMatching(
+                    /has a reads-only gate whose `names` is not a map of each import's exported name/,
+                ),
+            ])
         }
+        const ok = appExemptionsFrom(
+            {
+                files: {
+                    'a/route.ts': {
+                        reason: 'r',
+                        mustMatch: { kind: 'reads-only', names: { a: 'src/a.ts', b: '@acme/ui', $c: 'next/headers' } },
+                    },
+                },
+            },
+            'x',
+        )
+        expect(ok.problems).toEqual([])
     })
 
     it('call a reads-only entry stale where no read handler is, and an outsideApi entry by its own key', async () => {
         const exemptions =
-            `export default { files: { 'cors/route.ts': ${readsOnly(['corsHeaders'])} }, ` +
-            `outsideApi: { files: { 'gone/route.ts': ${readsOnly(['publicPosts'])} } } }\n`
+            `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'src/cors.ts' })} }, ` +
+            `outsideApi: { files: { 'gone/route.ts': ${readsOnly({ publicPosts: 'posts.ts' })} } } }\n`
         const scan = await scanApp(app({ 'api/cors/route.ts': AUTHORIZED_POST }, exemptions))
         expect(scan.exemptionProblems).toEqual([
             "acme/authz-exemptions.mjs: files `cors/route.ts` is stale — the app's src/app/api has no read handler there",
@@ -720,8 +863,9 @@ describe('the seam review (build output, unreadable directories)', () => {
 })
 
 describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#221)', () => {
-    const readsOnly = (names: string[], reason = 'reads the seed world only') =>
-        `{ reason: '${reason}', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(names)} } }`
+    /** A reads-only entry pinning each of `names` to `module` (the scratch app's seed, by default). */
+    const readsOnly = (names: string[], module = 'src/seed.ts', reason = 'reads the seed world only') =>
+        `{ reason: '${reason}', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(Object.fromEntries(names.map((n) => [n, module])))} } }`
     const SEED_PAGE =
         "import { findTenant } from '../../../seed'\nexport default function P() { return findTenant('x') }\n"
     const MEMBERS_PAGE =
@@ -731,6 +875,7 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
         "import { setRequestLocale } from 'next-intl/server'\nimport { Screen } from './screen'\n" +
         'export default function P() { setRequestLocale("en"); return <Screen /> }\n'
     const CLIENT_SCREEN = "'use client'\nexport function Screen() { return null }\n"
+    /** The scratch app's seed, `src/seed.ts`, which the pages below import (by path under src/app). */
 
     it('walks every page under src/app, judges each export, and reports a failing one by its URL path and export', async () => {
         const scan = await scanApp(
@@ -768,12 +913,15 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
 
     it('pass a page that reads the seed under an outsideApi reads-only entry for its file, and only with the listed names', async () => {
         const exemptions = `export default { outsideApi: { files: { '[locale]/signin/page.tsx': ${readsOnly(['findTenant'])} } } }\n`
-        const scan = await scanApp(app({ '[locale]/signin/page.tsx': SEED_PAGE }, exemptions))
+        const scan = await scanApp(app({ ...SEED_FILE, '[locale]/signin/page.tsx': SEED_PAGE }, exemptions))
         expect(scan.exemptionProblems).toEqual([])
         expect(scan.failures).toEqual([])
         // The entry covers that page alone: the same read elsewhere fails.
         const elsewhere = await scanApp(
-            app({ '[locale]/signin/page.tsx': SEED_PAGE, '[locale]/dashboard/page.tsx': SEED_PAGE }, exemptions),
+            app(
+                { ...SEED_FILE, '[locale]/signin/page.tsx': SEED_PAGE, '[locale]/dashboard/page.tsx': SEED_PAGE },
+                exemptions,
+            ),
         )
         expect(elsewhere.failures).toEqual([
             expect.stringMatching(/^acme: \.\.\/\[locale\]\/dashboard\/page\.tsx default/),
@@ -782,6 +930,7 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
         const more = await scanApp(
             app(
                 {
+                    ...SEED_FILE,
                     '[locale]/signin/page.tsx': SEED_PAGE.replace("findTenant('x')", "findTenant('x') ?? db").replace(
                         '\nexport',
                         "\nimport { db } from '../../../db'\nexport",
@@ -806,9 +955,9 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
 
     it('cover a layout and a group layout that share one URL with one entry, each judged on its own', async () => {
         const exemptions = `export default { outsideApi: { files: { '[locale]/layout.tsx': ${readsOnly(['findTenant', 'tenants'])} } } }\n`
-        const TENANTS = "import { tenants } from '../../../seed'\nexport default function L() { return tenants }\n"
+        const TENANTS = "import { tenants } from '../../seed'\nexport default function L() { return tenants }\n"
         const scan = await scanApp(
-            app({ '[locale]/layout.tsx': TENANTS, '[locale]/(app)/layout.tsx': SEED_PAGE }, exemptions),
+            app({ ...SEED_FILE, '[locale]/layout.tsx': TENANTS, '[locale]/(app)/layout.tsx': SEED_PAGE }, exemptions),
         )
         expect(scan.failures).toEqual([])
         expect(scan.exemptionProblems).toEqual([])
@@ -817,10 +966,13 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
             {
                 outsideApi: {
                     files: {
-                        '[locale]/layout.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['tenants'] } },
+                        '[locale]/layout.tsx': {
+                            reason: 'r',
+                            mustMatch: { kind: 'reads-only', names: { tenants: 'src/seed.ts' } },
+                        },
                         '[locale]/(app)/layout.tsx': {
                             reason: 'r',
-                            mustMatch: { kind: 'reads-only', names: ['findTenant'] },
+                            mustMatch: { kind: 'reads-only', names: { findTenant: 'src/seed.ts' } },
                         },
                     },
                 },
@@ -832,7 +984,7 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
     })
 
     it('take a page, layout or metadata route file as an outsideApi.files key, and nothing else that is not a route', () => {
-        const entry = { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } }
+        const entry = { reason: 'r', mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } } }
         const keys = [
             'a/page.tsx',
             'layout.ts',
@@ -878,7 +1030,9 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
         expect(client.exemptionProblems).toEqual([
             "acme/authz-exemptions.mjs: outsideApi.files `x/page.tsx` is stale — the app's src/app has no read handler there",
         ])
-        const unused = await scanApp(app({ 'x/page.tsx': SEED_PAGE }, exemptions))
+        const unused = await scanApp(
+            app({ ...SEED_FILE, 'x/page.tsx': SEED_PAGE.replace('../../../seed', '../../seed') }, exemptions),
+        )
         expect(unused.failures).toEqual([])
         expect(unused.exemptionProblems).toEqual([
             'acme/authz-exemptions.mjs: outsideApi.files `x/page.tsx` lists `tenants`, which no read handler it covers names; list only what the read uses',
@@ -897,8 +1051,8 @@ describe('pages, layouts and metadata routes are judged too (safeinsights/sssb#2
 })
 
 describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
-    const readsOnly = (names: string[]) =>
-        `{ reason: 'reads nothing org-scoped', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(names)} } }`
+    const readsOnly = (names: string[], module = 'src/seed.ts') =>
+        `{ reason: 'reads nothing org-scoped', mustMatch: { kind: 'reads-only', names: ${JSON.stringify(Object.fromEntries(names.map((n) => [n, module])))} } }`
     const RENDERS =
         "import { MemberList } from '../../components/member-list'\nexport default function P() { return <MemberList /> }\n"
 
@@ -971,9 +1125,9 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
 
     it('applies no entry to an intercepting page, and calls an entry only it would use stale', async () => {
         const SEED =
-            "import { findTenant } from '../../../../seed'\nexport default function P() { return findTenant('x') }\n"
+            "import { findTenant } from '../../../seed'\nexport default function P() { return findTenant('x') }\n"
         const exemptions = `export default { outsideApi: { files: { '@modal/(.)photo/page.tsx': ${readsOnly(['findTenant'])} } } }\n`
-        const scan = await scanApp(app({ '@modal/(.)photo/page.tsx': SEED }, exemptions))
+        const scan = await scanApp(app({ ...SEED_FILE, '@modal/(.)photo/page.tsx': SEED }, exemptions))
         expect(scan.failures).toEqual([
             expect.stringMatching(/so no exemption applies to it: authorize, or read nothing/),
         ])
@@ -987,12 +1141,16 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
 
     it('covers the pages under an outsideApi prefix entry too, which fail without it', async () => {
         const SEED =
-            "import { findTenant } from '../../../../seed'\nexport default function P() { return findTenant('x') }\n"
+            "import { findTenant } from '../../../seed'\nexport default function P() { return findTenant('x') }\n"
         const exemptions = `export default { outsideApi: { prefixes: { 'public/': ${readsOnly(['findTenant'])} } } }\n`
-        const scan = await scanApp(app({ 'public/about/page.tsx': SEED, 'public/team/page.tsx': SEED }, exemptions))
+        const scan = await scanApp(
+            app({ ...SEED_FILE, 'public/about/page.tsx': SEED, 'public/team/page.tsx': SEED }, exemptions),
+        )
         expect(scan.failures).toEqual([])
         expect(scan.exemptionProblems).toEqual([])
-        const without = await scanApp(app({ 'public/about/page.tsx': SEED, 'public/team/page.tsx': SEED }))
+        const without = await scanApp(
+            app({ ...SEED_FILE, 'public/about/page.tsx': SEED, 'public/team/page.tsx': SEED }),
+        )
         expect(without.failures).toEqual([
             expect.stringMatching(/^acme: \.\.\/public\/about\/page\.tsx default .*it names `findTenant`/),
             expect.stringMatching(/^acme: \.\.\/public\/team\/page\.tsx default .*it names `findTenant`/),

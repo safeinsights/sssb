@@ -238,8 +238,10 @@ export interface ScanRoot {
  *   `@sssb/kit/ports/errors`, or a global `…Error`), no parameter runs code before it (a default), and the file
  *   assigns to none of the globals that branch builds (`Response`, `JSON`, an `…Error`), so the real-mode path
  *   does nothing.
- * - `reads-only`: a READ handler (GET, HEAD, OPTIONS) that reads nothing (`readsNothing`) but the `names` listed:
- *   named imports, by their exported name (`corsHeaders`, `params`, `publicPosts`), each from one module. No
+ * - `reads-only`: a READ handler (GET, HEAD, OPTIONS) that reads nothing (`readsNothing`) but the `names` listed, a
+ *   map of each named import's exported name to the module it must come from (`{ corsHeaders: 'src/lib/cors.ts' }`):
+ *   the PIN (`ImportSource.pins` says what one matches), so a same-named export of another module is not covered by a
+ *   reason written for the pinned one (safeinsights/sssb#220, the authorization review's Z2). No
  *   value of the route's own file can be listed, since code of the file can change it. Every other name it refers to from outside itself is an
  *   inert value, and it names no global off the inert list (`fetch`, `process`). It never holds for a mutation, and an
  *   entry whose gate it is applies to reads only, so a mutation at its path is judged by the exemption it would have
@@ -251,7 +253,23 @@ export type Gate =
     | { kind: 'wrapped-by'; callees: readonly string[] }
     | { kind: 'calls'; callees: readonly string[] }
     | { kind: 'opens-with-simulated-404' }
-    | { kind: 'reads-only'; names: readonly string[] }
+    | { kind: 'reads-only'; names: Readonly<Record<string, string>> }
+
+/**
+ * Where one name a handler reads comes from (`HandlerFacts.outsideSources`): the import's specifier, and the pins a
+ * `reads-only` gate may give the name and hold for this import (`RootScanner.pinsOf`):
+ *
+ * - the specifier itself, when it is not relative (a package's `next/headers`, `@sssb/kit/adapters/fake/auth`, or an
+ *   alias's `@/seed`) and it resolves from the app's directory to the file it resolves to here, so a `node_modules`
+ *   nearer the importing file cannot swap the module under the pin;
+ * - the app-relative path, `/`-separated and with its extension, of the file the import resolves to, and of the file
+ *   that declares the export (followed through re-exports): `src/seed/index.ts`, `src/lib/cors.ts`. Only a file inside
+ *   the app's directory and not through a `node_modules` has one.
+ */
+export interface ImportSource {
+    specifier: string
+    pins: readonly string[]
+}
 
 /** What the analyser found on one handler's path. */
 export interface HandlerFacts {
@@ -270,8 +288,8 @@ export interface HandlerFacts {
     outsideNames: ReadonlySet<string> | null
     /** Why `outsideNames` is null (the first thing no name can excuse), or null when it is not. */
     outsideRefusal: string | null
-    /** The module each of `outsideNames` is imported from (resolved where it resolves), or null with them. */
-    outsideSources: ReadonlyMap<string, string> | null
+    /** Where each of `outsideNames` is imported from (one source per import that names it), or null with them. */
+    outsideSources: ReadonlyMap<string, readonly ImportSource[]> | null
     /**
      * The handler is a function (not a wrapper's result) whose code, read lexically, names nothing from outside it
      * but inert globals, a few named imports and literal constants (`readsNothing`), so the only data in its reach is
@@ -724,7 +742,7 @@ export function gateHolds(gate: Gate, facts: HandlerFacts, verb?: string): boole
                 verb !== undefined &&
                 isReadVerb(verb) &&
                 facts.outsideNames !== null &&
-                [...facts.outsideNames].every((name) => gate.names.includes(name))
+                [...facts.outsideNames].every((name) => isPinned(gate, name, facts))
             )
         case 'wrapped-by':
             return facts.wrappedBy !== null && gate.callees.includes(facts.wrappedBy)
@@ -733,6 +751,54 @@ export function gateHolds(gate: Gate, facts: HandlerFacts, verb?: string): boole
         case 'opens-with-simulated-404':
             return facts.opensWithSimulated404
     }
+}
+
+/** The module a `reads-only` gate pins `name` to, or undefined when it does not list the name. */
+function pinOf(gate: Extract<Gate, { kind: 'reads-only' }>, name: string): string | undefined {
+    return Object.hasOwn(gate.names, name) ? gate.names[name] : undefined
+}
+
+/** Whether a `reads-only` gate lists `name`, and every import of it the handler makes is from the module it pins. */
+function isPinned(gate: Extract<Gate, { kind: 'reads-only' }>, name: string, facts: HandlerFacts): boolean {
+    const pin = pinOf(gate, name)
+    const sources = facts.outsideSources?.get(name)
+    return (
+        pin !== undefined && sources !== undefined && sources.length > 0 && sources.every((s) => s.pins.includes(pin))
+    )
+}
+
+/**
+ * What a read named that a `reads-only` gate does not allow, for its failure: the names it does not list, and each
+ * listed name imported from another module than its pin, with the module it came from.
+ */
+function readsOnlyShortfall(gate: Extract<Gate, { kind: 'reads-only' }>, facts: HandlerFacts): string {
+    const names = [...(facts.outsideNames ?? [])]
+    const unlisted = names.filter((n) => pinOf(gate, n) === undefined)
+    const elsewhere = names.flatMap((n) => {
+        const pin = pinOf(gate, n)
+        if (pin === undefined) return []
+        const sources = facts.outsideSources?.get(n) ?? []
+        if (sources.length === 0)
+            return [`\`${n}\` from a module the scan could not place, which the gate pins to ${pin}`]
+        return sources
+            .filter((source) => !source.pins.includes(pin))
+            .map((source) => `\`${n}\` from ${describeSource(source)}, which the gate pins to ${pin}`)
+    })
+    return [
+        ...(unlisted.length > 0
+            ? [`it names ${unlisted.map((n) => `\`${n}\``).join(', ')}, which the gate does not list`]
+            : []),
+        ...(elsewhere.length > 0 ? [`it imports ${elsewhere.join('; ')}`] : []),
+    ].join('; and ')
+}
+
+/** An import's module as a failure names it: the specifier, and the file it lands on in the app, if it does. */
+export function describeSource(source: ImportSource): string {
+    const [file] = source.pins.filter((pin) => pin !== source.specifier)
+    if (file !== undefined) return `'${source.specifier}' (${file})`
+    return source.pins.includes(source.specifier)
+        ? `'${source.specifier}'`
+        : `'${source.specifier}' (a module no pin can name: outside the app, or through a node_modules nearer the file)`
 }
 
 export function describeGate(gate: Gate): string {
@@ -745,7 +811,9 @@ export function describeGate(gate: Gate): string {
         case 'reads-only':
             return (
                 `the handler is a read (GET, HEAD or OPTIONS, or a page's export) that names nothing from outside itself but inert values ` +
-                `and ${gate.names.map((name) => `\`${name}\``).join(', ')} (no other import or helper, and no global ` +
+                `and ${Object.entries(gate.names)
+                    .map(([name, module]) => `\`${name}\` from ${module}`)
+                    .join(', ')} (no other import or helper, and no global ` +
                 `off the inert list, such as fetch or process)`
             )
         case 'opens-with-simulated-404':
@@ -789,10 +857,7 @@ export function judge(route: ScannedRoute, handler: Handler, policy: ScanPolicy)
                 ? ''
                 : facts.outsideNames === null
                   ? ` It cannot pass one: ${facts.outsideRefusal ?? 'it does something no name can excuse'}.`
-                  : ` It names ${[...facts.outsideNames]
-                        .filter((n) => !gate.names.includes(n))
-                        .map((n) => `\`${n}\``)
-                        .join(', ')}, which the gate does not list.`
+                  : ` ${capitalize(readsOnlyShortfall(gate, facts))}.`
         // A read the webhook guard does not cover (a provider's handshake) has one other way through.
         const hint =
             read && gate.kind !== 'reads-only' && route.rel.startsWith('webhooks/')
@@ -867,14 +932,13 @@ function judgePage(
     }
     if (facts.reachesAuthorize || facts.readsNothing) return undefined
     const names = facts.outsideNames
-    const gateNames = exemption?.mustMatch.kind === 'reads-only' ? exemption.mustMatch.names : []
+    const gate = exemption?.mustMatch.kind === 'reads-only' ? exemption.mustMatch : undefined
     const what =
         names === null
             ? (facts.outsideRefusal ?? 'it does something no name can excuse')
-            : `it names ${[...names]
-                  .filter((n) => !gateNames.includes(n))
-                  .map((n) => `\`${n}\``)
-                  .join(', ')}`
+            : gate !== undefined
+              ? readsOnlyShortfall(gate, facts)
+              : `it names ${[...names].map((n) => `\`${n}\``).join(', ')}`
     if (exemption) {
         return (
             `${where} is a page export (a read) under an exemption that holds only when ` +
@@ -900,6 +964,10 @@ function judgePage(
             : `Only if it reads nothing org-scoped, name it in the app's authz-exemptions.mjs under \`outsideApi\` (keys ` +
               `relative to src/app), with a \`reads-only\` gate listing the imports it reads.`)
     )
+}
+
+function capitalize(text: string): string {
+    return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 /** The page allow-list, as a failure message names it: built from PAGE_IMPORTS and PAGE_MEMBERS, so it cannot drift. */
@@ -1047,6 +1115,59 @@ class RootScanner {
     }
 
     /**
+     * The declaration the export `name` of the module `specifier` names, imported from `from`, followed through
+     * re-exports to the module that declares it; undefined for a module that does not resolve, a missing export, and a
+     * re-export that cannot be followed or leads back to itself.
+     */
+    private declaringBinding(
+        from: Source,
+        specifier: string,
+        name: string,
+    ): Extract<Binding, { kind: 'decl' }> | undefined {
+        let binding: Binding | undefined = { kind: 'module', src: from, specifier, name }
+        const seen = new Set<string>()
+        while (binding?.kind === 'module') {
+            const target = this.resolve(binding.src, binding.specifier)
+            if (typeof target === 'string') return undefined
+            const key = `${target.fileName}\0${binding.name}`
+            if (seen.has(key)) return undefined
+            seen.add(key)
+            binding = this.exportNamed(target, binding.name, new Set())
+        }
+        return binding?.kind === 'decl' ? binding : undefined
+    }
+
+    /**
+     * The pins a `reads-only` gate may give the export `name` of `specifier`, imported from `from`, and hold
+     * (`ImportSource`): the specifier when it is not relative and resolves from the app's directory to the file it
+     * resolves to from `from`; the app-relative path of that file; and that of the file declaring the export.
+     */
+    private pinsOf(from: Source, specifier: string, name: string): string[] {
+        const pins = new Set<string>()
+        const resolvedFrom = (file: string) =>
+            ts.resolveModuleName(specifier, file, this.resolution, ts.sys).resolvedModule?.resolvedFileName
+        const resolved = resolvedFrom(from.fileName)
+        if (!/^\.\.?(?:\/|$)/.test(specifier) && !path.isAbsolute(specifier)) {
+            if (resolvedFrom(path.join(this.appDir, 'package.json')) === resolved) pins.add(specifier)
+        }
+        const inApp = (file: string): string | undefined => {
+            const rel = path
+                .relative(this.appReal, realpathOrUndefined(file) ?? file)
+                .split(path.sep)
+                .join('/')
+            const segments = rel.split('/')
+            return rel === '' || path.isAbsolute(rel) || segments[0] === '..' || segments.includes('node_modules')
+                ? undefined
+                : rel
+        }
+        for (const file of [resolved, this.declaringBinding(from, specifier, name)?.src.fileName]) {
+            const rel = file === undefined ? undefined : inApp(file)
+            if (rel !== undefined) pins.add(rel)
+        }
+        return [...pins]
+    }
+
+    /**
      * Whether the export `name` of the module `specifier` names, imported from `from`, is a Server Action the scan
      * judges on its own (`scanServerActions`), so a page may hand it on by reference (safeinsights/sssb#221): followed
      * through re-exports to the module that declares it, as `isRenderable` follows a component, that module is a file
@@ -1056,17 +1177,8 @@ class RootScanner {
      * anything else exported, are not one.
      */
     private isJudgedServerAction(from: Source, specifier: string, name: string): boolean {
-        let binding: Binding | undefined = { kind: 'module', src: from, specifier, name }
-        const seen = new Set<string>()
-        while (binding?.kind === 'module') {
-            const target = this.resolve(binding.src, binding.specifier)
-            if (typeof target === 'string') return false
-            const key = `${target.fileName}\0${binding.name}`
-            if (seen.has(key)) return false
-            seen.add(key)
-            binding = this.exportNamed(target, binding.name, new Set())
-        }
-        if (binding?.kind !== 'decl') return false
+        const binding = this.declaringBinding(from, specifier, name)
+        if (binding === undefined) return false
         const real = realpathOrUndefined(binding.src.fileName)
         const srcDir = realpathOrUndefined(path.join(this.appDir, 'src'))
         if (real === undefined || srcDir === undefined || !real.startsWith(srcDir + path.sep)) return false
@@ -1370,15 +1482,17 @@ class RootScanner {
                       }
                     : undefined,
             )
-            // Each listed import's module, resolved, so two routes importing one name from two modules can be told apart.
+            // Each listed import's module, as the pins that can name it, so a reads-only gate holds a name to its module.
             const outsideSources =
                 sources === null
                     ? null
                     : new Map(
-                          [...sources].map(([name, specifier]) => [
+                          [...sources].map(([name, specifiers]): [string, ImportSource[]] => [
                               name,
-                              ts.resolveModuleName(specifier, node.src.fileName, this.resolution, ts.sys).resolvedModule
-                                  ?.resolvedFileName ?? specifier,
+                              [...specifiers].map((specifier) => ({
+                                  specifier,
+                                  pins: this.pinsOf(node.src, specifier, name),
+                              })),
                           ]),
                       )
             return {
@@ -2695,7 +2809,7 @@ function outsideNamesOf(
     /** For a page's export: what the scanner resolves for it (`PageResolution`). */
     pageResolution?: PageResolution,
 ):
-    | { names: ReadonlySet<string>; sources: ReadonlyMap<string, string>; refusal: null }
+    | { names: ReadonlySet<string>; sources: ReadonlyMap<string, ReadonlySet<string>>; refusal: null }
     | { names: null; sources: null; refusal: string } {
     const { checker, sf } = src
     const page = pageResolution !== undefined
@@ -2726,8 +2840,10 @@ function outsideNamesOf(
         )
     }
     const names = new Set<string>()
-    /** The module specifier each listed name is imported from, as the file writes it. */
-    const sources = new Map<string, string>()
+    /** The module specifiers each listed name is imported from, as the file writes them. */
+    const sources = new Map<string, Set<string>>()
+    const source = (name: string, specifier: string) =>
+        sources.set(name, (sources.get(name) ?? new Set()).add(specifier))
     let refusal: string | null = null
     const refuse = (why: string): false => {
         refusal ??= why
@@ -2748,7 +2864,7 @@ function outsideNamesOf(
             if (ts.isImportClause(decl)) return refuse(`\`${id.text}\` is a default import, which has no exported name`)
             if (ts.isImportSpecifier(decl) && decl.name.text === imported.name) {
                 names.add(imported.name)
-                sources.set(imported.name, imported.module)
+                source(imported.name, imported.module)
                 return true
             }
             return refuse(`\`${id.text}\` is an import under another name than its exported \`${imported.name}\``)
@@ -2838,7 +2954,7 @@ function outsideNamesOf(
                 // Rendered out of sight only from a client module or a package; a server module of the app is counted.
                 if (pageResolution?.renderable(loaded, id.text) !== true) {
                     names.add(id.text)
-                    sources.set(id.text, loaded)
+                    source(id.text, loaded)
                 }
                 return true
             }

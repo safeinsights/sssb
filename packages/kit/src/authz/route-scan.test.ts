@@ -67,6 +67,22 @@ function expectVerdicts(actual: Record<string, string>, expected: Record<string,
     }
 }
 
+/**
+ * The `outsideNames` and `outsideSources` of a read that names each key of `names`, imported from the module its value
+ * names (written as the specifier, and the one pin it answers to), or from each of several.
+ */
+function reading(names: Record<string, string | string[]>): Pick<HandlerFacts, 'outsideNames' | 'outsideSources'> {
+    return {
+        outsideNames: new Set(Object.keys(names)),
+        outsideSources: new Map(
+            Object.entries(names).map(([name, modules]) => [
+                name,
+                [modules].flat().map((module) => ({ specifier: module, pins: [module] })),
+            ]),
+        ),
+    }
+}
+
 /** The facts on the route's one handler (fails the test if it was refused). */
 function factsOf(src: string, verb = 'POST'): HandlerFacts {
     const route = scanTree({ 'route.ts': src }).find((r) => r.rel === 'route.ts')
@@ -2212,7 +2228,8 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
             "import { corsHeaders } from './cors'\nexport function GET() { return Response.json(corsHeaders) }",
             'GET',
         )
-        expect([...(facts.outsideSources ?? [])]).toEqual([['corsHeaders', './cors']])
+        // './cors' does not resolve here, so the import answers to no pin: a relative specifier is never one.
+        expect([...(facts.outsideSources ?? [])]).toEqual([['corsHeaders', [{ specifier: './cors', pins: [] }]]])
         expect(
             names("export function GET() { const { ['constructor']: F } = () => 1; return Response.json(F) }"),
         ).toBeNull()
@@ -2402,18 +2419,47 @@ describe('judging a handler against a policy', () => {
     })
 
     it('a reads-only gate holds for a read that names only the listed names, and never for a mutation', () => {
-        const gate: Gate = { kind: 'reads-only', names: ['corsHeaders', 'params'] }
-        const listed = facts({ outsideNames: new Set(['corsHeaders']) })
+        const gate: Gate = { kind: 'reads-only', names: { corsHeaders: 'src/cors.ts', params: 'config/params' } }
+        const listed = facts(reading({ corsHeaders: 'src/cors.ts' }))
         expect(gateHolds(gate, listed, 'GET')).toBe(true)
         expect(gateHolds(gate, listed, 'OPTIONS')).toBe(true)
         expect(gateHolds(gate, facts({ outsideNames: new Set() }), 'HEAD')).toBe(true)
         expect(gateHolds(gate, listed, 'POST')).toBe(false)
         expect(gateHolds(gate, listed)).toBe(false)
-        expect(gateHolds(gate, facts({ outsideNames: new Set(['corsHeaders', 'load']) }), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts(reading({ corsHeaders: 'src/cors.ts', load: 'src/cors.ts' })), 'GET')).toBe(false)
         expect(gateHolds(gate, facts({ outsideNames: null }), 'GET')).toBe(false)
         expect(describeGate(gate)).toMatch(
-            /a read \(GET, HEAD or OPTIONS, or a page's export\) that names nothing from outside itself but inert values and `corsHeaders`, `params`/,
+            /a read \(GET, HEAD or OPTIONS, or a page's export\) that names nothing from outside itself but inert values and `corsHeaders` from src\/cors\.ts, `params` from config\/params/,
         )
+    })
+
+    it('a reads-only gate pins each name to its module: another module, or a source it cannot place, fails', () => {
+        const gate: Gate = { kind: 'reads-only', names: { corsHeaders: 'src/cors.ts' } }
+        expect(gateHolds(gate, facts(reading({ corsHeaders: 'src/other.ts' })), 'GET')).toBe(false)
+        // Every import of the name must be from the pin (a page and a component of its file may import it twice).
+        expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/other.ts'] })), 'GET')).toBe(false)
+        expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/cors.ts'] })), 'GET')).toBe(true)
+        // A pin is matched against what the import answers to, any one of them.
+        const answers = { specifier: '@/cors', pins: ['@/cors', 'src/cors.ts', 'src/lib/cors.ts'] }
+        expect(
+            gateHolds(
+                gate,
+                facts({
+                    outsideNames: new Set(['corsHeaders']),
+                    outsideSources: new Map([['corsHeaders', [answers]]]),
+                }),
+                'GET',
+            ),
+        ).toBe(true)
+        // A name with no source recorded, or none at all, is not placed, so it is not covered.
+        for (const outsideSources of [null, new Map(), new Map([['corsHeaders', []]])]) {
+            expect(gateHolds(gate, facts({ outsideNames: new Set(['corsHeaders']), outsideSources }), 'GET')).toBe(
+                false,
+            )
+        }
+        // A key the map inherits is no listed name.
+        const inherited = facts(reading({ toString: 'src/cors.ts' }))
+        expect(gateHolds({ kind: 'reads-only', names: {} }, inherited, 'GET')).toBe(false)
     })
 
     it('a reads-only exact entry applies to reads; a mutation at its path falls to the prefix it sits under', () => {
@@ -2421,12 +2467,15 @@ describe('judging a handler against a policy', () => {
             ...policy,
             exemptFiles: {
                 ...policy.exemptFiles,
-                'hooks/meta/route.ts': { reason: 'handshake', mustMatch: { kind: 'reads-only', names: ['params'] } },
+                'hooks/meta/route.ts': {
+                    reason: 'handshake',
+                    mustMatch: { kind: 'reads-only', names: { params: 'config/params.ts' } },
+                },
             },
         }
         expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'GET')?.reason).toBe('handshake')
         expect(exemptionFor(withEntry, 'hooks/meta/route.ts', 'POST')?.reason).toBe('machine caller')
-        const read = facts({ outsideNames: new Set(['params']) })
+        const read = facts(reading({ params: 'config/params.ts' }))
         expect(judge(route('hooks/meta/route.ts'), { verb: 'GET', facts: read }, withEntry)).toBeUndefined()
         expect(judge(route('hooks/meta/route.ts'), { verb: 'POST', facts: read }, withEntry)).toMatch(
             /holds only when the handler is itself a call to an imported withSecret/,
@@ -2443,15 +2492,40 @@ describe('judging a handler against a policy', () => {
     it('names, in the failure, what a reads-only read named or did that its gate does not allow', () => {
         const withEntry: ScanPolicy = {
             ...policy,
-            exemptFiles: { 'feed/route.ts': { reason: 'feed', mustMatch: { kind: 'reads-only', names: ['posts'] } } },
+            exemptFiles: {
+                'feed/route.ts': {
+                    reason: 'feed',
+                    mustMatch: { kind: 'reads-only', names: { posts: 'src/posts.ts' } },
+                },
+            },
         }
         expect(
             judge(
                 route('feed/route.ts'),
-                { verb: 'GET', facts: facts({ outsideNames: new Set(['posts', 'db']) }) },
+                { verb: 'GET', facts: facts(reading({ posts: 'src/posts.ts', db: 'src/db.ts' })) },
                 withEntry,
             ),
         ).toMatch(/It names `db`, which the gate does not list\./)
+        // A listed name from another module than its pin is named with the module it came from, and the pin.
+        const elsewhere = { specifier: '@/lib/posts', pins: ['@/lib/posts', 'src/lib/posts.ts'] }
+        expect(
+            judge(
+                route('feed/route.ts'),
+                {
+                    verb: 'GET',
+                    facts: facts({
+                        outsideNames: new Set(['posts', 'db']),
+                        outsideSources: new Map([
+                            ['posts', [elsewhere]],
+                            ['db', [elsewhere]],
+                        ]),
+                    }),
+                },
+                withEntry,
+            ),
+        ).toMatch(
+            /It names `db`, which the gate does not list; and it imports `posts` from '@\/lib\/posts' \(src\/lib\/posts\.ts\), which the gate pins to src\/posts\.ts\./,
+        )
         expect(
             judge(
                 route('feed/route.ts'),
@@ -3493,8 +3567,7 @@ describe('judging a page against a policy (safeinsights/sssb#221)', () => {
         wrappedBy: null,
         calls: new Set(),
         opensWithSimulated404: false,
-        outsideNames: new Set(['findTenant']),
-        outsideSources: new Map(),
+        ...reading({ findTenant: 'src/seed.ts' }),
         outsideRefusal: null,
         readsNothing: false,
         ...overrides,
@@ -3543,17 +3616,26 @@ describe('judging a page against a policy (safeinsights/sssb#221)', () => {
     })
 
     it('applies a reads-only entry to a page, and names what it reads beyond the gate', () => {
-        const gate: Gate = { kind: 'reads-only', names: ['findTenant'] }
+        const gate: Gate = { kind: 'reads-only', names: { findTenant: 'src/seed.ts' } }
         expect(
             judge(page('../x/page.tsx'), { verb: 'default', facts: facts({}) }, policy({ '../x/page.tsx': gate })),
         ).toBeUndefined()
         const more = judge(
             page('../x/page.tsx'),
-            { verb: 'generateMetadata', facts: facts({ outsideNames: new Set(['findTenant', 'db']) }) },
+            { verb: 'generateMetadata', facts: facts(reading({ findTenant: 'src/seed.ts', db: 'src/db.ts' })) },
             policy({ '../x/page.tsx': gate }),
         )
         expect(more).toMatch(/generateMetadata is a page export \(a read\) under an exemption that holds only when/)
-        expect(more).toMatch(/: it names `db`\. List only what the page reads/)
+        expect(more).toMatch(/: it names `db`, which the gate does not list\. List only what the page reads/)
+        // The same name from another module than its pin: refused, the module named.
+        const elsewhere = judge(
+            page('../x/page.tsx'),
+            { verb: 'default', facts: facts(reading({ findTenant: 'src/other.ts' })) },
+            policy({ '../x/page.tsx': gate }),
+        )
+        expect(elsewhere).toMatch(
+            /: it imports `findTenant` from 'src\/other\.ts', which the gate pins to src\/seed\.ts\./,
+        )
     })
 
     it('applies no other gate kind to a page: a route-shaped gate proves nothing about a render', () => {
@@ -3820,7 +3902,9 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
         }
         const policy: ScanPolicy = {
             exemptPrefixes: {},
-            exemptFiles: { '../(.)x/page.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: ['x'] } } },
+            exemptFiles: {
+                '../(.)x/page.tsx': { reason: 'r', mustMatch: { kind: 'reads-only', names: { x: 'src/x.ts' } } },
+            },
             requiredAlongside: {},
         }
         const facts = (overrides: Partial<HandlerFacts>): HandlerFacts => ({
@@ -3828,8 +3912,7 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
             wrappedBy: null,
             calls: new Set(),
             opensWithSimulated404: false,
-            outsideNames: new Set(['x']),
-            outsideSources: new Map(),
+            ...reading({ x: 'src/x.ts' }),
             outsideRefusal: null,
             readsNothing: false,
             ...overrides,
