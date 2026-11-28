@@ -1276,11 +1276,9 @@ class RootScanner {
                 return []
             }
             const captured = specifier.slice(head.length, specifier.length - tail.length)
-            return targets.map((target) => {
-                // The first `*` of the target takes the captured text as written: `String.replace` would read its `$` patterns (`$&`, `$$`) in it.
-                const at = target.indexOf('*')
-                return at < 0 ? target : `${target.slice(0, at)}${captured}${target.slice(at + 1)}`
-            })
+            // `String.replace`, as TypeScript's `paths` and Next's webpack do it: a `$&` or `$$` in the captured text is
+            // read as a pattern there too, so the scan names the file they load.
+            return targets.map((target) => target.replace('*', captured))
         })
         return mapped.length === 0 ? undefined : mapped.map((target) => path.resolve(this.pathsBase, target))
     }
