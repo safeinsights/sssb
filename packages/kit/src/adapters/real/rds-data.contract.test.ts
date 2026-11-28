@@ -903,4 +903,51 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
             await sql`DELETE FROM tenants WHERE slug LIKE ${`page-${stamp}-%`}`.execute(db())
         }
     }, 300_000)
+
+    // The read's snapshot is taken once, not repeated on its rows: its text grows with the writing transactions open,
+    // and a page of rows each carrying it outgrew the Data API's 1 MB response under load.
+    test('the hint read stays under the response limit while many transactions are writing', async () => {
+        const stamp = Date.now()
+        await sql`
+            INSERT INTO tenants (slug, name) SELECT ${`snap-${stamp}-`} || g, 'snapshot proof' FROM generate_series(1, 2500) g
+        `.execute(db())
+        const writers: { release: () => void; done: Promise<unknown> }[] = []
+        const conns: Kysely<DB>[] = []
+        try {
+            // Five-digit transaction ids, as a server that has run a while has (longer still in production).
+            const burner = server.connectAsSuperuser(DATABASE)
+            conns.push(burner)
+            for (let i = 0; i < 400; i++) {
+                await Promise.all(Array.from({ length: 50 }, () => sql`SELECT pg_current_xact_id()`.execute(burner)))
+            }
+            // Writers each holding a transaction id, which widens every later snapshot's text.
+            for (let i = 0; i < 85; i++) {
+                const conn = server.connectAsSuperuser(DATABASE)
+                conns.push(conn)
+                let release!: () => void
+                const gate = new Promise<void>((resolve) => (release = resolve))
+                let wrote!: () => void
+                const written = new Promise<void>((resolve) => (wrote = resolve))
+                const done = conn.transaction().execute(async (trx) => {
+                    await sql`SELECT pg_current_xact_id()`.execute(trx)
+                    wrote()
+                    await gate
+                })
+                await written
+                writers.push({ release, done })
+            }
+            // One transaction completed after them, so a snapshot lists them all as still in progress.
+            await sql`SELECT pg_current_xact_id()`.execute(burner)
+            const { tenantsToList } = await import('../../db/due-hints')
+            const read = await tenantsToList(dataApi, 'schedules', new Date('2001-01-01T00:00:00.000Z'))
+            expect(read.tenants.length).toBeGreaterThanOrEqual(2_500)
+            expect(read.tenants.filter((t) => t.unhinted === true)).toEqual([])
+            expect((read.snapshot ?? '').length).toBeGreaterThan(400)
+        } finally {
+            for (const w of writers) w.release()
+            await Promise.all(writers.map((w) => w.done))
+            await Promise.all(conns.map((c) => c.destroy()))
+            await sql`DELETE FROM tenants WHERE slug LIKE ${`snap-${stamp}-%`}`.execute(db())
+        }
+    }, 300_000)
 })

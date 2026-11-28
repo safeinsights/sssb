@@ -42,10 +42,11 @@ export interface DbFamily {
     /**
      * The tick's due-hint read (./due-hints.ts, 0022_due_hints): the tenants `drain` lists at `now` (no hint, a hint
      * that has come or is past `cap`, or an event that has come), each with its hint's version, and a token for the read
-     * (`snapshot`: in Postgres the first page's `pg_current_snapshot()`, the earliest, so an event it can see was
-     * committed before any tenant is listed). `everyone` reads every tenant with its hint's version and no events: the
+     * (`snapshot`: in Postgres the read transaction's first `pg_current_snapshot()`, taken once before the first page,
+     * the earliest, so an event it can see was committed before any tenant is listed). `everyone` reads every tenant with its hint's version and no events: the
      * fallback when the full read fails, so a drain that lists everyone can still settle. Paged by tenant id
-     * (`DUE_HINTS_PAGE` a statement), so no response grows with the number of tenants. On the owner's raw handle. Each of these due-hint
+     * (`DUE_HINTS_PAGE` a statement), so no response grows with the number of tenants, and the pages together are
+     * bounded by `timeoutMs` as each statement is. On the owner's raw handle. Each of these due-hint
      * statements runs in a transaction of its own that gives up after `timeoutMs` (it throws then) and lets the
      * planner use only index paths over the events (`dueHintsPlanner`).
      */
@@ -97,46 +98,30 @@ export interface DbFamily {
 }
 
 /**
- * The due hints' read (0022_due_hints), as one statement. Which tenants have an event that has come is found a tenant
- * at a time, never an event at a time: a skip along the `(drain, tenant_id)` index to the next tenant with any event,
- * then that tenant's earliest due time from the `(tenant_id, drain, due)` index, each one probe. Its cost grows with the
- * number of tenants that have events, not with how many any one of them has, so no pile, however big, slows the read
- * (and a planner that knows where the past-due events are cannot turn it into a scan of the events per tenant).
- * Exported for the plan check in ./due-hints.contract.test.ts.
+ * One page of the due hints' read (0022_due_hints): the next `DUE_HINTS_PAGE` tenants after `after` that `drain` lists.
+ * Whether a tenant has an event that has come is one probe of the `(tenant_id, drain, due)` index for that tenant
+ * (`EXISTS … due <= now`, which stops at the first): a page costs a probe per tenant on it, whatever the size of anyone's
+ * pile, and the whole read a probe per tenant. That holds only for an index path, which `dueHintsPlanner` leaves the
+ * planner as the only one: free to choose, a planner that knows one tenant holds the past-due events may scan the
+ * events table for every tenant (the review's 8.6 s). Exported for the plan check in ./due-hints.contract.test.ts.
  */
 export function dueHintsReadQuery(drain: string, now: Date, cap: Date, after: string | null = null, everyone = false) {
-    return sql<{ id: string; version: string | number | null; snapshot: string }>`
-        WITH RECURSIVE with_events (tenant_id) AS (
-            (SELECT e.tenant_id FROM public.due_hint_events e WHERE e.drain = ${drain} AND NOT ${everyone}
-             ORDER BY e.tenant_id LIMIT 1)
-            UNION ALL
-            SELECT (
-                SELECT e.tenant_id FROM public.due_hint_events e
-                WHERE e.drain = ${drain} AND e.tenant_id > w.tenant_id
-                ORDER BY e.tenant_id LIMIT 1
-            )
-            FROM with_events w WHERE w.tenant_id IS NOT NULL
-        ),
-        come AS (
-            SELECT w.tenant_id FROM with_events w
-            WHERE w.tenant_id IS NOT NULL AND (
-                SELECT min(e.due) FROM public.due_hint_events e
-                WHERE e.tenant_id = w.tenant_id AND e.drain = ${drain}
-            ) <= ${now}
-        )
-        SELECT t.id, h.version, pg_current_snapshot()::text AS snapshot
+    return sql<{ id: string; version: string | number | null }>`
+        SELECT t.id, h.version
         FROM public.tenants t
         LEFT JOIN public.due_hints h ON h.tenant_id = t.id AND h.drain = ${drain}
-        LEFT JOIN come ON come.tenant_id = t.id
         WHERE (${everyone} OR h.tenant_id IS NULL OR h.list_after <= ${now} OR h.list_after > ${cap}
-                OR come.tenant_id IS NOT NULL)
+                OR EXISTS (
+                    SELECT 1 FROM public.due_hint_events e
+                    WHERE e.tenant_id = t.id AND e.drain = ${drain} AND e.due <= ${now}
+                ))
             AND (${after}::uuid IS NULL OR t.id > ${after}::uuid)
         ORDER BY t.id
         LIMIT ${DUE_HINTS_PAGE}
     `
 }
 
-/** How many tenants one page of the due-hint read returns, so no response grows with the number of tenants. */
+/** How many tenants one page of the due-hint read returns (two columns each), so no response outgrows a transport's. */
 export const DUE_HINTS_PAGE = 2_000
 
 /**
@@ -147,17 +132,25 @@ export const DUE_HINTS_PAGE = 2_000
  * plan check in ./due-hints.contract.test.ts.
  */
 export function dueHintsPlanner(timeoutMs: number) {
-    return sql`
+    return sql<{ snapshot: string }>`
         SELECT set_config('statement_timeout', ${String(Math.max(1, Math.floor(timeoutMs)))}, true),
-            set_config('enable_seqscan', 'off', true), set_config('enable_bitmapscan', 'off', true)
+            set_config('enable_seqscan', 'off', true), set_config('enable_bitmapscan', 'off', true),
+            pg_current_snapshot()::text AS snapshot
     `
 }
 
-/** Runs `run` in a transaction of its own under `dueHintsPlanner(timeoutMs)`. */
-function bounded<T>(db: Kysely<DB>, timeoutMs: number, run: (trx: Transaction<DB>) => Promise<T>): Promise<T> {
+/**
+ * Runs `run` in a transaction of its own under `dueHintsPlanner(timeoutMs)`, handing it that first statement's snapshot:
+ * taken before anything `run` reads, so an event it can see was committed before any of it.
+ */
+function bounded<T>(
+    db: Kysely<DB>,
+    timeoutMs: number,
+    run: (trx: Transaction<DB>, snapshot: string) => Promise<T>,
+): Promise<T> {
     return db.transaction().execute(async (trx) => {
-        await dueHintsPlanner(timeoutMs).execute(trx)
-        return run(trx)
+        const { rows } = await dueHintsPlanner(timeoutMs).execute(trx)
+        return run(trx, rows[0]!.snapshot)
     })
 }
 
@@ -186,22 +179,24 @@ const postgresFamily: DbFamily = {
     isolation: 'rls',
     json: jsonb,
     lockRow: (query) => query.forUpdate(),
-    readDueHints: (db, drain, now, cap, timeoutMs, everyone) =>
-        // A read that cannot finish inside the drain's window throws rather than hangs; the caller falls back.
-        bounded(db, timeoutMs, async (trx) => {
+    readDueHints: (db, drain, now, cap, timeoutMs, everyone) => {
+        // A read that cannot finish inside its bound throws rather than hangs, the caller falls back: each statement
+        // under `statement_timeout`, and the pages together under the same bound, checked between them.
+        const giveUpAt = Date.now() + timeoutMs
+        return bounded(db, timeoutMs, async (trx, snapshot) => {
             const tenants: { id: string; version: string | number | null }[] = []
-            let snapshot: string | null = null
             let after: string | null = null
             for (;;) {
-                const page: { id: string; version: string | number | null; snapshot: string }[] = (
+                const page: { id: string; version: string | number | null }[] = (
                     await dueHintsReadQuery(drain, now, cap, after, everyone).execute(trx)
                 ).rows
-                if (snapshot === null && page.length > 0) snapshot = page[0]!.snapshot
                 for (const row of page) tenants.push({ id: row.id, version: row.version })
-                if (page.length < DUE_HINTS_PAGE) return { tenants, snapshot }
+                if (page.length < DUE_HINTS_PAGE) return { tenants, snapshot: tenants.length > 0 ? snapshot : null }
+                if (Date.now() >= giveUpAt) throw new Error('the due-hint read ran past its bound')
                 after = page.at(-1)!.id
             }
-        }),
+        })
+    },
     settleDueHints: (db, drain, snapshot, rows, limit, timeoutMs) =>
         bounded(db, timeoutMs, async (trx) => {
             const values = sql.join(

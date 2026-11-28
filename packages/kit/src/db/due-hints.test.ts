@@ -519,7 +519,7 @@ describe('a read that fails', () => {
         let refused = 0
         const failingOnce = fakeDb.getDb().withPlugin({
             transformQuery: ({ node }) => {
-                if (refused === 0 && JSON.stringify(node).includes('with_events')) {
+                if (refused === 0 && JSON.stringify(node).includes('public.due_hints h')) {
                     refused += 1
                     throw new Error('canceling statement due to statement timeout')
                 }
@@ -534,6 +534,7 @@ describe('a read that fails', () => {
             expect(read.tenants.map((t) => t.id)).toEqual(expect.arrayContaining([tenantId, otherTenantId]))
             expect(read.tenants.every((t) => t.unhinted === undefined)).toBe(true)
             expect(read.snapshot).not.toBeNull()
+            expect(refused, 'the first read was refused, and the fallback read').toBe(1)
             await settleHints(
                 fakeDb,
                 'schedules',
