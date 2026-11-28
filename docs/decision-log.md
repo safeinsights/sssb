@@ -8558,6 +8558,7 @@ error after it" above, with its 18 s `DATABASE_RESUME_BUDGET_MS`).
   `Error`, which hid the failure the person wrote the entry to see. A default entry with no answer and no failure still
   throws that error. (`response: null` is the recorder's "to record" marker and the recorder skips failing entries, so the
   fixture is not rewritten.)
+
 ## The visitor's origin and address: `publicOrigin` and `clientAddress` (2026-11-27, `fix/origin-helpers`)
 
 safeinsights/sssb#131 and safeinsights/sssb#132. Behind `SssbApp`, Next's `request.url` names the server's bind
