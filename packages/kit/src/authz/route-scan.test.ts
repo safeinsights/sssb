@@ -3212,20 +3212,23 @@ describe('what a page may name and still read nothing: the page allow-list (safe
 
     it("passes the locale layout's names: hasLocale, routing.locales, the theme, Mantine's html props, the demo flag", () => {
         expect(
-            pageDefault(
-                "import { mantineHtmlProps, MantineProvider } from '@mantine/core'\nimport { hasLocale, NextIntlClientProvider } from 'next-intl'\n" +
-                    "import { getMessages } from 'next-intl/server'\nimport { notFound } from 'next/navigation'\n" +
-                    "import { auth, isDemoMode, isSimulated } from '@sssb/kit/adapters/index'\nimport { routing } from '@sssb/kit/i18n/routing'\n" +
-                    "import { getTenantTheme } from '@sssb/kit/theme'\nimport { sameOriginPath } from '@sssb/kit/core/same-origin-path'\n" +
-                    'export default async function L({ children, params }: { children: unknown; params: Promise<{ locale: string }> }) {\n' +
-                    '  const { locale } = await params\n  if (!hasLocale(routing.locales, locale)) notFound()\n' +
-                    '  const user = await auth.getCurrentUser()\n  const orgs = await auth.listMyOrgs()\n  void (await auth.refusal?.())\n' +
-                    '  void sameOriginPath(locale)\n  const messages = await getMessages()\n' +
-                    '  return <html {...mantineHtmlProps}><body><NextIntlClientProvider messages={messages}><MantineProvider theme={getTenantTheme(user?.tenantSlug ?? "x")}>' +
-                    '{isSimulated && isDemoMode ? orgs.length : children}</MantineProvider></NextIntlClientProvider></body></html>\n}\n',
+            pageStates(
+                {
+                    'layout.tsx':
+                        "import { mantineHtmlProps, MantineProvider } from '@mantine/core'\nimport { hasLocale, NextIntlClientProvider } from 'next-intl'\n" +
+                        "import { getMessages } from 'next-intl/server'\nimport { notFound } from 'next/navigation'\n" +
+                        "import { auth, isDemoMode, isSimulated } from '@sssb/kit/adapters/index'\nimport { routing } from '@sssb/kit/i18n/routing'\n" +
+                        "import { getTenantTheme } from '@sssb/kit/theme'\nimport { sameOriginPath } from '@sssb/kit/core/same-origin-path'\n" +
+                        'export default async function L({ children, params }: { children: unknown; params: Promise<{ locale: string }> }) {\n' +
+                        '  const { locale } = await params\n  if (!hasLocale(routing.locales, locale)) notFound()\n' +
+                        '  const user = await auth.getCurrentUser()\n  const orgs = await auth.listMyOrgs()\n  void (await auth.refusal?.())\n' +
+                        '  void sameOriginPath(locale)\n  const messages = await getMessages()\n' +
+                        '  return <html {...mantineHtmlProps}><body><NextIntlClientProvider messages={messages}><MantineProvider theme={getTenantTheme(user?.tenantSlug ?? "x")}>' +
+                        '{isSimulated && isDemoMode ? orgs.length : children}</MantineProvider></NextIntlClientProvider></body></html>\n}\n',
+                },
                 'layout.tsx',
             ),
-        ).toBe('reads nothing')
+        ).toEqual({ default: 'reads nothing' })
     })
 
     it('holds the allow-list to the page: a route that names the same imports names them', () => {
