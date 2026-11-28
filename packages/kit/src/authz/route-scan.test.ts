@@ -3136,6 +3136,10 @@ describe('pages, layouts and metadata routes are read handlers (safeinsights/sss
                 'client.tsx': "'use client'\nexport default function C() { return fetch('/x') }\n",
             })[0]!.handlers,
         ).toEqual([])
+        // A client file is skipped whole, even where its export could not be resolved to a function.
+        expect(
+            scanPageTree({ 'page.tsx': "'use client'\nlet C = () => null\nexport default C\n" })[0]!.handlers,
+        ).toEqual([])
         expect(pageDefault("const x = 1\n'use client'\nexport default function P() { return fetch('/x') }\n")).toBe(
             'refusal: `fetch` is a global off the inert list',
         )
