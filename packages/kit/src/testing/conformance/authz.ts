@@ -8,7 +8,7 @@ import type { CheckContext, CheckImpl } from './types'
  * call `authorize(...)` (`@sssb/kit/authz/authorize`). The id predates reads and pages being judged
  * (safeinsights/sssb#103, #221) and is kept, since an app's `optOut` names it. The scan (../../authz/route-scan.ts,
  * applied by ../../authz/app-exemptions.ts `scanApp`) walks every `route.{ts,tsx,js,jsx,mjs}` under the app's WHOLE
- * `src/app`, not only `api/` (Next serves a `route.ts` from anywhere there), and judges each exported handler, read
+ * `src/app`, not only `api/` (Next serves a `route.ts` from anywhere there but a private `_` folder), and judges each exported handler, read
  * with the TypeScript parser, never the file's text: the handler must reach `authorize` on its own path, or its route
  * must have a justified exemption (the framework's, ../../authz/route-policy.ts, or the app's own
  * `authz-exemptions.mjs`) and the handler must pass that exemption's gate. A read handler may instead read nothing:

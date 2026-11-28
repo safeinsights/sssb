@@ -403,7 +403,7 @@ const PAGES_DIRS = ['pages', 'src/pages']
 
 /**
  * The authorization scan over ONE app: every `route.*` under `<appDir>/src/app` (Next serves one from anywhere
- * there, so not only `api/`, and through a symbolic link too), each exported handler, read or mutation, judged against the framework's policy plus the app's
+ * there but a private `_` folder, so not only `api/`, and through a symbolic link too), each exported handler, read or mutation, judged against the framework's policy plus the app's
  * own exemptions, which are measured from `<appDir>/src/app/api` (so a route outside `api/` can match only an
  * `outsideApi` entry, whose gate is `reads-only` and which covers reads only; a mutation there must call
  * `authorize(...)` itself). Every page, layout and metadata route there (./route-scan.ts `scanPages`) is judged too,
