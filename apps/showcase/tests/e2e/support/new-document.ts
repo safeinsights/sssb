@@ -18,10 +18,11 @@ type Stamped = { __previousDocument?: boolean }
  *
  * That a URL wait cannot do this, and the stamp idiom, are recorded in docs/build-notes.md ("Specs that
  * wipe `.data` mid-suite need their own Playwright project…"), and destructive/simulator-jobs.spec.ts and
- * simulator-snapshots.spec.ts each hand-roll the same wait. The budget is theirs, 45s: one full load of a
- * dev-mode route, which compiles on demand (docs/build-notes.md, "An e2e wait that the page being left
+ * simulator-snapshots.spec.ts each hand-roll the same wait. The budget is theirs, 45s on `next dev`: one full load
+ * of a dev-mode route, which compiles on demand (docs/build-notes.md, "An e2e wait that the page being left
  * also passes", has the 24s `/en/dashboard` measurement). It is a bound, not a guess — without it a lost
- * trigger stalls to the test timeout and the report blames whatever step happened to be running.
+ * trigger stalls to the test timeout and the report blames whatever step happened to be running. On a production
+ * build it is the assertion budget (`coldRoute`, ./budgets.ts), since nothing compiles there.
  *
  * Only for a trigger that WILL load a document. One that may be a no-op (picking the org that is already
  * active) would wait out the full budget — assert on the state you expect instead.

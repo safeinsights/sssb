@@ -15,11 +15,13 @@ SSSB's reusable workflow sets) a test now gets 15 s and an assertion 10 s, over 
 suite needed in five CI runs, and the Simulator spec's waits for hydration and for the reload after a reset take the
 assertion budget. Under `next dev`, locally, every budget is what it was.
 
-**To adopt.** In `apps/<app>/playwright.config.ts`, where the config already reads `E2E_BUILD`:
+**To adopt.** In `apps/<app>/playwright.config.ts`, where the config already reads `E2E_BUILD`, change the `expect`
+line, and give the project its own test budget (leave the top-level `timeout: 60_000` as it is: `sssb remove-items`
+matches the lines around it):
 
 ```ts
-timeout: E2E_BUILD ? 15_000 : 60_000,
 expect: { timeout: E2E_BUILD ? 10_000 : 15_000 },
+projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] }, timeout: E2E_BUILD ? 15_000 : 60_000 }],
 ```
 
 Measure your own suite before you copy the numbers: a spec of yours that waits for real work (a job, an email) needs a

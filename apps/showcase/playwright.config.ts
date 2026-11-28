@@ -20,8 +20,8 @@ const BASE_URL = originFor('showcase')
  * so a change that breaks the production build ships green.
  *
  * Local stays on dev deliberately: `reuseExistingServer` keeps a warm server across runs, and a
- * build per attempt would cost more than the compiles it saves. The destructive project's budgets
- * are re-derived for the production build (#100); the chromium project's below are still the dev ones.
+ * build per attempt would cost more than the compiles it saves. Both projects' budgets have a production-build
+ * value derived from CI's numbers (#100, #235) and a dev one, as ./tests/e2e/support/budgets.ts says.
  */
 
 export default defineConfig({

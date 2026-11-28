@@ -15,7 +15,7 @@ export async function signInAs(page: Page, personId: string) {
  *
  * The click is the part to get right. The nav button is SSR'd before React attaches its handler, and a
  * click in that window is swallowed with no error — the same mechanism `openSimulatorPanel` and `pickOrg`
- * guard against — so nothing navigates and `untilNewDocument` runs out its 45s. The Simulator stamps
+ * guard against — so nothing navigates and `untilNewDocument` runs out its budget (45s on `next dev`). The Simulator stamps
  * `data-hydrated` from its mount effect (see `openSimulatorPanel`): on the pill while it is closed
  * (`simulator-panel.tsx` renders the pill only then), on the panel while it is open, and the open state
  * is in localStorage, so a person switch leaves it open. Once either stamp is there the root has hydrated

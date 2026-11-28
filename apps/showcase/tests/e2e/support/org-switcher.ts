@@ -18,7 +18,7 @@ import { coldRoute } from './budgets'
  * ACTIVE org, so it is only the picked name once the new document is there (matched exactly: a name that
  * is part of the old one would pass early); and when the org was already active the pick is a no-op with
  * no reload, and the title already matches. The budget is one full reload of a dev-mode route (the same
- * 45s as `untilNewDocument`).
+ * 45s as `untilNewDocument` on `next dev`, and the assertion budget on a production build).
  */
 export async function pickOrg(page: Page, slug: string) {
     const trigger = page.getByTestId('org-switcher')

@@ -50,7 +50,7 @@ index 9317684..106ccfc 100644
 +    // full Next compile on every route it touches — sign-in, dashboard, the Simulator's. The default
      // 30s is marginal for that (it timed out on the first run and passed on retry), and there is no
      // warm-up pass to inherit, so the budget is raised rather than left to flake.
-     timeout: E2E_BUILD ? 15_000 : 60_000,
+     timeout: 60_000,
 diff --git a/src/app-config/abilities.ts b/src/app-config/abilities.ts
 index c69a9ec..851160c 100644
 --- a/src/app-config/abilities.ts
