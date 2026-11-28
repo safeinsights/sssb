@@ -9020,6 +9020,7 @@ starter ran on CI's production build with the budgets sized for `next dev`.
 - **At the new budgets**, five more CI runs: every shard green each time (showcase 60, destructive 16, starter 5),
   none flaky. Locally under `next dev`, `pnpm verify` green. Not measured: more than one worker (`E2E_WORKERS`,
   safeinsights/sssb#99) on these budgets.
+
 ## A CodeBuild job marked from its first write, and a bounded sweep (2026-11-28, `fix/codebuild-starting-and-sweep-bound`)
 
 The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
