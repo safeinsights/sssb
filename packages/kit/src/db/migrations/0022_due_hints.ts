@@ -56,7 +56,9 @@ export async function up(db: Kysely<any>): Promise<void> {
             writer xid8 NOT NULL DEFAULT pg_current_xact_id()
         )
     `.execute(db)
+    // Per tenant, for the tick's deletes; per drain and due time, for its read of the tenants with an event that has come.
     await sql`CREATE INDEX due_hint_events_tenant_drain ON due_hint_events (tenant_id, drain, due)`.execute(db)
+    await sql`CREATE INDEX due_hint_events_drain_due ON due_hint_events (drain, due) INCLUDE (tenant_id)`.execute(db)
 
     await sql`
         CREATE FUNCTION sssb_note_due() RETURNS trigger

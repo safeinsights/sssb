@@ -125,7 +125,7 @@ export async function runDueDeliveries(
     // With due hints (the tick's), only the tenants whose hint has come are listed (./due-hints.ts, #202).
     const hinted = limit.dueHints === true
     const read: HintRead = hinted
-        ? await tenantsToList(db, 'deliveries', now)
+        ? await tenantsToList(db, 'deliveries', now, limit)
         : {
               tenants: (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({
                   id: t.id,
@@ -178,7 +178,7 @@ export async function runDueDeliveries(
             : undefined,
     )
     // Once, for the whole drain: each listed tenant's hint, and the events its listing accounted for.
-    if (hinted) await settleHints(db, 'deliveries', now, read, listed)
+    if (hinted) await settleHints(db, 'deliveries', now, read, listed, limit)
     return { ...counts, ...left }
 }
 

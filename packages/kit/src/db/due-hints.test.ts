@@ -486,40 +486,16 @@ describe('settleHints and tenantsToList', () => {
             .execute()
         expect((await tenantsToList(fakeDb, 'schedules', now)).tenants.map((t) => t.id)).toContain(tenantId)
 
-        // Every statement that names the hints fails, as a missing grant would; the plain tenants read works.
-        const refusingHints = <Q extends object>(creator: Q): Q =>
-            new Proxy(creator, {
-                get(target, prop, receiver) {
-                    if (prop === 'getExecutor') {
-                        const executor = (target as { getExecutor: () => object }).getExecutor()
-                        return () =>
-                            new Proxy(executor, {
-                                get(e, p) {
-                                    if (p === 'executeQuery') {
-                                        return (query: { sql: string }, id: unknown) => {
-                                            if (/due_hint/.test(query.sql))
-                                                throw new Error('permission denied for table due_hints')
-                                            return (
-                                                e as { executeQuery: (q: unknown, i: unknown) => unknown }
-                                            ).executeQuery(query, id)
-                                        }
-                                    }
-                                    const value = Reflect.get(e, p)
-                                    return typeof value === 'function' ? value.bind(e) : value
-                                },
-                            })
-                    }
-                    if (prop === 'withSchema') {
-                        return (schema: string) =>
-                            refusingHints((target as { withSchema: (s: string) => object }).withSchema(schema))
-                    }
-                    const value = Reflect.get(target, prop, receiver)
-                    return typeof value === 'function' ? value.bind(target) : value
-                },
-            })
-        const broken = Object.create(fakeDb, {
-            getDb: { value: () => refusingHints(fakeDb.getDb()) },
-        }) as typeof fakeDb
+        // Every statement that names the hints fails, as a missing grant would, transactions included (a plugin, which
+        // they inherit); the plain tenants read works.
+        const refusing = fakeDb.getDb().withPlugin({
+            transformQuery: ({ node }) => {
+                if (JSON.stringify(node).includes('due_hint')) throw new Error('permission denied for table due_hints')
+                return node
+            },
+            transformResult: async ({ result }) => result,
+        })
+        const broken = Object.create(fakeDb, { getDb: { value: () => refusing } }) as typeof fakeDb
         const read = await tenantsToList(broken, 'schedules', now)
         expect(read.tenants.map((t) => t.id)).toEqual(expect.arrayContaining([tenantId, otherTenantId]))
         expect(read.tenants.every((t) => t.unhinted === true)).toBe(true)
@@ -588,26 +564,28 @@ describe('what a tick leaves, whatever its clock does and however much a tenant 
         expect(back.calls.map((c) => (c.payload as { scheduleId: string }).scheduleId)).toContain(left)
     })
 
-    test("a settle deletes at most its bound of one tenant's events, and the tenant is listed until the rest are gone", async () => {
+    test("a settle clears a tenant's pile a bounded statement at a time while its window lasts; a spent window leaves the rest", async () => {
         const { fakeDb, tenantId } = await world()
         const { sql } = await import('kysely')
-        const { EVENTS_SETTLED_PER_TENANT } = await import('./due-hints')
-        const { runDueSchedules } = await import('./schedules')
+        const { EVENTS_PER_STATEMENT, settleHints, tenantsToList } = await import('./due-hints')
         const now = new Date('2043-01-05T00:00:00.000Z')
-        const piled = EVENTS_SETTLED_PER_TENANT * 2 + 200
+        const piled = EVENTS_PER_STATEMENT * 2 + 200
         await sql`
             INSERT INTO due_hint_events (tenant_id, drain, due)
             SELECT ${tenantId}::uuid, 'schedules', ${new Date(now.getTime() - MINUTE)}::timestamptz
             FROM generate_series(1, ${piled})
         `.execute(fakeDb.getDb())
-        const remaining = [piled]
-        for (let tick = 0; tick < 3; tick++) {
-            const { db, listed } = await listingCounter()
-            await runDueSchedules(db, stubJobs(), now, HINTED)
-            expect(listed).toContain(tenantId)
-            remaining.push((await events(tenantId, 'schedules')).length)
+        const settleOnce = async (window: { deadline: number; clock?: () => number }) => {
+            const read = await tenantsToList(fakeDb, 'schedules', now)
+            const tenant = read.tenants.find((t) => t.id === tenantId)!
+            expect(tenant, 'the pile has come, so the tenant is listed').toBeDefined()
+            await settleHints(fakeDb, 'schedules', now, read, [{ tenant, hadRows: false, nextDue: null }], window)
+            return (await events(tenantId, 'schedules')).length
         }
-        expect(remaining).toEqual([piled, piled - EVENTS_SETTLED_PER_TENANT, piled - 2 * EVENTS_SETTLED_PER_TENANT, 0])
+        // A window already spent: the first statement only.
+        expect(await settleOnce({ deadline: 0, clock: () => 1 })).toBe(piled - EVENTS_PER_STATEMENT)
+        // A window with time: the rest, in proportion to the pile.
+        expect(await settleOnce({ deadline: Number.MAX_SAFE_INTEGER })).toBe(0)
     })
 
     test('the events table has no unique key, so an append can wait on no other transaction', async () => {

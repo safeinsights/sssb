@@ -13,7 +13,7 @@ transaction of its own: four RDS Data API calls a tenant a drain, whether or not
 tenants against the Data API emulator, that is about 4,000 calls a drain. Now a drain run by the tick lists only the
 tenants whose due hint has come, or that have had work made due since, and then sets the hints of the tenants it
 listed, in one statement a drain (one per 200 tenants). With nothing due anywhere,
-that is one call a drain. A tenant is still listed at least once a day, and a drain that cannot read the hints lists
+that is the hint read alone: one statement, in a transaction that bounds it (four RDS Data API calls a drain). A tenant is still listed at least once a day, and a drain that cannot read the hints lists
 every tenant, as before. Calling `runDueSchedules`, `runDueRetries` or `runDueDeliveries` directly (the Simulator's
 controls do) lists every tenant unless the budget passes `dueHints: true`. The listing share stays: a drain still lists
 for at most half of what is left of its window before it runs what it listed, so a tick with more tenants due than
