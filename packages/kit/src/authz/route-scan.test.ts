@@ -3153,7 +3153,13 @@ describe('pages, layouts and metadata routes are read handlers (safeinsights/sss
         expect(pageDefault("export { default } from './missing'\n")).toMatch(
             /^refused: the handler is re-exported from/,
         )
-        // `export *` never re-exports a default, so it gives the page none to judge.
+        // `export *` never re-exports a default, so it gives the page none to judge, directly or through a named re-export.
+        expect(
+            pageDefault("export { default } from './screen'\n", {
+                'screen.tsx': "export * from './inner'\n",
+                'inner.tsx': 'export default function S() { return null }\n',
+            }),
+        ).toBe("refused: './screen' has no export named `default`")
         expect(
             scanPageTree({
                 'page.tsx': "export * from './screen'\n",
@@ -3399,11 +3405,12 @@ describe('what a page loads with import() to render it (safeinsights/sssb#221)',
             "const { C } = await import(`./${'x'}`); return <C />",
             "const p = import('./x'); return p",
             "let { C } = await import('./x'); return <C />",
-            "const [{ C }] = await Promise.all([...[], import('./x')]); return <C />",
+            "const [, { C }] = await Promise.all([...xs, import('./x')]); return <C />",
         ]) {
-            expect(pageDefault(`export default async function P() { ${body} }\n`), body).toMatch(
-                /^refusal: it loads a module with `import\(\)` other than to render what it takes from it/,
-            )
+            expect(
+                pageDefault(`export default async function P({ xs }: { xs: unknown[] }) { ${body} }\n`),
+                body,
+            ).toMatch(/^refusal: it loads a module with `import\(\)` other than to render what it takes from it/)
         }
     })
 
