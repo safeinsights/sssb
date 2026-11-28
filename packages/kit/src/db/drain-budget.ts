@@ -5,8 +5,10 @@
  *
  * THE BOUND. A drain stops starting rows once it has started `maxItems`, or once its `deadline` has passed on the
  * wall clock (`clock`, `Date.now` by default: the server's time limit is wall-clock time, so a simulated world clock
- * never moves it). The deadline is checked before each tenant's listing query and before each row, so past it a drain
- * lists nothing more and starts nothing more. Work already started is never cut short; the bound is on what is
+ * never moves it). The deadline is checked before each row, so past it a drain starts nothing more. Listing has a
+ * deadline of its own, `LISTING_SHARE` of the way from the drain's start to its deadline, checked before each tenant's
+ * listing query: past it the drain lists no more tenants and runs what it has, so a drain over more tenants than its
+ * window can list still starts work every tick (the tenants it did not list are a fresh random set each tick). Work already started is never cut short; the bound is on what is
  * STARTED, so the deadline has to leave room for the longest item after it (`runScheduledTick` sets each drain's
  * deadline with that margin). A drain called with no budget at all is unbounded, as every drain was before the bound:
  * the tick always passes one, and the Simulator's own controls, which run no server limit, pass none.
@@ -46,7 +48,7 @@ export interface DrainLeft {
     /**
      * Due rows the drain listed and did not start, which the next tick lists again. A lower bound: a drain lists at
      * most one row more than `maxItems` for each tenant (enough to know it stopped on its bound, since no tick could
-     * start more of one tenant's), and lists no tenant once its deadline has passed.
+     * start more of one tenant's), and lists no tenant once its listing deadline (`LISTING_SHARE`) has passed.
      */
     deferred: number
     /** What stopped the drain, or null when it started every due row there was. */
@@ -86,6 +88,15 @@ export const SCHEDULES_WINDOW_MS = 6_000
 export const RETRIES_WINDOW_MS = 10_000
 /** How long after the tick's start the deliveries drain may start a delivery. */
 export const DELIVERIES_WINDOW_MS = 16_000
+
+/**
+ * The share of a bounded drain's window, from the moment it starts to its deadline, in which it may list tenants: half.
+ * Listing every tenant before running any row (one `withTenant` each, even a tenant with nothing due) could otherwise
+ * spend the whole window once there are enough tenants, and the drain would start nothing, every tick. The other half
+ * is for running. A stopgap that keeps a drain making progress: listing only the tenants with work due is the fix that
+ * removes the per-tenant cost (safeinsights/sssb#202).
+ */
+export const LISTING_SHARE = 0.5
 
 /** No bound: what a drain called without a budget does (every due row, as before the bound). */
 const UNBOUNDED: DrainBudget = { maxItems: Number.POSITIVE_INFINITY, deadline: Number.POSITIVE_INFINITY }
@@ -131,9 +142,10 @@ export function shuffled<T>(items: readonly T[], budget: DrainBudget, idOf: (ite
 }
 
 /**
- * Lists each tenant's due rows, the tenants in a random order, stopping when the deadline passes (`listOne` runs one
- * tenant's query; `rowKey` is a row's id), shuffles each tenant's rows, then runs `run` over them round-robin until the rows or the budget run out. `run` isolates its own failures
- * (each drain counts them); one that throws anyway stops the drain, as an unhandled error did before.
+ * Lists each tenant's due rows, the tenants in a random order, stopping once `LISTING_SHARE` of the window has passed
+ * (`listOne` runs one tenant's query; `rowKey` is a row's id), shuffles each tenant's rows, then runs `run` over them
+ * round-robin until the rows or the budget run out. `run` isolates its own failures (each drain counts them); one that
+ * throws anyway stops the drain, as an unhandled error did before.
  */
 export async function drainFairly<T>(
     tenants: readonly { id: string }[],
@@ -144,9 +156,15 @@ export async function drainFairly<T>(
 ): Promise<DrainLeft> {
     const queues: TenantQueue<T>[] = []
     const bounded = Number.isFinite(budget.maxItems) || Number.isFinite(budget.deadline)
+    const clock = budget.clock ?? Date.now
+    const startedAt = clock()
+    // Listing stops part of the way to the deadline, so running always gets the rest of the window.
+    const listUntil = Number.isFinite(budget.deadline)
+        ? startedAt + (budget.deadline - startedAt) * LISTING_SHARE
+        : budget.deadline
     let cutShort = false
     for (const tenant of shuffled(tenants, budget, (t) => t.id)) {
-        if (!beforeDeadline(budget)) {
+        if (clock() >= listUntil) {
             cutShort = true
             break
         }
@@ -157,7 +175,7 @@ export async function drainFairly<T>(
         if (rows.length > 0) queues.push({ tenantId: tenant.id, rows: bounded ? shuffled(rows, budget, rowKey) : rows })
     }
     const left = await runRoundRobin(queues, budget, run)
-    // A listing the deadline cut short left tenants unlisted: say so even when every listed row was started.
+    // A listing its deadline cut short left tenants unlisted: say so even when every listed row was started.
     return cutShort && left.stoppedBy === null ? { ...left, stoppedBy: 'time' } : left
 }
 

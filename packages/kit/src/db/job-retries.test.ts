@@ -392,6 +392,66 @@ describe('the retry drain', () => {
         expect(rows[2]!.error).toBe('the jobs runner did not start it: StartBuild refused')
     })
 
+    test('a start that may have started the work anyway leaves the retry `starting` for the sweep, not failed (J3)', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { recordJobStatus, runDueRetries, submitJob } = await import('./jobs')
+        const { id } = await submitJob(
+            fakeDb,
+            { start: async () => undefined },
+            { tenantId, orgId, kind: 'flaky-dockets', payload: { failTimes: 0 } },
+        )
+        await recordJobStatus(fakeDb, tenantId, id, 'failed', { error: 'first' })
+        const due = new Date(Date.now() + 2 * MINUTE)
+        const timedOut = () => Object.assign(new Error('StartBuild timed out'), { mayHaveStarted: true })
+        const ended: string[] = []
+        const onFailed = async (input: { jobId: string }) => void ended.push(input.jobId)
+
+        // A runner with a starting ref, whose sweep judges a row left `starting`: the row is left as the claim wrote it.
+        const unsure: JobsPort = {
+            startingRef: 'starting',
+            start: async () => {
+                throw timedOut()
+            },
+        }
+        expect(await runDueRetries(fakeDb, unsure, due, undefined, onFailed)).toMatchObject({ started: 0, failed: 1 })
+        const second = (await chain(id))[1]!
+        expect((await chain(id)).map((r) => [r.attempt, r.status])).toEqual([
+            [1, 'failed'],
+            [2, 'queued'],
+        ])
+        const left = await fakeDb
+            .getDb()
+            .selectFrom('jobs')
+            .select(['runner_ref', 'run_after'])
+            .where('id', '=', second.id)
+            .executeTakeFirstOrThrow()
+        expect(left).toEqual({ runner_ref: 'starting', run_after: null })
+        expect(ended, 'no end notified: the attempt may be running').toEqual([])
+    })
+
+    test('a runner with no starting ref fails the attempt even when its error says it may have started (J3)', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { recordJobStatus, runDueRetries, submitJob } = await import('./jobs')
+        const { id } = await submitJob(
+            fakeDb,
+            { start: async () => undefined },
+            { tenantId, orgId, kind: 'flaky-dockets', payload: { failTimes: 0 } },
+        )
+        await recordJobStatus(fakeDb, tenantId, id, 'failed', { error: 'first' })
+        // Nothing would ever judge a row left queued with no ref, so it is failed, which arms the next attempt.
+        const unjudged: JobsPort = {
+            start: async () => {
+                throw Object.assign(new Error('timed out'), { mayHaveStarted: true })
+            },
+        }
+        await runDueRetries(fakeDb, unjudged, new Date(Date.now() + 2 * MINUTE))
+        expect((await chain(id)).map((r) => [r.attempt, r.status])).toEqual([
+            [1, 'failed'],
+            [2, 'failed'],
+            [3, 'queued'],
+        ])
+    })
+
     test("the Simulator's run-pending and builder pool leave a waiting retry alone", async () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { listPendingBuilds, runPendingJobs } = await import('../adapters/fake/jobs')
