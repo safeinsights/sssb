@@ -29,4 +29,4 @@ expect(await response.json()).toMatchObject({
 
 Leave the other test's `toEqual({ error: 'unauthorized' })` as it is: that answer is meant to stay exactly that.
 
-**Now deletable.** An `expect.any(...)` or a hand-edited expected object kept up to date with each release's tick fields.
+**Now deletable.** A hand-edited expected object kept up to date with each release's tick fields.

@@ -14,13 +14,14 @@ API's own parameter scanner evidently does not see the literal close. The Data A
 parameters the same way, so such a query fails the contract run with the same error instead of passing it. Nothing changes
 on the `pg` transport, and the dialect's own behaviour on a real cluster is unchanged. SSSB's Data API runbook (in SSSB's
 repository, `docs/runbooks/data-api.md`, step 2) has the live check. A contract run that passed before can fail now; when
-it does, the same query was already failing on a real cluster.
+it does, the same query was already failing on a real cluster over the Data API (it runs for every app, `pg` ones included,
+unless the app opts out of `contract-data-api`).
 
 **To adopt.** If your contract run now fails with that error, write the one backslash in a form both scanners read
 alike. The simplest is `chr(92)`, which has no backslash in its text at all:
 
 ```ts
-sql`${sql.ref('name')} LIKE ${pattern} ESCAPE chr(92)`
+sql<boolean>`${sql.ref('name')} LIKE ${pattern} ESCAPE chr(92)`
 ```
 
 Or an escape-string literal, which in SQL text is `E'\\'` (an `E` string, inside which two backslashes are one). Mind the

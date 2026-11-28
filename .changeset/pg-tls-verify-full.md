@@ -27,14 +27,18 @@ changes nothing until the code follows. Then run the Migrator, the first thing t
 ship the code once it succeeds.
 
 If the Migrator cannot connect over TLS, the way back while you find out why is `DATABASE_SSL_MODE=disable` on both
-functions, which connects as the previous release did, set in your stack and deployed:
+functions, which connects as the previous release did, with `DATABASE_SSL_ROOT_CERT` taken off them too: the stack sets
+it, and a root file beside `disable` is refused at boot. In your stack, assign the `SssbApp` it creates and deploy:
 
 ```ts
-sssbApp.server.addEnvironment('DATABASE_SSL_MODE', 'disable')
-sssbApp.migrator.addEnvironment('DATABASE_SSL_MODE', 'disable')
+const sssbApp = new SssbApp(stack, 'Default', { ... })
+for (const fn of [sssbApp.server, sssbApp.migrator]) {
+    fn.addEnvironment('DATABASE_SSL_MODE', 'disable')
+    ;(fn.node.defaultChild as cdk.CfnResource).addPropertyDeletionOverride('Environment.Variables.DATABASE_SSL_ROOT_CERT')
+}
 ```
 
-Take it out once the cause is fixed: it is a stopgap, never a deployed database's setting. Then prove TLS on the deployed
+This is the one time `disable` belongs on a deployed database, and only until the cause is fixed: take it out then. Then prove TLS on the deployed
 cluster: `pnpm exec sssb doctor` reports a framework cutover row named `db-tls` that your workspace's
 `docs/cutover-checklist.md` does not mention (the file was written when the workspace was generated, before the row
 existed). Add it beside the others, in their shape:
@@ -50,12 +54,13 @@ shows TLS on every connection the app holds; and both Lambdas show `DATABASE_SSL
 the full row.) A deployment of your own (another Postgres host) sets `DATABASE_SSL_ROOT_CERT`
 to its host's root bundle unless its certificate chains to a root Node trusts, and removes `sslmode` and the other
 `ssl*` parameters from `DATABASE_URL`. A real-mode run against a local Postgres with no TLS sets
-`DATABASE_SSL_MODE=disable`; never set it on a deployed database. A Lambda deployed from a container image may not have
+`DATABASE_SSL_MODE=disable`; never set it on a deployed database but as the stopgap above. A Lambda deployed from a container image may not have
 `/var/runtime/ca-cert.pem`: put the RDS bundle in the image and point `DATABASE_SSL_ROOT_CERT` at it.
 
-Two more settings are refused at boot: `NODE_PG_FORCE_NATIVE` (pg's native client ignores `DATABASE_SSL_MODE`), and, in
-the contract run, a `CONTRACT_DATABASE_URL` that sets `sslmode` or another `ssl*` parameter (the contract run connects
-without TLS, so a server that accepts only TLS connections cannot serve it).
+Two more settings are refused: `NODE_PG_FORCE_NATIVE` at boot (pg's native client ignores `DATABASE_SSL_MODE`), and a
+`CONTRACT_DATABASE_URL` that sets `sslmode` or another `ssl*` parameter, when the contract run opens its first
+connection, for the reason a `DATABASE_URL` that sets one is. The contract run connects without TLS, so a server that
+accepts only TLS connections cannot serve it.
 
 **Now deletable.** An `?sslmode=...` query string appended to `DATABASE_URL` by hand, and a `NODE_EXTRA_CA_CERTS`
 setting added only so the database's certificate would verify.
