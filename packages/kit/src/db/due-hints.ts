@@ -1,5 +1,5 @@
-import { sql } from 'kysely'
 import type { DbPort } from '../ports/db'
+import { family } from './family'
 
 /**
  * Which tenants a drain of the scheduled tick lists (safeinsights/sssb#202). Each drain lists a tenant's due rows
@@ -63,16 +63,7 @@ export async function tenantsToList(db: DbPort, drain: DueDrain, now: Date): Pro
     const raw = db.getDb().withSchema('public')
     const cap = new Date(now.getTime() + MAX_SKIP_MS)
     try {
-        const { rows } = await sql<{ id: string; version: string | number | null; snapshot: string }>`
-            SELECT t.id, h.version, pg_current_snapshot()::text AS snapshot
-            FROM public.tenants t
-            LEFT JOIN public.due_hints h ON h.tenant_id = t.id AND h.drain = ${drain}
-            WHERE h.tenant_id IS NULL OR h.list_after <= ${now} OR h.list_after > ${cap}
-                OR EXISTS (
-                    SELECT 1 FROM public.due_hint_events e
-                    WHERE e.tenant_id = t.id AND e.drain = ${drain} AND e.due <= ${now}
-                )
-        `.execute(raw)
+        const rows = await family.readDueHints(raw, drain, now, cap)
         return {
             tenants: rows.map((r) => ({ id: r.id, hintVersion: r.version === null ? null : String(r.version) })),
             snapshot: rows[0]?.snapshot ?? null,
@@ -103,37 +94,13 @@ export async function settleHints(
     const cap = new Date(now.getTime() + MAX_SKIP_MS)
     const raw = db.getDb().withSchema('public')
     for (let i = 0; i < settled.length; i += SETTLE_CHUNK) {
-        const values = sql.join(
-            settled.slice(i, i + SETTLE_CHUNK).map((l) => {
-                const listAfter = l.hadRows
-                    ? now
-                    : l.nextDue !== null && l.nextDue.getTime() < cap.getTime()
-                      ? l.nextDue
-                      : cap
-                return sql`(${l.tenant.id}::uuid, ${listAfter}::timestamptz, ${l.tenant.hintVersion}::bigint)`
-            }),
-        )
+        const rows = settled.slice(i, i + SETTLE_CHUNK).map((l) => ({
+            tenantId: l.tenant.id,
+            listAfter: l.hadRows ? now : l.nextDue !== null && l.nextDue.getTime() < cap.getTime() ? l.nextDue : cap,
+            version: l.tenant.hintVersion,
+        }))
         try {
-            await sql`
-                WITH v (tenant_id, list_after, version) AS (VALUES ${values}),
-                updated AS (
-                    UPDATE public.due_hints h SET list_after = v.list_after, version = h.version + 1
-                    FROM v
-                    WHERE v.version IS NOT NULL AND h.tenant_id = v.tenant_id AND h.drain = ${drain}
-                        AND h.version = v.version
-                    RETURNING h.tenant_id
-                ),
-                inserted AS (
-                    INSERT INTO public.due_hints (tenant_id, drain, list_after, version)
-                    SELECT v.tenant_id, ${drain}, v.list_after, 1 FROM v WHERE v.version IS NULL
-                    ON CONFLICT (tenant_id, drain) DO NOTHING
-                    RETURNING tenant_id
-                )
-                DELETE FROM public.due_hint_events e
-                WHERE e.drain = ${drain}
-                    AND e.tenant_id IN (SELECT tenant_id FROM updated UNION ALL SELECT tenant_id FROM inserted)
-                    AND pg_visible_in_snapshot(e.writer, ${read.snapshot}::pg_snapshot)
-            `.execute(raw)
+            await family.settleDueHints(raw, drain, read.snapshot, rows)
         } catch (error) {
             console.warn(`SSSB tick: could not set the ${drain} drain's due hints: ${messageOf(error)}`)
         }
