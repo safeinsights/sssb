@@ -886,6 +886,8 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                     .execute(),
             )
             await writer.written
+            // Released after 3 s whatever happens, so a drain that waits on it shows as slow rather than hanging.
+            const timer = setTimeout(() => writer.release(), 3_000)
             const { runDueSchedules } = await import('../../db/schedules')
             const started = Date.now()
             try {
@@ -896,6 +898,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                 })
             } finally {
                 const elapsed = Date.now() - started
+                clearTimeout(timer)
                 writer.release()
                 await writer.done
                 expect(elapsed).toBeLessThan(1_500)
@@ -928,12 +931,14 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                     .execute(),
             )
             await holder.written
+            const timer = setTimeout(() => holder.release(), 3_000)
             const started = Date.now()
             let armed: Awaited<ReturnType<typeof recordJobStatus>> | undefined
             try {
                 armed = await recordJobStatus(realDb, t.id, job.id, 'failed', { error: 'x', now })
             } finally {
                 const elapsed = Date.now() - started
+                clearTimeout(timer)
                 holder.release()
                 await holder.done
                 expect(elapsed).toBeLessThan(1_000)

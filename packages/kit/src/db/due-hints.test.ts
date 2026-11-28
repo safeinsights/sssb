@@ -446,6 +446,12 @@ describe('settleHints and tenantsToList', () => {
         const { fakeDb, tenantId, orgId } = await world()
         const { settleHints, tenantsToList } = await import('./due-hints')
         const now = new Date('2034-06-01T00:00:00.000Z')
+        // A hint row to compare against (each path is tried: an existing row by version, a missing one by its key).
+        await fakeDb
+            .getDb()
+            .insertInto('due_hints')
+            .values({ tenant_id: tenantId, drain: 'schedules', list_after: new Date(0), version: 3 })
+            .execute()
         await insertSchedule(tenantId, orgId, new Date(now.getTime() + 30 * MINUTE))
         const stale = await tenantsToList(fakeDb, 'schedules', now)
         const fresher = await tenantsToList(fakeDb, 'schedules', now)
@@ -462,6 +468,7 @@ describe('settleHints and tenantsToList', () => {
             now.getTime() + 30 * MINUTE,
         )
         expect(await events(tenantId, 'schedules')).toEqual([now.getTime() + 5 * MINUTE])
+        expect(String((await hint(tenantId, 'schedules'))!.version)).toBe('4')
     })
 
     test('a hint further off than a day is read as come, and unreadable hints list every tenant and set nothing', async () => {
