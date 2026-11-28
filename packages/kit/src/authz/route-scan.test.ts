@@ -4038,6 +4038,19 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/gone.png') }, {}, options))).toMatch(
             /^refusal: `asset` is a default import/,
         )
+        // The `*` takes the whole captured subpath, and the text is taken as written (a `$&` in it is no pattern).
+        expect(
+            defaultOf(
+                scanCase(
+                    { 'page.tsx': ASSET_PAGE('@/img/deep/logo.png'), 'assets/img/deep/logo.png': 'png' },
+                    {},
+                    options,
+                ),
+            ),
+        ).toBe('reads nothing')
+        expect(
+            defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('@/a$&b.png'), 'assets/a$&b.png': 'png' }, {}, options)),
+        ).toBe('reads nothing')
         // A bare specifier is never an asset here, whatever it resolves to (round 3).
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toMatch(
             /^refusal: `asset` is a default import/,
