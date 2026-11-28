@@ -16,8 +16,9 @@ ignored and the kind runs once). Each attempt is a job row of its own: the faile
 stays `failed`, and the next is queued until its delay has passed. The scheduled tick then starts it, so the tick's
 period is the floor under every delay. A handler is told `ctx.attempt` and `ctx.firstJobId`, a key that stays the same
 across attempts. Only the last attempt's outcome notifies, and a failure after several attempts says how many. A kind
-that says nothing runs once, as before. The tick gains a third drain, so its windows are now 6 seconds for schedules,
-10 for retries and 16 for deliveries, and the cron route's JSON gains a `retries` part. `runScheduledTick`'s budget
+that says nothing runs once, as before. The tick gains a third drain, between schedules and deliveries: it starts at
+most 100 due retries, none after the tick's first 10 seconds (schedules start none after 6, deliveries none after 16),
+and the cron route's JSON gains a `retries` part. `runScheduledTick`'s budget
 takes `maxRetries` and `retriesWindowMs`. The job views carry `attempt` and `retryOf`, and a service caller's job list
 (`listServiceJobs`) leaves out a retry still waiting. `pnpm tick` reports retries.
 
