@@ -146,8 +146,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   identical answers.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
-  app serves routes and pages from `src/app` alone: a root-level `app/` directory, a `pages` or `src/pages` directory
-  (the Pages Router), or a file named `route.<ext>`, `page.<ext>` or for another page file below with an extension the
+  app serves routes and pages from `src/app` alone: a root-level `app/` directory, a `pages` directory beside `src` or
+  inside it (the Pages Router), or a file named `route.<ext>`, `page.<ext>` or for another page file below with an extension the
   check does not read (`route.mts`, `page.mdx`, a custom `pageExtensions`) fails it.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names (a `reads-only`
