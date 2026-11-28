@@ -1,5 +1,5 @@
 import type { DbPort } from '../ports/db'
-import { family } from './family'
+import { DUE_HINTS_PAGE, family } from './family'
 
 /**
  * Which tenants a drain of the scheduled tick lists (safeinsights/sssb#202). Each drain lists a tenant's due rows
@@ -90,8 +90,10 @@ export interface ListedTenant {
 }
 
 /**
- * The tenants `drain` lists at `now`, and the snapshot of the read. One query. Every tenant, marked unhinted, when the
- * hints cannot be read.
+ * The tenants `drain` lists at `now`, and the snapshot of the read, in one transaction paged by tenant id. When that
+ * read fails (it took too long, a lock): every tenant, with its hint's version and a snapshot, read without the events,
+ * so the drain lists everyone and still settles, which clears what made the read slow. When that fails too: every
+ * tenant, unhinted, and nothing is settled.
  */
 export async function tenantsToList(
     db: DbPort,
@@ -101,22 +103,45 @@ export async function tenantsToList(
 ): Promise<HintRead> {
     const raw = db.getDb().withSchema('public')
     const cap = new Date(now.getTime() + MAX_SKIP_MS)
-    try {
+    const timeout = () => {
         const left = window.deadline - (window.clock ?? Date.now)()
-        const timeoutMs = Number.isFinite(left)
+        return Number.isFinite(left)
             ? Math.min(READ_TIMEOUT_MAX_MS, Math.max(READ_TIMEOUT_MIN_MS, left / 2))
             : READ_TIMEOUT_MAX_MS
-        const rows = await family.readDueHints(raw, drain, now, cap, timeoutMs)
-        return {
-            tenants: rows.map((r) => ({ id: r.id, hintVersion: r.version === null ? null : String(r.version) })),
-            snapshot: rows[0]?.snapshot ?? null,
-        }
+    }
+    const hinted = (everyone: boolean) =>
+        family.readDueHints(raw, drain, now, cap, timeout(), everyone).then((read) => ({
+            tenants: read.tenants.map((r) => ({
+                id: r.id,
+                hintVersion: r.version === null ? null : String(r.version),
+            })),
+            snapshot: read.snapshot,
+        }))
+    try {
+        return await hinted(false)
     } catch (error) {
         console.warn(
             `SSSB tick: the ${drain} drain could not read its due hints, so it lists every tenant: ${messageOf(error)}`,
         )
-        const all = await raw.selectFrom('tenants').select('id').execute()
-        return { tenants: all.map((t) => ({ id: t.id, hintVersion: null, unhinted: true })), snapshot: null }
+    }
+    try {
+        return await hinted(true)
+    } catch (error) {
+        console.warn(`SSSB tick: the ${drain} drain could not read its tenants' hints either: ${messageOf(error)}`)
+    }
+    const tenants: HintedTenant[] = []
+    let after: string | null = null
+    for (;;) {
+        const page: { id: string }[] = await raw
+            .selectFrom('tenants')
+            .select('id')
+            .$if(after !== null, (qb) => qb.where('id', '>', after!))
+            .orderBy('id')
+            .limit(DUE_HINTS_PAGE)
+            .execute()
+        for (const t of page) tenants.push({ id: t.id, hintVersion: null, unhinted: true })
+        if (page.length < DUE_HINTS_PAGE) return { tenants, snapshot: null }
+        after = page.at(-1)!.id
     }
 }
 
@@ -139,6 +164,7 @@ export async function settleHints(
     const raw = db.getDb().withSchema('public')
     // Each chunk's tenants, kept for clearing only when its first statement deleted a full statement's worth.
     const piled: string[][] = []
+    const clock = window.clock ?? Date.now
     for (let i = 0; i < settled.length; i += SETTLE_CHUNK) {
         const rows = settled.slice(i, i + SETTLE_CHUNK).map((l) => ({
             tenantId: l.tenant.id,
@@ -151,23 +177,18 @@ export async function settleHints(
                   : cap,
             version: l.tenant.hintVersion,
         }))
+        // Past the drain's deadline the hints are still set (so the tenants are not listed again for nothing), but no
+        // events are deleted: that waits for a tick with time to spare.
+        const limit = clock() < window.deadline ? EVENTS_PER_STATEMENT : 0
         try {
-            const result = await family.settleDueHints(
-                raw,
-                drain,
-                read.snapshot,
-                rows,
-                EVENTS_PER_STATEMENT,
-                SETTLE_TIMEOUT_MS,
-            )
-            if (result.deleted >= EVENTS_PER_STATEMENT) piled.push(result.settled)
+            const result = await family.settleDueHints(raw, drain, read.snapshot, rows, limit, SETTLE_TIMEOUT_MS)
+            if (limit > 0 && result.deleted >= limit) piled.push(result.settled)
         } catch (error) {
             console.warn(`SSSB tick: could not set the ${drain} drain's due hints: ${messageOf(error)}`)
         }
     }
     // The rest of those tenants' accounted-for events, a bounded statement at a time, while the window lasts: a chunk
     // is cleared again only while its last statement deleted a full statement's worth, and every statement counts.
-    const clock = window.clock ?? Date.now
     let statements = 0
     while (piled.length > 0 && statements < MAX_CLEARING_STATEMENTS && clock() < window.deadline) {
         const chunk = piled.shift()!

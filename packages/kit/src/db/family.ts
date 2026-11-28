@@ -42,7 +42,10 @@ export interface DbFamily {
     /**
      * The tick's due-hint read (./due-hints.ts, 0022_due_hints): the tenants `drain` lists at `now` (no hint, a hint
      * that has come or is past `cap`, or an event that has come), each with its hint's version, and a token for the read
-     * (`snapshot`: in Postgres the statement's `pg_current_snapshot()`). On the owner's raw handle. Each of these due-hint
+     * (`snapshot`: in Postgres the first page's `pg_current_snapshot()`, the earliest, so an event it can see was
+     * committed before any tenant is listed). `everyone` reads every tenant with its hint's version and no events: the
+     * fallback when the full read fails, so a drain that lists everyone can still settle. Paged by tenant id
+     * (`DUE_HINTS_PAGE` a statement), so no response grows with the number of tenants. On the owner's raw handle. Each of these due-hint
      * statements runs in a transaction of its own that gives up after `timeoutMs` (it throws then) and lets the
      * planner use only index paths over the events (`dueHintsPlanner`).
      */
@@ -52,7 +55,8 @@ export interface DbFamily {
         now: Date,
         cap: Date,
         timeoutMs: number,
-    ): Promise<{ id: string; version: string | number | null; snapshot: string }[]>
+        everyone: boolean,
+    ): Promise<{ tenants: { id: string; version: string | number | null }[]; snapshot: string | null }>
     /**
      * Sets the listed tenants' hints for `drain` by compare-and-set on the version each was read at (an insert when none
      * was), and deletes up to `limit` of their events that the read identified by `snapshot` could see. Returns the
@@ -100,10 +104,11 @@ export interface DbFamily {
  * (and a planner that knows where the past-due events are cannot turn it into a scan of the events per tenant).
  * Exported for the plan check in ./due-hints.contract.test.ts.
  */
-export function dueHintsReadQuery(drain: string, now: Date, cap: Date) {
+export function dueHintsReadQuery(drain: string, now: Date, cap: Date, after: string | null = null, everyone = false) {
     return sql<{ id: string; version: string | number | null; snapshot: string }>`
         WITH RECURSIVE with_events (tenant_id) AS (
-            (SELECT e.tenant_id FROM public.due_hint_events e WHERE e.drain = ${drain} ORDER BY e.tenant_id LIMIT 1)
+            (SELECT e.tenant_id FROM public.due_hint_events e WHERE e.drain = ${drain} AND NOT ${everyone}
+             ORDER BY e.tenant_id LIMIT 1)
             UNION ALL
             SELECT (
                 SELECT e.tenant_id FROM public.due_hint_events e
@@ -123,9 +128,16 @@ export function dueHintsReadQuery(drain: string, now: Date, cap: Date) {
         FROM public.tenants t
         LEFT JOIN public.due_hints h ON h.tenant_id = t.id AND h.drain = ${drain}
         LEFT JOIN come ON come.tenant_id = t.id
-        WHERE h.tenant_id IS NULL OR h.list_after <= ${now} OR h.list_after > ${cap} OR come.tenant_id IS NOT NULL
+        WHERE (${everyone} OR h.tenant_id IS NULL OR h.list_after <= ${now} OR h.list_after > ${cap}
+                OR come.tenant_id IS NOT NULL)
+            AND (${after}::uuid IS NULL OR t.id > ${after}::uuid)
+        ORDER BY t.id
+        LIMIT ${DUE_HINTS_PAGE}
     `
 }
+
+/** How many tenants one page of the due-hint read returns, so no response grows with the number of tenants. */
+export const DUE_HINTS_PAGE = 2_000
 
 /**
  * The settings every due-hint statement runs under, in a transaction of its own: a `statement_timeout` (lock waits
@@ -174,9 +186,22 @@ const postgresFamily: DbFamily = {
     isolation: 'rls',
     json: jsonb,
     lockRow: (query) => query.forUpdate(),
-    readDueHints: (db, drain, now, cap, timeoutMs) =>
-        // A read that cannot finish inside the drain's window throws rather than hangs; the caller lists everyone.
-        bounded(db, timeoutMs, async (trx) => (await dueHintsReadQuery(drain, now, cap).execute(trx)).rows),
+    readDueHints: (db, drain, now, cap, timeoutMs, everyone) =>
+        // A read that cannot finish inside the drain's window throws rather than hangs; the caller falls back.
+        bounded(db, timeoutMs, async (trx) => {
+            const tenants: { id: string; version: string | number | null }[] = []
+            let snapshot: string | null = null
+            let after: string | null = null
+            for (;;) {
+                const page: { id: string; version: string | number | null; snapshot: string }[] = (
+                    await dueHintsReadQuery(drain, now, cap, after, everyone).execute(trx)
+                ).rows
+                if (snapshot === null && page.length > 0) snapshot = page[0]!.snapshot
+                for (const row of page) tenants.push({ id: row.id, version: row.version })
+                if (page.length < DUE_HINTS_PAGE) return { tenants, snapshot }
+                after = page.at(-1)!.id
+            }
+        }),
     settleDueHints: (db, drain, snapshot, rows, limit, timeoutMs) =>
         bounded(db, timeoutMs, async (trx) => {
             const values = sql.join(

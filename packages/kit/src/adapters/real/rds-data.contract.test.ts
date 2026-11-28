@@ -885,4 +885,22 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         expect(error?.message).not.toMatch(/SQLState/)
         expect(error?.code).toBeUndefined()
     })
+
+    // safeinsights/sssb#202: the Data API refuses a response over 1 MB. The hint read is paged by tenant id, so a
+    // deployment with more tenants than one response holds still reads its hints (and its fallback still reads them).
+    test('the hint read pages past the response limit: twelve thousand tenants, none of them unhinted', async () => {
+        const stamp = Date.now()
+        await sql`
+            INSERT INTO tenants (slug, name) SELECT ${`page-${stamp}-`} || g, 'page proof' FROM generate_series(1, 12000) g
+        `.execute(db())
+        try {
+            const { tenantsToList } = await import('../../db/due-hints')
+            const read = await tenantsToList(dataApi, 'schedules', new Date('2001-01-01T00:00:00.000Z'))
+            expect(read.tenants.length).toBeGreaterThanOrEqual(12_000)
+            expect(read.tenants.filter((t) => t.unhinted === true)).toEqual([])
+            expect(read.snapshot).not.toBeNull()
+        } finally {
+            await sql`DELETE FROM tenants WHERE slug LIKE ${`page-${stamp}-%`}`.execute(db())
+        }
+    }, 300_000)
 })

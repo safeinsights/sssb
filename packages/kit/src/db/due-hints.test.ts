@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { JobsPort, SubmittedJob } from '../ports/jobs'
 
@@ -509,6 +509,48 @@ describe('settleHints and tenantsToList', () => {
     })
 })
 
+describe('a read that fails', () => {
+    test('falls back to every tenant with its hint, so the drain lists everyone and still settles', async () => {
+        const { fakeDb, tenantId, otherTenantId, orgId } = await world()
+        const { settleHints, tenantsToList } = await import('./due-hints')
+        const now = new Date('2044-01-05T00:00:00.000Z')
+        await insertSchedule(tenantId, orgId, new Date(now.getTime() - MINUTE))
+        // The first read of the events fails (as a timeout would); the hints-only read after it does not.
+        let refused = 0
+        const failingOnce = fakeDb.getDb().withPlugin({
+            transformQuery: ({ node }) => {
+                if (refused === 0 && JSON.stringify(node).includes('with_events')) {
+                    refused += 1
+                    throw new Error('canceling statement due to statement timeout')
+                }
+                return node
+            },
+            transformResult: async ({ result }) => result,
+        })
+        const flaky = Object.create(fakeDb, { getDb: { value: () => failingOnce } }) as typeof fakeDb
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+            const read = await tenantsToList(flaky, 'schedules', now)
+            expect(read.tenants.map((t) => t.id)).toEqual(expect.arrayContaining([tenantId, otherTenantId]))
+            expect(read.tenants.every((t) => t.unhinted === undefined)).toBe(true)
+            expect(read.snapshot).not.toBeNull()
+            await settleHints(
+                fakeDb,
+                'schedules',
+                now,
+                read,
+                read.tenants.map((tenant) => ({ tenant, hadRows: tenant.id === tenantId, nextDue: null })),
+            )
+        } finally {
+            warn.mockRestore()
+        }
+        expect(
+            await events(tenantId, 'schedules'),
+            'its events are cleared, so the next read is not slowed by them',
+        ).toEqual([])
+    })
+})
+
 describe('the owner reads the real tables', () => {
     test('temporary tables named like them on the same connection do not stand in', async () => {
         const { fakeDb, tenantId } = await world()
@@ -564,7 +606,7 @@ describe('what a tick leaves, whatever its clock does and however much a tenant 
         expect(back.calls.map((c) => (c.payload as { scheduleId: string }).scheduleId)).toContain(left)
     })
 
-    test("a settle clears a tenant's pile a bounded statement at a time while its window lasts; a spent window leaves the rest", async () => {
+    test("a settle clears a tenant's pile a bounded statement at a time while its window lasts; a spent window sets hints only", async () => {
         const { fakeDb, tenantId } = await world()
         const { sql } = await import('kysely')
         const { EVENTS_PER_STATEMENT, settleHints, tenantsToList } = await import('./due-hints')
@@ -582,8 +624,8 @@ describe('what a tick leaves, whatever its clock does and however much a tenant 
             await settleHints(fakeDb, 'schedules', now, read, [{ tenant, hadRows: false, nextDue: null }], window)
             return (await events(tenantId, 'schedules')).length
         }
-        // A window already spent: the first statement only.
-        expect(await settleOnce({ deadline: 0, clock: () => 1 })).toBe(piled - EVENTS_PER_STATEMENT)
+        // A window already spent: the hint is set, and nothing is deleted.
+        expect(await settleOnce({ deadline: 0, clock: () => 1 })).toBe(piled)
         // A window with time: the rest, in proportion to the pile.
         expect(await settleOnce({ deadline: Number.MAX_SAFE_INTEGER })).toBe(0)
     })
