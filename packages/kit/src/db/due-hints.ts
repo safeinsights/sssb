@@ -10,9 +10,10 @@ import { family } from './family'
  *
  * A drain that uses them reads, in one query (`tenantsToList`), the tenants with no hint, a hint that has come, a hint
  * further off than `MAX_SKIP_MS` (a simulated world whose clock was moved back), or an event that has come, and the
- * snapshot that read was taken in. It lists those. Then, in one statement for the whole drain (`settleHints`), it sets
- * each listed tenant's hint: to now when it had rows due (so it is listed again), else to its next due time, at most
- * `MAX_SKIP_MS` on; and deletes that tenant's events the snapshot could see, which its listing has accounted for. An
+ * snapshot that read was taken in. It lists those. Then, in one statement a drain (`settleHints`, one per 200 tenants), it
+ * sets each listed tenant's hint: to the epoch when it had rows due (so it is listed again, whatever a Simulator's clock
+ * does next), else to its next due time, at most `MAX_SKIP_MS` on; and deletes up to `EVENTS_SETTLED_PER_TENANT` of that
+ * tenant's events the snapshot could see, which its listing has accounted for (any more stay, and it is listed again). An
  * event committed after the read stays, so its tenant is listed again: no write is lost to a tick that read before it.
  * The hint is set by compare-and-set on its version, so of two overlapping ticks only one sets it; the other deletes
  * nothing, and its tenants are listed again.
@@ -23,7 +24,8 @@ import { family } from './family'
  * Read and written through the raw handle, schema-qualified (`public`, so a temporary table of the same name on a
  * pooled connection cannot stand in), as the tick already reads `tenants`: the tables belong to the migration owner,
  * the role the server connects as. A hint that cannot be read (a server connecting as some other role) is no reason
- * to skip anything: the drain lists every tenant, as before, and sets nothing.
+ * to skip anything: the drain lists every tenant, as before, and sets nothing (its events then stay:
+ * safeinsights/sssb#308).
  */
 
 export type DueDrain = 'schedules' | 'retries' | 'deliveries'

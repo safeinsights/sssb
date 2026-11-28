@@ -88,10 +88,12 @@ the interesting reports are about that shape being wrong:
     **Two framework tables are out of `app_user`'s reach altogether**: `due_hints` and
     `due_hint_events` (`packages/kit/src/db/migrations/0022_due_hints.ts`), which tell the scheduled
     tick when each tenant may next have work due. They are cross-tenant and have no RLS, so `app_user`
-    can reach neither, directly or through any role it is a member of (they would tell one tenant when
+    can reach neither, directly or by inheriting from a role it is a member of (a membership it can only
+    `SET ROLE` to is outside the gates: safeinsights/sssb#310) (they would tell one tenant when
     another has work, or let it hide another's work from the tick). Migration 0022 revokes every grant
     on them but the owner's, including any an app migration's default privileges gave (on an upgrade
-    those run first), and refuses to finish if `app_user` can still reach them. Only the migration
+    those run first), and refuses to finish if `app_user` can still read, write or
+    reference either table or call the function. Only the migration
     owner, the role the server connects as, reads and writes them. A database trigger appends to
     `due_hint_events` through one `SECURITY DEFINER` function, `sssb_note_due`, with its `search_path`
     pinned (`pg_catalog, pg_temp`) and `EXECUTE` revoked from everyone but the owner. It writes only

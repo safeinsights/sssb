@@ -16,7 +16,7 @@ armed) now also appends one row to `due_hint_events`. That append waits on no ot
 another write needs, so a tenant's writes do not serialize on each other or deadlock because of it, and the tick never
 waits on a tenant's open transaction. `app_user` can reach neither table nor the function: the migration revokes
 every grant on them but the owner's, including any your migrations' default privileges would give a role `app_user` is
-a member of, and refuses to finish if `app_user` can still reach them. The migrator applies it on its next run, after
+a member of, and refuses to finish if `app_user` can still read, write or reference either table or call the function. The migrator applies it on its next run, after
 any app migrations a database has already run, which the order-independence rule allows. It backfills nothing: the
 first tick after it lists every tenant once, as 0.10.0 did, plus a next-due query for a tenant with nothing due, and
 records their hints.

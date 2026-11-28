@@ -9458,8 +9458,9 @@ listing share" above). Migration 0022 has not shipped, so it is edited in place.
       table, `due_hint_events` (tenant, drain, due time, the writing transaction's id), which has no unique key, so the
       append waits on nothing and nothing waits on it. Only the tick writes `due_hints`. A drain reads, in one query,
       the tenants whose hint or an event has come, with that read's snapshot; lists them; then, in one statement for
-      the drain (chunked at 200 tenants), sets each listed tenant's hint (now if it had rows, else its next due time
-      capped at a day) by compare-and-set on `version`, and deletes that tenant's events the snapshot could see
+      the drain (chunked at 200 tenants), sets each listed tenant's hint (the epoch if it had rows, else its next due
+      time capped at a day) by compare-and-set on `version`, and deletes up to 500 of that tenant's events the snapshot
+      could see
       (`pg_visible_in_snapshot`). An event committed after the read survives, so its tenant is listed again; of two
       overlapping ticks, the one whose read is stale sets nothing and deletes nothing.
     - **Why not the suggested bounds:** a `lock_timeout` on the tick's trigger-firing writes would turn a wait into a
@@ -9469,7 +9470,8 @@ listing share" above). Migration 0022 has not shipped, so it is edited in place.
       statement a drain, where it used to add a raise per tenant with nothing due. Each write that makes work due
       inserts one event row; the tick deletes them as it lists their tenants.
     - **Accepted:** events of a tenant whose work is far off stay until it is listed (at its earliest due time, or the
-      day's cap); a tenant listed because of an event is listed once more after its work is done.
+      day's cap), and a tenant listed with rows is listed once more after its work is done. Events pile up where no
+      hinted tick runs at all (safeinsights/sssb#308).
     - The decision log's "the tick takes no part in it" and "never crosses tenants" (the lock-coupling line above) were
       wrong; that entry now says so.
     - **The notes (B3):** `due-hints-migration.md` now says what a write that makes work due does (one appended row,
@@ -9482,7 +9484,7 @@ listing share" above). Migration 0022 has not shipped, so it is edited in place.
   in the body is qualified).
 - **Proofs.**
     - `migrate.test.ts`: the B1 upgrade case.
-    - `due-hints.test.ts` (13): every append path (insert, earlier move, re-enable, status-only move, retry armed,
+    - `due-hints.test.ts` (16, with the review's three): every append path (insert, earlier move, re-enable, status-only move, retry armed,
       delivery enqueued), the tick's advance appending nothing, the hint set to the earliest next due time and capped,
       an event committed after the read surviving, a stale settle setting and deleting nothing, events consumed for a
       tenant listed with rows, unreadable hints, temporary tables not standing in.
@@ -9493,5 +9495,27 @@ listing share" above). Migration 0022 has not shipped, so it is edited in place.
       the append by `app_user`'s own write, the refused cross-tenant write.
     - Mutations, each red in the named tests: no revocation block (B1 test, RLS proofs); the update trigger off (S1's
       proof, the append tests); deleting every event rather than the snapshot's (the survival test); no
-      compare-and-set (the stale-settle test); listing ignoring events (four drain tests); the old shared-row upsert
+      compare-and-set (the stale-settle test); listing ignoring events (the drain tests); the old shared-row upsert
       put back in the trigger (probes D and E, 2.7 s and 3.0 s).
+- **Review of this branch** (one Opus round, one Fable security pass on B1 and B2). Neither found a way to hide due
+  work or to cross tenants; B1 held under seven default-privilege shapes (to `PUBLIC`, globally, with grant option, an
+  odd role name, a non-inheriting membership, a two-level chain) and the owner-membership refusal. Fixed here:
+    - **Opus: a Simulator clock reset could hide a tenant's still-due rows for up to a day.** A tenant listed with rows
+      had its hint set to the tick's `now`, which `resetClock` moves back. It is set to the epoch now, so it is listed
+      again whatever the clock does (the review's probe, as a test).
+    - **Fable: one tenant's piled-up events cost the whole tick** (3M events: a 3.7 s settle inside the shared windows).
+      A settle deletes at most 500 of a tenant's events per drain, read along the events index (`LATERAL … LIMIT`);
+      the rest stay and only mean the tenant is listed again. Deduplicating in the trigger was rejected: a write that
+      skipped its append because an earlier event existed could lose its due time to a settle that deleted that event.
+      Test on real Postgres: 2M events of one tenant, and the next drain still starts another tenant's retry inside a
+      window measured from the tick's start; unbounded, it stops on time.
+    - **Fable: the refusal was pinned by nothing, and its list missed REFERENCES and TRIGGER.** Both: a test upgrades
+      a database where `app_user` is a member of the owning role and sees 0022 refuse.
+    - **Fable: nothing pinned the events table's lack of a unique key**, which is what keeps an append from waiting. A
+      test reads it from the catalog.
+    - The family fence: the two statements live in `family.ts` (`readDueHints`, `settleDueHints`), and the unused
+      `lockRowsNotHeld` is gone.
+      Filed: safeinsights/sssb#308 (events where no hinted tick runs), #309 (events copied from another cluster are never
+      visible, so never deleted: cost only), #310 (a non-inheriting, settable membership of `app_user` is outside every
+      gate; predates this branch). Accepted: a tenant deleted between a read and its settle fails that 200-tenant chunk
+      for one tick, whose tenants are listed again.
