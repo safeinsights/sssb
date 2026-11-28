@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import { makeTestTmpDir } from '../testing/tmp-dir'
 import type { JobsPort, SubmittedJob } from '../ports/jobs'
+import type { DB } from './schema'
 
 const tmp = makeTestTmpDir('app-due-hints-')
 beforeAll(async () => {
@@ -433,26 +434,97 @@ describe('raiseHint and tenantsToList', () => {
             expect.arrayContaining([tenantId]),
         )
 
+        // The hints' read (the join from `tenants as t`) fails as a missing grant would; everything else, `withSchema`'s
+        // query creator included, works.
+        const refusingHints = <Q extends object>(creator: Q): Q =>
+            new Proxy(creator, {
+                get(target, prop, receiver) {
+                    if (prop === 'selectFrom') {
+                        return (table: string) => {
+                            if (String(table).startsWith('tenants as'))
+                                throw new Error('permission denied for table due_hints')
+                            return (target as { selectFrom: (t: never) => unknown }).selectFrom(table as never)
+                        }
+                    }
+                    if (prop === 'withSchema') {
+                        return (schema: string) =>
+                            refusingHints((target as { withSchema: (s: string) => object }).withSchema(schema))
+                    }
+                    const value = Reflect.get(target, prop, receiver)
+                    return typeof value === 'function' ? value.bind(target) : value
+                },
+            })
         const broken = Object.create(fakeDb, {
-            getDb: {
-                value: () =>
-                    new Proxy(fakeDb.getDb(), {
-                        get(target, prop, receiver) {
-                            if (prop === 'selectFrom') {
-                                return (table: string) => {
-                                    if (String(table).startsWith('tenants as'))
-                                        throw new Error('permission denied for table due_hints')
-                                    return target.selectFrom(table as never)
-                                }
-                            }
-                            const value = Reflect.get(target, prop, receiver)
-                            return typeof value === 'function' ? value.bind(target) : value
-                        },
-                    }),
-            },
+            getDb: { value: () => refusingHints(fakeDb.getDb()) },
         }) as typeof fakeDb
         const listed = await tenantsToList(broken, 'schedules', now)
         expect(listed.map((t) => t.id)).toEqual(expect.arrayContaining([tenantId, otherTenantId]))
         expect(listed.every((t) => t.unhinted === true)).toBe(true)
+    })
+})
+
+describe('migration 0022 on a database that already has tenants', () => {
+    test('writes every existing tenant an "unknown" row per drain, so the first raises update rather than insert', async () => {
+        const { Kysely } = await import('kysely')
+        const { openPglite, PGliteDialect } = await import('../adapters/fake/pglite-dialect')
+        const { frameworkMigrations } = await import('./migrations/index')
+        const { migrateRegistryToLatest } = await import('./migrate')
+        const fresh = new Kysely<DB>({ dialect: new PGliteDialect(openPglite()) })
+        try {
+            const before = Object.fromEntries(
+                Object.entries(frameworkMigrations).filter(([name]) => name < '0022_due_hints'),
+            )
+            await migrateRegistryToLatest(fresh, before)
+            const tenants = await fresh
+                .insertInto('tenants')
+                .values([
+                    { slug: 'older-a', name: 'Older A' },
+                    { slug: 'older-b', name: 'Older B' },
+                ])
+                .returning('id')
+                .execute()
+            await migrateRegistryToLatest(fresh, frameworkMigrations)
+            const rows = await fresh
+                .selectFrom('due_hints')
+                .select(['tenant_id', 'drain', 'list_after', 'version'])
+                .orderBy('tenant_id')
+                .orderBy('drain')
+                .execute()
+            expect(rows).toHaveLength(6)
+            expect(new Set(rows.map((r) => r.tenant_id))).toEqual(new Set(tenants.map((t) => t.id)))
+            expect(new Set(rows.map((r) => r.drain))).toEqual(new Set(['schedules', 'retries', 'deliveries']))
+            for (const r of rows) expect(new Date(r.list_after as Date).getTime()).toBe(0)
+        } finally {
+            await fresh.destroy()
+        }
+    })
+})
+
+describe('the owner reads the real table', () => {
+    test('a temporary table named due_hints on the same connection does not stand in for it', async () => {
+        const { fakeDb, tenantId } = await world()
+        const { sql } = await import('kysely')
+        const { tenantsToList } = await import('./due-hints')
+        const now = new Date()
+        // The real hint says "unknown" (listed); a temporary table of the same name says "an hour off" (skipped).
+        await fakeDb
+            .getDb()
+            .insertInto('due_hints')
+            .values({ tenant_id: tenantId, drain: 'schedules', list_after: new Date(0), version: 7 })
+            .onConflict((oc) => oc.columns(['tenant_id', 'drain']).doUpdateSet({ list_after: new Date(0), version: 7 }))
+            .execute()
+        const raw = fakeDb.getDb()
+        await sql`CREATE TEMP TABLE due_hints (tenant_id uuid, drain text, list_after timestamptz, version bigint)`.execute(
+            raw,
+        )
+        try {
+            await sql`INSERT INTO pg_temp.due_hints VALUES (${tenantId}, 'schedules', ${new Date(now.getTime() + 3_600_000)}, 1)`.execute(
+                raw,
+            )
+            const listed = await tenantsToList(fakeDb, 'schedules', now)
+            expect(listed.find((t) => t.id === tenantId)).toMatchObject({ hintVersion: '7' })
+        } finally {
+            await sql`DROP TABLE pg_temp.due_hints`.execute(raw)
+        }
     })
 })

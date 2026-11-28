@@ -16,8 +16,11 @@ import { Kysely, sql } from 'kysely'
  * - THE DRAIN RAISES IT, and only by compare-and-set: after listing a tenant that had nothing due it moves
  *   `list_after` to the tenant's next due time, but only while `version` is what it read before listing, so a write
  *   that lowered the hint meanwhile is never overwritten (../due-hints.ts).
- * - A tenant with no row, or whose row says "unknown", is listed. Every tenant starts without one, so this migration
- *   backfills nothing: the first tick lists everyone, as before, and the drains raise the rows.
+ * - A tenant with no row, or whose row says "unknown", is listed. This migration writes "unknown" rows for every
+ *   tenant there is, one per drain, so the first tick lists everyone, as before, and the drains raise rows that exist.
+ *   A raise only updates an existing row with SKIP LOCKED, which never waits; creating one is an insert, which waits
+ *   on a tenant's open transaction whose trigger is inserting the same key. The backfill keeps that wait to a tenant
+ *   created after this migration, on its first raise per drain, while a write of its own is open.
  *
  * NOT REACHABLE BY `app_user`. The table has no grant to it (a cross-tenant table it could read would tell one tenant
  * when another has work), and so needs no RLS (./rls-coverage.ts covers what `app_user` can reach). Only the
@@ -41,6 +44,13 @@ export async function up(db: Kysely<any>): Promise<void> {
     await sql`REVOKE ALL ON due_hints FROM PUBLIC`.execute(db)
     // Named too, so a default privilege an app migration gave app_user before this one cannot reach the table.
     await sql`REVOKE ALL ON due_hints FROM app_user`.execute(db)
+    // Every tenant there is gets its rows now, "unknown" (the epoch: listed on the first tick, then raised), so the
+    // tick's raises after this migration update rows rather than create them, and never wait (see above).
+    await sql`
+        INSERT INTO due_hints (tenant_id, drain, list_after, version)
+        SELECT t.id, d.drain, '1970-01-01T00:00:00Z'::timestamptz, 0
+        FROM tenants t CROSS JOIN (VALUES ('schedules'), ('retries'), ('deliveries')) AS d (drain)
+    `.execute(db)
 
     await sql`
         CREATE FUNCTION sssb_note_due() RETURNS trigger

@@ -12,7 +12,9 @@ import { family } from './family'
  * migration lists them; one that must create the row writes "unknown", the epoch), and the drain raises it only by
  * compare-and-set, after listing a tenant that had nothing due, to that tenant's next due time; a write that lowered
  * it meanwhile bumped its version, so the raise does not land, and a hint row a tenant's open transaction holds is
- * skipped (SKIP LOCKED), so the raise never waits. A hint more than `MAX_SKIP_MS` away is read as come, so no tenant goes unlisted for longer than that, and a
+ * skipped (SKIP LOCKED), so raising an existing row never waits. Creating a row is an insert, which does wait on a
+ * tenant's open transaction inserting the same key; migration 0022 writes every existing tenant's rows, so that is
+ * left to a tenant created since, once per drain. A hint more than `MAX_SKIP_MS` away is read as come, so no tenant goes unlisted for longer than that, and a
  * simulated world whose clock was moved back cannot strand one.
  *
  * Read and written through the raw handle, as the tick already reads `tenants`: the table belongs to the migration
@@ -38,7 +40,8 @@ export interface HintedTenant {
  * `MAX_SKIP_MS`. One query. Every tenant, with no versions (so nothing is raised later), when the hints cannot be read.
  */
 export async function tenantsToList(db: DbPort, drain: DueDrain, now: Date): Promise<HintedTenant[]> {
-    const raw = db.getDb()
+    // Schema-qualified (`public`), so a temporary table of the same name on a pooled connection cannot stand in for it.
+    const raw = db.getDb().withSchema('public')
     try {
         const rows = await raw
             .selectFrom('tenants as t')
@@ -77,7 +80,8 @@ export async function raiseHint(
     if (tenant.unhinted) return
     const cap = new Date(now.getTime() + MAX_SKIP_MS)
     const listAfter = nextDue !== null && nextDue.getTime() < cap.getTime() ? nextDue : cap
-    const raw = db.getDb()
+    // Schema-qualified (`public`), so a temporary table of the same name on a pooled connection cannot stand in for it.
+    const raw = db.getDb().withSchema('public')
     try {
         if (tenant.hintVersion === null) {
             await raw

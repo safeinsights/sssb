@@ -692,6 +692,32 @@ export const frameworkRlsProofs: RlsProofSuite = async ({
         .where('drain', '=', 'schedules')
         .executeTakeFirst()
     expect(alphaHint !== undefined && new Date(alphaHint.list_after as Date).getTime() <= earlier.getTime()).toBe(true)
+    // ...and a write naming the other tenant, which RLS refuses, leaves that tenant's hint exactly as it was: the
+    // trigger fires only for a row RLS has let through, so it never writes a tenant the writer cannot.
+    const demoHintOf = async () =>
+        JSON.stringify(
+            await db
+                .selectFrom('due_hints')
+                .select(['list_after', 'version'])
+                .where('tenant_id', '=', demoTenantId)
+                .where('drain', '=', 'schedules')
+                .executeTakeFirst(),
+        )
+    const demoHintBefore = await demoHintOf()
+    let crossTenantMoveRejected = false
+    try {
+        await runWithTenant(appDb, alphaTenantId, (trx) =>
+            trx
+                .updateTable('job_schedules')
+                .set({ tenant_id: demoTenantId, next_run_at: new Date('2000-01-01T00:00:00.000Z') })
+                .where('id', '=', alphaSchedule!.id)
+                .execute(),
+        )
+    } catch (error) {
+        crossTenantMoveRejected = /row-level security/.test(String(error))
+    }
+    expect(crossTenantMoveRejected).toBe(true)
+    expect(await demoHintOf()).toBe(demoHintBefore)
 
     // the scheduler's advance path: a scoped UPDATE of next_run_at succeeds under RLS
     await runWithTenant(appDb, alphaTenantId, (trx) =>
