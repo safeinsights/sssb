@@ -9052,6 +9052,46 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
   the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
   and #267. Then a claims pass over the prose.
 
+## The keyless guard refuses what Clerk leaves open, and no more (2026-11-27, `fix/review-keyless-guard`)
+
+Finding A3 of the whole-branch review of `int-fixes`, against safeinsights/sssb#193's fix (the entry "The Clerk adapter:
+one read per render, the keyless fallback closed, a client sign-out"). That cut refused the adapter in every process that
+was not a production Next build, before every session read and every Backend API call, so a plain `node` process (an
+adopter's CodeBuild job program, an ops script, the auth contract suite) threw "...wherever real mode runs under next
+dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMembers`, would have failed on upgrade.
+
+- **The rule is now Clerk's own two conditions, re-read in @clerk/nextjs 7.10** (`decryptClerkRequestData`,
+  `canUseKeyless`, `createAuthOptions`): the keyless key is Clerk's FIRST key only when neither `CLERK_ENCRYPTION_KEY` nor
+  `CLERK_SECRET_KEY` is set (the dummy key when `NODE_ENV` is not `production`, an empty passphrase in a production
+  build, which a forger has just as well); it is the FALLBACK, after the real key fails, only when
+  `NODE_ENV` is `development`, it is not CI, and the disable flag is unset. And a forged token is checked against
+  `CLERK_SECRET_KEY`, empty when unset, in every `NODE_ENV`. So the guard refuses when `CLERK_SECRET_KEY` is unset, and when
+  `NODE_ENV` is `development` and the flag is not `1` or `true`; a process with the secret key set and `NODE_ENV` unset,
+  `test` or `production` is let through, and the real-Clerk test shows Clerk itself refuses a forgery there (it fails to
+  decrypt). Stricter than Clerk in one place on purpose, as before: it ignores the CI exemption.
+- **A missing secret key is refused in production too**, which the review's wording left out ("outside production").
+  A production process with no key checks a forged token against an empty key (shown against real Clerk in the same
+  test), `assertRealEnv` already refuses to boot without the key, and no process that calls Clerk can work without it, so
+  nothing legitimate loses. Rejected: refusing only outside production, which would leave that one case to boot alone.
+- **`check-real-env` reports it two ways.** `assertRealEnv` now throws the guard's problem as a cutover item on `auth-dev`
+  (so `createRealPorts` stops at boot too, instead of failing every request), which sees the process's own `NODE_ENV`; and
+  `realEnvNotices` prints what `next dev` would do with the environment when this process is not `next dev` (the preflight
+  of `dev:real` runs before it, with no `NODE_ENV=development`), computed by the guard itself with `NODE_ENV`
+  `development`, so the two cannot disagree. A notice, not a failure: an adopter who sets the flag only on `next dev` is
+  right, if less helped. The showcase's `dev:real` now exports the flag first, so the notice stays quiet there. Rejected:
+  forcing `NODE_ENV=development` in the preflight, which would fail every script that follows the earlier changeset's
+  advice to set the flag on `next dev` alone.
+- **Considered in review, and not done.** (1) Refusing when the RUNTIME `NODE_ENV` says `development` as well as the
+  inlined one, against the case where an adopter puts `@clerk/nextjs` in `serverExternalPackages` (so Clerk reads the
+  runtime value) and runs a production build with `NODE_ENV=development` preset. It needs two unusual choices at once, and
+  would refuse every request of a production build merely started with a preset `NODE_ENV=development` (Clerk's bundled
+  copy is inlined as `production` there and safe): the outage class finding A3 was about, for the opposite combination.
+  The literal reads, which agree with the bundled Clerk, are pinned by a source assertion because no run can tell them
+  from the whole-environment read. (2) Validating the secret key's shape (`sk_live_…`): it would refuse only a deployment
+  already broken (every Backend API call and sign-in fails), and a format check can refuse a legitimate key. (3) A notice
+  from a preflight run with `NODE_ENV=production` that is then followed by `next dev`: it fails closed on the first
+  request, and a production-looking preflight is not the `dev:real` this notice speaks for.
+
 ## A drain lists for half its window; a retry that may have started is left to the sweep (2026-11-28, `fix/review-drains-and-retry-start`)
 
 Two findings of the whole-branch review of `int-fixes` before 0.10.0, both where #217's bounded drains, #238's retries
