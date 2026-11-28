@@ -972,7 +972,7 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
                 .execute()
             const { runDueSchedules } = await import('../../db/schedules')
             const { runDueRetries } = await import('../../db/jobs')
-            const { EVENTS_SETTLED_PER_TENANT } = await import('../../db/due-hints')
+            const { EVENTS_PER_STATEMENT } = await import('../../db/due-hints')
             const started: string[] = []
             const jobs = { start: async (job: { tenantId: string }) => void started.push(job.tenantId) }
             // As the tick runs them: windows measured from its start, the retries' 1.5 s on.
@@ -988,7 +988,9 @@ describe('SSSB fixture seam on real Postgres, through the real adapter (contract
             const { rows } = await sql<{ n: string }>`
                 SELECT count(*)::text AS n FROM due_hint_events WHERE tenant_id = ${piled.id}::uuid
             `.execute(admin)
-            expect(Number(rows[0]!.n)).toBe(count - EVENTS_SETTLED_PER_TENANT)
+            // Cleared in proportion, a statement at a time, but no further than the schedules drain's window allowed.
+            expect(Number(rows[0]!.n)).toBeLessThan(count - EVENTS_PER_STATEMENT)
+            expect(Number(rows[0]!.n)).toBeGreaterThan(0)
             await sql`DELETE FROM due_hint_events WHERE tenant_id = ${piled.id}::uuid`.execute(admin)
         }, 180_000)
 

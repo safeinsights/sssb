@@ -128,8 +128,9 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
     })
 
     // safeinsights/sssb#202: a drain lists each tenant in a transaction of its own, four calls a tenant. With due hints
-    // (0022), a tick after the first lists only tenants whose work has come due: with nothing due anywhere, one call.
-    test('a hinted drain over tenants with nothing due costs one call, after the tick that first lists them', async () => {
+    // (0022), a tick after the first lists only tenants whose work has come due: with nothing due anywhere, the read
+    // alone, in a transaction of its own that bounds it (BeginTransaction, its timeout, the read, CommitTransaction).
+    test('a hinted drain over tenants with nothing due costs the read alone, after the tick that first lists them', async () => {
         const stamp = Date.now()
         await db()
             .insertInto('tenants')
@@ -150,7 +151,12 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         const first = await callsDuring(() => runDueSchedules(dataApi, { start: async () => undefined }, now, hinted))
         expect(first.length).toBeGreaterThanOrEqual(4 * tenants)
         const second = await callsDuring(() => runDueSchedules(dataApi, { start: async () => undefined }, now, hinted))
-        expect(second.map((c) => c.operation)).toEqual(['ExecuteStatement'])
+        expect(second.map((c) => c.operation)).toEqual([
+            'BeginTransaction',
+            'ExecuteStatement',
+            'ExecuteStatement',
+            'CommitTransaction',
+        ])
     })
 
     test('withTenant is ONE transaction: the role and the tenant reach every statement until Commit', async () => {
@@ -879,4 +885,69 @@ describe('SSSB on the RDS Data API driver (contract, through the emulator)', () 
         expect(error?.message).not.toMatch(/SQLState/)
         expect(error?.code).toBeUndefined()
     })
+
+    // safeinsights/sssb#202: the Data API refuses a response over 1 MB. The hint read is paged by tenant id, so a
+    // deployment with more tenants than one response holds still reads its hints (and its fallback still reads them).
+    test('the hint read pages past the response limit: twelve thousand tenants, none of them unhinted', async () => {
+        const stamp = Date.now()
+        await sql`
+            INSERT INTO tenants (slug, name) SELECT ${`page-${stamp}-`} || g, 'page proof' FROM generate_series(1, 12000) g
+        `.execute(db())
+        try {
+            const { tenantsToList } = await import('../../db/due-hints')
+            const read = await tenantsToList(dataApi, 'schedules', new Date('2001-01-01T00:00:00.000Z'))
+            expect(read.tenants.length).toBeGreaterThanOrEqual(12_000)
+            expect(read.tenants.filter((t) => t.unhinted === true)).toEqual([])
+            expect(read.snapshot).not.toBeNull()
+        } finally {
+            await sql`DELETE FROM tenants WHERE slug LIKE ${`page-${stamp}-%`}`.execute(db())
+        }
+    }, 300_000)
+
+    // The read's snapshot is taken once, not repeated on its rows: its text grows with the writing transactions open,
+    // and a page of rows each carrying it outgrew the Data API's 1 MB response under load.
+    test('the hint read stays under the response limit while many transactions are writing', async () => {
+        const stamp = Date.now()
+        await sql`
+            INSERT INTO tenants (slug, name) SELECT ${`snap-${stamp}-`} || g, 'snapshot proof' FROM generate_series(1, 2500) g
+        `.execute(db())
+        const writers: { release: () => void; done: Promise<unknown> }[] = []
+        const conns: Kysely<DB>[] = []
+        try {
+            // Five-digit transaction ids, as a server that has run a while has (longer still in production).
+            const burner = server.connectAsSuperuser(DATABASE)
+            conns.push(burner)
+            for (let i = 0; i < 400; i++) {
+                await Promise.all(Array.from({ length: 50 }, () => sql`SELECT pg_current_xact_id()`.execute(burner)))
+            }
+            // Writers each holding a transaction id, which widens every later snapshot's text.
+            for (let i = 0; i < 85; i++) {
+                const conn = server.connectAsSuperuser(DATABASE)
+                conns.push(conn)
+                let release!: () => void
+                const gate = new Promise<void>((resolve) => (release = resolve))
+                let wrote!: () => void
+                const written = new Promise<void>((resolve) => (wrote = resolve))
+                const done = conn.transaction().execute(async (trx) => {
+                    await sql`SELECT pg_current_xact_id()`.execute(trx)
+                    wrote()
+                    await gate
+                })
+                await written
+                writers.push({ release, done })
+            }
+            // One transaction completed after them, so a snapshot lists them all as still in progress.
+            await sql`SELECT pg_current_xact_id()`.execute(burner)
+            const { tenantsToList } = await import('../../db/due-hints')
+            const read = await tenantsToList(dataApi, 'schedules', new Date('2001-01-01T00:00:00.000Z'))
+            expect(read.tenants.length).toBeGreaterThanOrEqual(2_500)
+            expect(read.tenants.filter((t) => t.unhinted === true)).toEqual([])
+            expect((read.snapshot ?? '').length).toBeGreaterThan(400)
+        } finally {
+            for (const w of writers) w.release()
+            await Promise.all(writers.map((w) => w.done))
+            await Promise.all(conns.map((c) => c.destroy()))
+            await sql`DELETE FROM tenants WHERE slug LIKE ${`snap-${stamp}-%`}`.execute(db())
+        }
+    }, 300_000)
 })

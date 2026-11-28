@@ -42,26 +42,44 @@ export interface DbFamily {
     /**
      * The tick's due-hint read (./due-hints.ts, 0022_due_hints): the tenants `drain` lists at `now` (no hint, a hint
      * that has come or is past `cap`, or an event that has come), each with its hint's version, and a token for the read
-     * (`snapshot`: in Postgres the statement's `pg_current_snapshot()`). On the owner's raw handle.
+     * (`snapshot`: in Postgres the read transaction's first `pg_current_snapshot()`, taken once before the first page,
+     * the earliest, so an event it can see was committed before any tenant is listed). `everyone` reads every tenant with its hint's version and no events: the
+     * fallback when the full read fails, so a drain that lists everyone can still settle. Paged by tenant id
+     * (`DUE_HINTS_PAGE` a statement), so no response grows with the number of tenants, and the pages together are
+     * bounded by `timeoutMs` as each statement is. On the owner's raw handle. Each of these due-hint
+     * statements runs in a transaction of its own that gives up after `timeoutMs` (it throws then) and lets the
+     * planner use only index paths over the events (`dueHintsPlanner`).
      */
     readDueHints(
         db: Kysely<DB>,
         drain: string,
         now: Date,
         cap: Date,
-    ): Promise<{ id: string; version: string | number | null; snapshot: string }[]>
+        timeoutMs: number,
+        everyone: boolean,
+    ): Promise<{ tenants: { id: string; version: string | number | null }[]; snapshot: string | null }>
     /**
      * Sets the listed tenants' hints for `drain` by compare-and-set on the version each was read at (an insert when none
-     * was), and deletes, for each tenant it set, at most `perTenant` of its events that the read identified by `snapshot`
-     * could see. One statement.
+     * was), and deletes up to `limit` of their events that the read identified by `snapshot` could see. Returns the
+     * tenants it set and how many events it deleted. One statement.
      */
     settleDueHints(
         db: Kysely<DB>,
         drain: string,
         snapshot: string,
         rows: readonly { tenantId: string; listAfter: Date; version: string | null }[],
-        perTenant: number,
-    ): Promise<void>
+        limit: number,
+        timeoutMs: number,
+    ): Promise<{ settled: string[]; deleted: number }>
+    /** Deletes up to `limit` more of `tenantIds`' events for `drain` that `snapshot` could see; returns how many. */
+    clearDueHintEvents(
+        db: Kysely<DB>,
+        drain: string,
+        snapshot: string,
+        tenantIds: readonly string[],
+        limit: number,
+        timeoutMs: number,
+    ): Promise<number>
     /** The selected rows, locked for the rest of the transaction (`FOR UPDATE` in Postgres). Use with `$call`. */
     lockRow<D, TB extends keyof D, O>(query: SelectQueryBuilder<D, TB, O>): SelectQueryBuilder<D, TB, O>
     /** The database's own clock, as a value to write (`now()` in Postgres: the transaction's start). */
@@ -79,6 +97,81 @@ export interface DbFamily {
     runWithTenant<T>(db: Kysely<DB>, tenantId: string, fn: (trx: Transaction<DB>) => Promise<T>): Promise<T>
 }
 
+/**
+ * One page of the due hints' read (0022_due_hints): the next `DUE_HINTS_PAGE` tenants after `after` that `drain` lists.
+ * Whether a tenant has an event that has come is one probe of the `(tenant_id, drain, due)` index for that tenant
+ * (`EXISTS … due <= now`, which stops at the first): a page costs a probe per tenant on it, whatever the size of anyone's
+ * pile, and the whole read a probe per tenant. That holds only for an index path, which `dueHintsPlanner` leaves the
+ * planner as the only one: free to choose, a planner that knows one tenant holds the past-due events may scan the
+ * events table for every tenant (the review's 8.6 s). Exported for the plan check in ./due-hints.contract.test.ts.
+ */
+export function dueHintsReadQuery(drain: string, now: Date, cap: Date, after: string | null = null, everyone = false) {
+    return sql<{ id: string; version: string | number | null }>`
+        SELECT t.id, h.version
+        FROM public.tenants t
+        LEFT JOIN public.due_hints h ON h.tenant_id = t.id AND h.drain = ${drain}
+        WHERE (${everyone} OR h.tenant_id IS NULL OR h.list_after <= ${now} OR h.list_after > ${cap}
+                OR EXISTS (
+                    SELECT 1 FROM public.due_hint_events e
+                    WHERE e.tenant_id = t.id AND e.drain = ${drain} AND e.due <= ${now}
+                ))
+            AND (${after}::uuid IS NULL OR t.id > ${after}::uuid)
+        ORDER BY t.id
+        LIMIT ${DUE_HINTS_PAGE}
+    `
+}
+
+/** How many tenants one page of the due-hint read returns (two columns each), so no response outgrows a transport's. */
+export const DUE_HINTS_PAGE = 2_000
+
+/**
+ * The settings every due-hint statement runs under, in a transaction of its own: a `statement_timeout` (lock waits
+ * count against it), and no sequential or bitmap scans, so the planner can only walk the events' indexes, which stop at
+ * a statement's LIMIT. Without that, statistics that put most events in one tenant lead it to scan, or bitmap-and-sort,
+ * that tenant's whole pile for each probe (a review measured 8.6 s for the read and 260 ms a delete). Exported for the
+ * plan check in ./due-hints.contract.test.ts.
+ */
+export function dueHintsPlanner(timeoutMs: number) {
+    return sql<{ snapshot: string }>`
+        SELECT set_config('statement_timeout', ${String(Math.max(1, Math.floor(timeoutMs)))}, true),
+            set_config('enable_seqscan', 'off', true), set_config('enable_bitmapscan', 'off', true),
+            pg_current_snapshot()::text AS snapshot
+    `
+}
+
+/**
+ * Runs `run` in a transaction of its own under `dueHintsPlanner(timeoutMs)`, handing it that first statement's snapshot:
+ * taken before anything `run` reads, so an event it can see was committed before any of it.
+ */
+function bounded<T>(
+    db: Kysely<DB>,
+    timeoutMs: number,
+    run: (trx: Transaction<DB>, snapshot: string) => Promise<T>,
+): Promise<T> {
+    return db.transaction().execute(async (trx) => {
+        const { rows } = await dueHintsPlanner(timeoutMs).execute(trx)
+        return run(trx, rows[0]!.snapshot)
+    })
+}
+
+/**
+ * The row ids of at most `limit` events of the tenants `tenants` selects, for `drain`, that `snapshot` could see: read
+ * tenant by tenant along the `(tenant_id, drain, due)` index, stopping at `limit` in all.
+ */
+function visibleEvents(tenants: RawBuilder<unknown>, drain: string, snapshot: string, limit: number) {
+    return sql`
+        SELECT x.ctid FROM (${tenants}) s
+        CROSS JOIN LATERAL (
+            SELECT e.ctid FROM public.due_hint_events e
+            WHERE e.tenant_id = s.tenant_id AND e.drain = ${drain}
+                AND pg_visible_in_snapshot(e.writer, ${snapshot}::pg_snapshot)
+            ORDER BY e.due
+            LIMIT ${limit}
+        ) x
+        LIMIT ${limit}
+    `
+}
+
 const postgresFamily: DbFamily = {
     name: 'postgres',
     // Row-level security: every tenant table's policy compares `tenant_id` with the transaction's tenant setting,
@@ -86,28 +179,32 @@ const postgresFamily: DbFamily = {
     isolation: 'rls',
     json: jsonb,
     lockRow: (query) => query.forUpdate(),
-    readDueHints: async (db, drain, now, cap) =>
-        (
-            await sql<{ id: string; version: string | number | null; snapshot: string }>`
-                SELECT t.id, h.version, pg_current_snapshot()::text AS snapshot
-                FROM public.tenants t
-                LEFT JOIN public.due_hints h ON h.tenant_id = t.id AND h.drain = ${drain}
-                WHERE h.tenant_id IS NULL OR h.list_after <= ${now} OR h.list_after > ${cap}
-                    OR EXISTS (
-                        SELECT 1 FROM public.due_hint_events e
-                        WHERE e.tenant_id = t.id AND e.drain = ${drain} AND e.due <= ${now}
-                    )
-            `.execute(db)
-        ).rows,
-    settleDueHints: async (db, drain, snapshot, rows, perTenant) => {
-        const values = sql.join(
-            rows.map((r) => sql`(${r.tenantId}::uuid, ${r.listAfter}::timestamptz, ${r.version}::bigint)`),
-        )
-        // An event the snapshot could not see was committed after the read: its tenant's listing may not have seen
-        // its row, so it stays, and the tenant is listed again. At most `perTenant` a tenant, read along the events
-        // index, so one tenant's backlog costs this statement no more than any other's; the rest stay, and only mean
-        // the tenant is listed again.
-        await sql`
+    readDueHints: (db, drain, now, cap, timeoutMs, everyone) => {
+        // A read that cannot finish inside its bound throws rather than hangs, the caller falls back: each statement
+        // under `statement_timeout`, and the pages together under the same bound, checked between them.
+        const giveUpAt = Date.now() + timeoutMs
+        return bounded(db, timeoutMs, async (trx, snapshot) => {
+            const tenants: { id: string; version: string | number | null }[] = []
+            let after: string | null = null
+            for (;;) {
+                const page: { id: string; version: string | number | null }[] = (
+                    await dueHintsReadQuery(drain, now, cap, after, everyone).execute(trx)
+                ).rows
+                for (const row of page) tenants.push({ id: row.id, version: row.version })
+                if (page.length < DUE_HINTS_PAGE) return { tenants, snapshot: tenants.length > 0 ? snapshot : null }
+                if (Date.now() >= giveUpAt) throw new Error('the due-hint read ran past its bound')
+                after = page.at(-1)!.id
+            }
+        })
+    },
+    settleDueHints: (db, drain, snapshot, rows, limit, timeoutMs) =>
+        bounded(db, timeoutMs, async (trx) => {
+            const values = sql.join(
+                rows.map((r) => sql`(${r.tenantId}::uuid, ${r.listAfter}::timestamptz, ${r.version}::bigint)`),
+            )
+            // An event the snapshot could not see was committed after the read: its tenant's listing may not have seen
+            // its row, so it stays, and the tenant is listed again.
+            const result = await sql<{ tenant_id: string | null; deleted: string | number }>`
             WITH v (tenant_id, list_after, version) AS (VALUES ${values}),
             updated AS (
                 UPDATE public.due_hints h SET list_after = v.list_after, version = h.version + 1
@@ -121,20 +218,38 @@ const postgresFamily: DbFamily = {
                 SELECT v.tenant_id, ${drain}, v.list_after, 1 FROM v WHERE v.version IS NULL
                 ON CONFLICT (tenant_id, drain) DO NOTHING
                 RETURNING tenant_id
+            ),
+            settled AS (SELECT tenant_id FROM updated UNION ALL SELECT tenant_id FROM inserted),
+            removed AS (
+                DELETE FROM public.due_hint_events d
+                WHERE d.ctid = ANY (ARRAY(${visibleEvents(sql`SELECT tenant_id FROM settled`, drain, snapshot, limit)}))
+                RETURNING 1
             )
-            DELETE FROM public.due_hint_events d
-            WHERE d.ctid = ANY (ARRAY(
-                SELECT x.ctid
-                FROM (SELECT tenant_id FROM updated UNION ALL SELECT tenant_id FROM inserted) s
-                CROSS JOIN LATERAL (
-                    SELECT e.ctid FROM public.due_hint_events e
-                    WHERE e.tenant_id = s.tenant_id AND e.drain = ${drain}
-                        AND pg_visible_in_snapshot(e.writer, ${snapshot}::pg_snapshot)
-                    ORDER BY e.due
-                    LIMIT ${perTenant}
-                ) x
-            ))
-        `.execute(db)
+            SELECT s.tenant_id, (SELECT count(*) FROM removed) AS deleted
+            FROM (SELECT tenant_id FROM settled UNION ALL SELECT NULL WHERE NOT EXISTS (SELECT 1 FROM settled)) s
+        `.execute(trx)
+            return {
+                settled: result.rows.flatMap((r) => (r.tenant_id === null ? [] : [r.tenant_id])),
+                deleted: Number(result.rows[0]?.deleted ?? 0),
+            }
+        }),
+    clearDueHintEvents: async (db, drain, snapshot, tenantIds, limit, timeoutMs) => {
+        if (tenantIds.length === 0) return 0
+        const ids = sql.join(tenantIds.map((id) => sql`(${id}::uuid)`))
+        const result = sql<{ deleted: string | number }>`
+            WITH removed AS (
+                DELETE FROM public.due_hint_events d
+                WHERE d.ctid = ANY (ARRAY(${visibleEvents(
+                    sql`SELECT tenant_id FROM (VALUES ${ids}) AS t (tenant_id)`,
+                    drain,
+                    snapshot,
+                    limit,
+                )}))
+                RETURNING 1
+            )
+            SELECT count(*) AS deleted FROM removed
+        `
+        return bounded(db, timeoutMs, async (trx) => Number((await result.execute(trx)).rows[0]?.deleted ?? 0))
     },
     currentTime: () => sql<string>`now()`,
     keysetSlice: (query, { orderColumn, after, take }) => {

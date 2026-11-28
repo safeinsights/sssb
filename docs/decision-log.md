@@ -9519,3 +9519,63 @@ listing share" above). Migration 0022 has not shipped, so it is edited in place.
       visible, so never deleted: cost only), #310 (a non-inheriting, settable membership of `app_user` is outside every
       gate; predates this branch). Accepted: a tenant deleted between a read and its settle fails that 200-tenant chunk
       for one tick, whose tenants are listed again.
+
+## The due-hint read a probe a tenant, index-only, paged and bounded; a pile cleared in proportion (2026-11-28, `fix/review-hint-read`)
+
+A fresh review of the redesign above ("Due-hint writes append; the tick alone sets hints") found a HIGH in the read.
+
+- **N1: once statistics knew the past-due events belonged to few tenants, the read scanned the events once per tenant.**
+  `readDueHints` asked `OR EXISTS (… due_hint_events e WHERE e.tenant_id = t.id …)`; after ANALYZE, Postgres ran it as a
+  correlated SubPlan with a sequential scan of the events for every idle tenant: 1,500 tenants beside one 100,000-event
+  pile read in 11 ms before ANALYZE and 8,655 ms after (the review's probe; 8,555 ms reproduced here,
+  `due-hints.contract.test.ts`, before the fix).
+- **The fix: the same per-tenant probe, but only ever as an index probe.** Every due-hint statement (the read, the
+  settle, the clearing) runs in a transaction of its own that first sets `enable_seqscan` and `enable_bitmapscan` off and
+  a `statement_timeout` (`dueHintsPlanner`). With no other path, the per-tenant `EXISTS` is a probe of the
+  `(tenant_id, drain, due)` index that stops at the first event: a probe per tenant, whatever anyone's pile. Without the
+  settings the N1 test fails again (the read took 5.4 s, its bound fired, every tenant listed); the plan check reads the
+  read's plan under them (no sequential or bitmap scan of the events). The same settings keep a clearing statement from
+  bitmap-scanning and sorting a whole pile (the Opus round measured 260 ms a statement at a 1M pile, against 10 for the
+  index).
+    - **The way there.** A join to `SELECT DISTINCT tenant_id … WHERE due <= now` was one pass but O(past-due events): a
+      2M-event pile outran its bound and, with a fallback that settled nothing, was never cleared (Fable saw the same at
+      10M). A recursive skip scan over a `(drain, tenant_id)` index was independent of piles but ran whole for every
+      page of the read, quadratic in tenants (the second Opus round: 29.7 s at 100,000). Both are gone, with that index.
+- **Paged, one snapshot, one bound.** The read is paged by tenant id, 2,000 a statement, inside its transaction. Its
+  snapshot is taken once, by the settings statement before the first page: the earliest, so an event it can see was
+  committed before any tenant is listed, and the deletes stay safe; and no longer repeated on every row, whose text
+  grows with the writing transactions open and had pushed a page past the Data API's 1 MB under load (Opus round 2,
+  F2). The pages together are bounded as each statement is (half of what is left of the drain's window, 50 ms to 5 s),
+  checked between pages. An unpaged read had failed every tick on the Data API from about 12,000 tenants (Fable's H2).
+- **A fallback that settles.** A read that fails is retried without the events: every tenant with its hint's version and
+  a snapshot, so the drain lists everyone (bounded by the listing share) and still settles, which clears whatever made
+  the read fail (Fable's H1). Only if that fails too does the drain list every tenant unhinted, paged, and settle
+  nothing.
+- **Cost.** An idle drain on the Data API costs four calls (Begin, the settings, the read, Commit) where it cost one,
+  plus one statement per 2,000 tenants listed: still independent of the number of tenants
+  (`rds-data.contract.test.ts`). Rejected: setting the timeout in the read's own statement (Postgres arms it when a
+  statement starts).
+- **In proportion.** A settle's first statement per 200 tenants sets their hints and deletes up to 10,000 of their
+  visible events; a chunk that hit the limit is cleared again, 10,000 a statement, while the drain's window lasts (at
+  most 100 more statements, each counted). Past the deadline a settle sets hints only (Fable's M2). This replaces the
+  flat 500 a tenant a tick.
+- **N2, closed here** (safeinsights/sssb#312): every settling and clearing statement has a 2 s timeout, so a wait on an
+  owner-side lock of a tenant row (the hints' foreign-key checks) gives up, and its tenants are listed again.
+- **Proofs.**
+    - `due-hints.contract.test.ts` (a database of its own, 1,500 tenants, ANALYZE): the read under a second beside the
+      pile, and its plan; a pile cleared in one drain inside its window; a read blocked by a lock giving up in its
+      bound; a clearing statement short when every tenant has one event and one has a million; a settle beside an
+      owner's `FOR UPDATE` of a tenant row giving up in its bound; 40,000 tenants listed through their events in 0.6 s,
+      and a tight window giving up in a quarter of that.
+    - `db.contract.test.ts`: a 2M-event pile cleared in proportion while the next drain starts in its window.
+    - `rds-data.contract.test.ts`: 12,000 tenants read through the emulator's 1 MB limit; a read under the limit while
+      85 writing transactions widen the snapshot.
+    - `due-hints.test.ts`: a failed read falling back to every tenant with versions and clearing their events; a spent
+      window setting hints only.
+    - Mutations, each red: the planner settings off; the per-tenant EXISTS without them; the DISTINCT read; no read
+      timeout; no settle timeout; no whole-read bound; no clearing loop; no paging; the snapshot on every row; no
+      settling fallback; deleting past the deadline.
+- **Filed** (P3): safeinsights/sssb#313 (N3: MAINTAIN and `pg_maintain` are outside 0022's refusal, the proofs and
+  `schemaOf`; not one line, since `has_table_privilege(…, 'MAINTAIN')` raises before Postgres 17 and SssbApp deploys
+  16), #314 (N4: the RLS proofs pin one of the six triggers), #315 (the sweeps' and the unhinted drains' tenant lists
+  are not paged and exceed the Data API's 1 MB at about 20,000 tenants; predates this branch).
