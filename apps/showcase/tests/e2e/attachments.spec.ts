@@ -48,7 +48,7 @@ test('a restricted member gets a read-only attachments card and is denied upload
 
     // Bypass the missing UI: a raw mint POST (carrying Riley's session) must still be forbidden.
     const forced = await page.request.post('/api/attachments', {
-        data: { filename: 'forced.txt', contentType: 'text/plain' },
+        data: { filename: 'forced.txt', contentType: 'text/plain', sizeBytes: 5 },
     })
     expect(forced.status()).toBe(403)
 })

@@ -1,0 +1,499 @@
+import { loadAppMessages } from '@sssb/app-config/messages'
+import { MantineProvider } from '@mantine/core'
+import { NextIntlClientProvider } from 'next-intl'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import enFramework from '../../i18n/messages/en.json'
+import { mergeMessages } from '../../i18n/messages'
+import { SimulatorHost, useSimulatorWorld } from './simulator-host'
+import type { SimulatorExtraTab } from './simulator-panel'
+
+/**
+ * The Snapshots and Tours wiring of the kit's Simulator host, against a stubbed server: each control posts to its path
+ * with its body, a world start (reset, restore, preset) reloads only when the server agreed, and a refusal frees the
+ * controls again. The fixture registers one preset family (`busy-harbor`); its tours are replaced here by three that
+ * start from each kind of world start.
+ */
+
+vi.mock('@sssb/app-config/tours', () => ({
+    tours: [
+        { id: 'from-reset', titleKey: 'k', summaryKey: 'k', snapshot: 'reset', steps: [{ textKey: 'k' }] },
+        { id: 'from-preset', titleKey: 'k', summaryKey: 'k', snapshot: 'busy-harbor', steps: [{ textKey: 'k' }] },
+        { id: 'from-snapshot', titleKey: 'k', summaryKey: 'k', snapshot: 'harbor-noon', steps: [{ textKey: 'k' }] },
+    ],
+}))
+
+const AGREEMENT = {
+    id: '6f1c2a3e-0b4d-4e5f-8a9b-1c2d3e4f5a6b',
+    tenantSlug: 'harbor',
+    kind: 'tos',
+    title: 'Harbor rules',
+    version: 1,
+    gating: 'block-all',
+    currentAcceptances: 0,
+    totalAcceptances: 0,
+}
+
+type Answer = { status?: number; body?: unknown; text?: string }
+/** An answer, or one the test hands out when it chooses (`held`), to order two responses the way a race would. */
+let answers: Record<string, Answer | (() => Promise<Answer>)>
+const posts: Array<{ path: string; body: unknown }> = []
+const gets: string[] = []
+const assign = vi.fn()
+const reload = vi.fn()
+
+function respond({ status = 200, body, text }: Answer): Response {
+    if (text !== undefined) return new Response(text, { status, headers: { 'content-type': 'text/html' } })
+    return body === undefined ? new Response(null, { status }) : Response.json(body, { status })
+}
+
+beforeEach(() => {
+    posts.length = 0
+    gets.length = 0
+    assign.mockReset()
+    reload.mockReset()
+    answers = {
+        'GET summary': { body: { viewpoint: null, signedIn: false, people: [] } },
+        'GET snapshots': { body: { snapshots: [{ name: 'harbor-noon', at: '2026-11-27T12:00:00.000Z' }] } },
+        'GET flags': { body: { flags: [{ flag: 'jobs-held', enabled: false }] } },
+        'GET agreements': { body: { agreements: [AGREEMENT] } },
+    }
+    vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+        const path = input.replace('/api/simulator/', '')
+        const method = init?.method ?? 'GET'
+        if (method === 'GET') gets.push(path)
+        if (method === 'POST') {
+            expect(new Headers(init?.headers).get('content-type')).toBe('application/json')
+            posts.push({ path, body: JSON.parse(String(init?.body)) })
+        }
+        const answer = answers[`${method} ${path}`]
+        return respond(
+            (typeof answer === 'function' ? await answer() : answer) ?? { status: method === 'POST' ? 204 : 404 },
+        )
+    })
+    // Location's fields are getters on its prototype, so a spread copies none of them: the stub names each one.
+    const url = new URL('http://localhost:3000/en/dashboard')
+    const { href, origin, protocol, host, hostname, port, pathname, search, hash } = url
+    vi.stubGlobal('location', { href, origin, protocol, host, hostname, port, pathname, search, hash, assign, reload })
+    window.localStorage.setItem('app-simulator-collapsed', 'false')
+    window.localStorage.setItem('app-simulator-tab', 'snapshots')
+})
+
+const unmounts: Array<() => void> = []
+afterEach(() => {
+    for (const unmount of unmounts.splice(0)) act(unmount)
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+    vi.unstubAllGlobals()
+})
+
+/** An answer the test releases later: `answer` waits on it, `release` hands it out. */
+function held(): { answer: () => Promise<Answer>; release: (answer: Answer) => Promise<void> } {
+    let resolve: (answer: Answer) => void = () => {}
+    const pending = new Promise<Answer>((done) => (resolve = done))
+    return {
+        answer: () => pending,
+        release: async (answer) => {
+            resolve(answer)
+            await settle()
+        },
+    }
+}
+
+/** Lets every pending fetch and the renders it causes finish. */
+async function settle() {
+    for (let i = 0; i < 5; i++) await act(async () => await new Promise((resolve) => setTimeout(resolve, 0)))
+}
+
+let rerender: (extraTabs?: SimulatorExtraTab[]) => Promise<void> = async () => {}
+
+async function renderHost(extraTabs?: SimulatorExtraTab[]): Promise<HTMLElement> {
+    const messages = mergeMessages(enFramework, await loadAppMessages('en'))
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const draw = (tabs?: SimulatorExtraTab[]) =>
+        root.render(
+            <NextIntlClientProvider locale="en" messages={messages} onError={() => {}}>
+                <MantineProvider>
+                    <SimulatorHost locale="en" extraTabs={tabs}>
+                        <main />
+                    </SimulatorHost>
+                </MantineProvider>
+            </NextIntlClientProvider>,
+        )
+    await act(async () => draw(extraTabs))
+    rerender = async (tabs) => {
+        await act(async () => draw(tabs))
+        await settle()
+    }
+    unmounts.push(() => {
+        root.unmount()
+        container.remove()
+    })
+    await settle()
+    return container
+}
+
+function byTestId(container: HTMLElement, id: string): HTMLElement {
+    const element = container.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+    if (!element) throw new Error(`no [data-testid="${id}"]`)
+    return element
+}
+
+async function click(container: HTMLElement, id: string) {
+    await act(async () => byTestId(container, id).click())
+    await settle()
+}
+
+const notices = (container: HTMLElement) =>
+    [...container.querySelectorAll('[data-testid="simulator-notice"]')].map((notice) => notice.textContent)
+
+describe('SimulatorHost: Snapshots', () => {
+    it('fetches the tab when it opens: snapshots, flags, agreements and the fixture presets', async () => {
+        const container = await renderHost()
+        expect(byTestId(container, 'snapshots-row-harbor-noon')).toBeTruthy()
+        expect(byTestId(container, 'flag-toggle-jobs-held')).toBeTruthy()
+        expect(byTestId(container, `simulator-agreement-${AGREEMENT.id}`)).toBeTruthy()
+        expect(byTestId(container, 'preset-load-busy-harbor')).toBeTruthy()
+    })
+
+    it('a reset posts, leaves the marker and reloads onto the welcome page', async () => {
+        const container = await renderHost()
+        await click(container, 'snapshots-reset')
+        await click(container, 'snapshots-reset-confirm')
+        expect(posts).toEqual([{ path: 'reset', body: {} }])
+        expect(assign).toHaveBeenCalledWith('/en')
+        expect(JSON.parse(window.sessionStorage.getItem('app-simulator-post-notice')!)).toEqual({ kind: 'reset' })
+    })
+
+    it('a restore posts its name and reloads; a refused one reloads nothing and frees the controls', async () => {
+        const container = await renderHost()
+        await click(container, 'snapshots-restore-harbor-noon')
+        expect(posts).toEqual([{ path: 'snapshots/restore', body: { name: 'harbor-noon' } }])
+        expect(assign).toHaveBeenCalledWith('/en')
+
+        assign.mockReset()
+        window.sessionStorage.clear()
+        answers['POST snapshots/restore'] = { status: 404, body: { error: 'not found' } }
+        const again = await renderHost()
+        await click(again, 'snapshots-restore-harbor-noon')
+        expect(assign).not.toHaveBeenCalled()
+        expect(window.sessionStorage.getItem('app-simulator-post-notice')).toBeNull()
+        expect(byTestId(again, 'snapshots-reset').hasAttribute('disabled')).toBe(false)
+    })
+
+    it('a delete posts its name and says so', async () => {
+        const container = await renderHost()
+        await click(container, 'snapshots-delete-harbor-noon')
+        expect(posts).toEqual([{ path: 'snapshots/delete', body: { name: 'harbor-noon' } }])
+        expect(notices(container).join(' ')).toContain('harbor-noon')
+        expect(assign).not.toHaveBeenCalled()
+    })
+
+    it('a save posts the typed name', async () => {
+        const container = await renderHost()
+        const input = byTestId(container, 'snapshot-name') as HTMLInputElement
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'tide-out')
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        await click(container, 'snapshots-save')
+        expect(posts).toEqual([{ path: 'snapshots', body: { name: 'tide-out' } }])
+        expect(notices(container).join(' ')).toContain('tide-out')
+    })
+
+    it('a flag posts and reloads the page', async () => {
+        answers['POST flags'] = { body: { ok: true } }
+        const container = await renderHost()
+        await click(container, 'flag-toggle-jobs-held')
+        expect(posts).toEqual([{ path: 'flags', body: { flag: 'jobs-held', enabled: true } }])
+        expect(reload).toHaveBeenCalled()
+    })
+
+    it('two bumps in flight: the first refresh, answered last, does not undo the second', async () => {
+        const second = { ...AGREEMENT, id: '7a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d', title: 'Lakeside rules' }
+        const before = { agreements: [AGREEMENT, second] }
+        answers['GET agreements'] = { body: before }
+        answers['POST agreements/bump'] = { body: { version: 2 } }
+        const container = await renderHost()
+
+        const slow = held()
+        answers['GET agreements'] = slow.answer
+        await click(container, `agreement-bump-${AGREEMENT.id}`)
+        answers['GET agreements'] = {
+            body: {
+                agreements: [
+                    { ...AGREEMENT, version: 2 },
+                    { ...second, version: 2 },
+                ],
+            },
+        }
+        await click(container, `agreement-bump-${second.id}`)
+        expect(byTestId(container, `agreement-meta-${second.id}`).textContent).toMatch(/^v2 /)
+
+        // The first bump's refresh, read before the second bump landed, arrives last.
+        await slow.release({ body: { agreements: [{ ...AGREEMENT, version: 2 }, second] } })
+        expect(byTestId(container, `agreement-meta-${second.id}`).textContent).toMatch(/^v2 /)
+    })
+
+    it('an agreement bump posts its id and says the new version', async () => {
+        answers['POST agreements/bump'] = { body: { version: 2 } }
+        const container = await renderHost()
+        await click(container, `agreement-bump-${AGREEMENT.id}`)
+        expect(posts).toEqual([{ path: 'agreements/bump', body: { agreementId: AGREEMENT.id } }])
+        expect(notices(container).join(' ')).toContain('v2')
+    })
+
+    it('a preset posts its id and locale, and lands where the server says', async () => {
+        answers['POST presets'] = { body: { redirectTo: '/en/dashboard' } }
+        const container = await renderHost()
+        await click(container, 'preset-load-busy-harbor')
+        expect(posts).toEqual([{ path: 'presets', body: { name: 'busy-harbor', locale: 'en' } }])
+        expect(assign).toHaveBeenCalledWith('/en/dashboard')
+        expect(JSON.parse(window.sessionStorage.getItem('app-simulator-post-notice')!)).toEqual({
+            kind: 'preset',
+            name: 'busy-harbor',
+        })
+    })
+
+    it.each<[string, Answer]>([
+        ['a refusal', { status: 404, body: { error: 'not found' } }],
+        ['a redirect off this origin', { body: { redirectTo: 'https://elsewhere.example/' } }],
+        ['a body that is not JSON', { text: '<html>' }],
+    ])('a preset load is said to have failed on %s, reloads nothing and frees the controls', async (_, answer) => {
+        answers['POST presets'] = answer
+        const container = await renderHost()
+        await click(container, 'preset-load-busy-harbor')
+        expect(assign).not.toHaveBeenCalled()
+        expect(notices(container)).toHaveLength(1)
+        expect(byTestId(container, 'preset-load-busy-harbor').hasAttribute('disabled')).toBe(false)
+    })
+
+    it.each([
+        [{ kind: 'reset' }, 'World reset'],
+        [{ kind: 'restore', name: 'harbor-noon' }, 'harbor-noon'],
+    ])('the marker %j a reload left becomes a notice, once', async (marker, text) => {
+        window.sessionStorage.setItem('app-simulator-post-notice', JSON.stringify(marker))
+        const container = await renderHost()
+        expect(notices(container).join(' ')).toContain(text)
+        expect(window.sessionStorage.getItem('app-simulator-post-notice')).toBeNull()
+    })
+})
+
+describe('SimulatorHost: Tours', () => {
+    it.each([
+        ['from-reset', 'reset', {}],
+        ['from-preset', 'presets', { name: 'busy-harbor', locale: 'en' }],
+        ['from-snapshot', 'snapshots/restore', { name: 'harbor-noon' }],
+    ])('%s starts its world through %s', async (tour, path, body) => {
+        answers['POST presets'] = { body: { redirectTo: '/en/dashboard' } }
+        window.localStorage.setItem('app-simulator-tab', 'tours')
+        const container = await renderHost()
+        await click(container, `tour-start-${tour}`)
+        expect(posts).toEqual([{ path, body }])
+        expect(assign).toHaveBeenCalled()
+    })
+})
+
+describe('SimulatorHost: the subsystem tabs', () => {
+    const ENDPOINT = {
+        id: 'e1',
+        url: 'https://example.test/hook',
+        eventKinds: ['docket.opened'],
+        enabled: true,
+        tenantSlug: 'harbor',
+        orgSlug: 'depot',
+    }
+
+    beforeEach(() => {
+        // The compose form's autosizing textarea listens on `document.fonts`, which happy-dom does not have.
+        if (!('fonts' in document))
+            Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true })
+        Object.assign(answers, {
+            'GET mail?all=1': { body: { emails: [], mailSeenAt: null, allCount: 0 } },
+            'GET inbound': {
+                body: {
+                    inbound: [],
+                    orgs: [{ slug: 'depot', name: 'Depot', tenantSlug: 'harbor' }],
+                    people: [{ email: 'ada.keeper@example.test', name: 'Ada Keeper' }],
+                    handlers: ['support'],
+                    domain: 'inbound.example.test',
+                },
+            },
+            'POST inbound/compose': { body: { ok: true, outcome: { status: 'handled' } } },
+            'GET messages': {
+                body: { messages: [{ id: 'm1', at: '2026-11-27T12:00:00.000Z', to: 'Ada', body: 'Hi', kind: 'k' }] },
+            },
+            'GET events': { body: { events: [{ id: 'v1', at: '2026-11-27T12:00:00.000Z', event: 'docket_opened' }] } },
+            'GET audit': {
+                body: {
+                    audit: [
+                        {
+                            id: 'a1',
+                            at: '2026-11-27T12:00:00.000Z',
+                            action: 'docket.filed',
+                            subjectType: 'Docket',
+                            subjectId: 'd1',
+                            actorUserId: 'fixture-lead',
+                            tenantSlug: 'harbor',
+                        },
+                    ],
+                },
+            },
+            'GET webhooks': { body: { endpoints: [ENDPOINT], deliveries: [], failingEndpointIds: [] } },
+            'POST webhooks/fail': { body: { ok: true, failing: true } },
+            'POST webhooks/run-due': { body: { ok: true, deliveries: { delivered: 3 } } },
+            'GET error-scenario': { body: { raw: { message: 'm' }, scrubbed: { message: 'm' } } },
+        } satisfies Record<string, Answer>)
+    })
+
+    async function openTab(tab: string) {
+        window.localStorage.setItem('app-simulator-tab', tab)
+        return renderHost()
+    }
+
+    it('Messages lists the caught SMS', async () => {
+        const container = await openTab('messages')
+        expect(byTestId(container, 'message-item-m1')).toBeTruthy()
+    })
+
+    it('Events lists the events and the audit trail, and one that fails never holds the other back', async () => {
+        const container = await openTab('events')
+        expect(byTestId(container, 'events-list').textContent).toContain('docket_opened')
+        expect(byTestId(container, 'audit-list').textContent).toContain('docket.filed')
+
+        answers['GET audit'] = { status: 500, body: { error: 'boom' } }
+        const again = await openTab('events')
+        expect(byTestId(again, 'events-list').textContent).toContain('docket_opened')
+    })
+
+    it('the Mail tab composes inbound mail to the app and says what intake did', async () => {
+        const container = await openTab('mail')
+        await click(container, 'inbound-compose-send')
+        expect(posts).toEqual([
+            {
+                path: 'inbound/compose',
+                body: { from: 'ada.keeper@example.test', orgSlug: 'depot', handler: 'note', subject: '', body: '' },
+            },
+        ])
+        expect(notices(container)).toHaveLength(1)
+    })
+
+    it('the Mail tab has no compose form for an app that registers no inbound handler', async () => {
+        const offered = (answers['GET inbound'] as Answer).body as Record<string, unknown>
+        answers['GET inbound'] = { body: { ...offered, handlers: [] } }
+        const container = await openTab('mail')
+        expect(container.querySelector('[data-testid="simulator-inbound"]')).toBeNull()
+    })
+
+    it('Hooks makes an endpoint fail and runs what is due', async () => {
+        const container = await openTab('hooks')
+        await click(container, 'simulator-hook-fail-e1')
+        await click(container, 'simulator-hooks-run-due')
+        expect(posts).toEqual([
+            { path: 'webhooks/fail', body: { endpointId: 'e1', failing: true } },
+            { path: 'webhooks/run-due', body: {} },
+        ])
+        expect(notices(container).join(' ')).toContain('3')
+    })
+
+    it('Errors shows the server scenario, and a server that cannot answer leaves the tab as it was', async () => {
+        const container = await openTab('errors')
+        await click(container, 'throw-server-error')
+        expect(byTestId(container, 'error-scrubbed')).toBeTruthy()
+
+        answers['GET error-scenario'] = { status: 500, body: { error: 'boom' } }
+        await click(container, 'throw-server-error')
+        expect(byTestId(container, 'error-scrubbed')).toBeTruthy()
+    })
+})
+
+describe('SimulatorHost: what the app hands in', () => {
+    const TICKER = {
+        running: false,
+        seconds: null,
+        ticks: 0,
+        lastTickAt: null,
+        lastError: null,
+        elsewhere: null,
+        minSeconds: 5,
+        maxSeconds: 3600,
+        defaultSeconds: 30,
+    }
+
+    beforeEach(() => {
+        Object.assign(answers, {
+            'GET jobs': { body: { jobs: [], held: true } },
+            'GET schedules': { body: { schedules: [], clockOffsetMs: 0, worldNow: '2026-11-27T12:00:00.000Z' } },
+            'POST schedules/run-due': { body: { ok: true, spawned: 0 } },
+        } satisfies Record<string, Answer>)
+        window.localStorage.setItem('app-simulator-tab', 'jobs')
+    })
+
+    it('shows no ticker where the app has no ticker route, and asks once', async () => {
+        const container = await renderHost()
+        expect(container.querySelector('[data-testid="simulator-ticker"]')).toBeNull()
+        // Leave the Jobs tab and come back: opening it refreshes it, but the ticker is not asked again.
+        await click(container, 'simulator-tab-people')
+        await click(container, 'simulator-tab-jobs')
+        expect(gets.filter((path) => path === 'jobs').length).toBeGreaterThan(1)
+        expect(gets.filter((path) => path === 'ticker')).toHaveLength(1)
+    })
+
+    it("shows the app's ticker, and starting it posts to the app's route and says so", async () => {
+        answers['GET ticker'] = { body: TICKER }
+        answers['POST ticker'] = { body: { ...TICKER, running: true, seconds: 30 } }
+        const container = await renderHost()
+        expect(byTestId(container, 'simulator-ticker')).toBeTruthy()
+        await click(container, 'simulator-ticker-toggle')
+        expect(posts).toEqual([{ path: 'ticker', body: { action: 'start', seconds: 30 } }])
+        expect(notices(container).join(' ')).toContain('30')
+    })
+
+    it("a poll sent while a start is in flight, and answered first, does not overwrite the start's answer", async () => {
+        answers['GET ticker'] = { body: TICKER }
+        const start = held()
+        answers['POST ticker'] = start.answer
+        const container = await renderHost()
+        await act(async () => byTestId(container, 'simulator-ticker-toggle').click())
+        // Leave the Jobs tab and come back while the POST is unanswered: the refresh asks the ticker again.
+        await click(container, 'simulator-tab-people')
+        await click(container, 'simulator-tab-jobs')
+        expect(gets.filter((path) => path === 'ticker').length).toBeGreaterThan(1)
+        expect(byTestId(container, 'simulator-ticker-status').textContent).toBe('Stopped')
+
+        await start.release({ body: { ...TICKER, running: true, seconds: 30 } })
+        expect(byTestId(container, 'simulator-ticker-status').textContent).toContain('Ticking every 30')
+    })
+
+    it("renders an app's own tab, which reads the world's jobs and has them polled while it is open", async () => {
+        function WorldProbe() {
+            const { jobs } = useSimulatorWorld()
+            return <p data-testid="probe">{jobs.held ? 'held' : 'running'}</p>
+        }
+        window.localStorage.setItem('app-simulator-tab', 'probe')
+        const container = await renderHost([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(byTestId(container, 'simulator-tab-probe')).toBeTruthy()
+        expect(byTestId(container, 'probe').textContent).toBe('held')
+        expect(gets).toContain('jobs')
+
+        // An app that builds the array afresh on every render must not restart the polling.
+        const before = gets.length
+        for (let i = 0; i < 3; i++) await rerender([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(gets.length).toBe(before)
+    })
+
+    it("keeps an app's tab's jobs fresh when the schedules cannot answer", async () => {
+        function WorldProbe() {
+            const { jobs } = useSimulatorWorld()
+            return <p data-testid="probe">{jobs.held ? 'held' : 'running'}</p>
+        }
+        answers['GET schedules'] = { status: 500, body: { error: 'boom' } }
+        window.localStorage.setItem('app-simulator-tab', 'probe')
+        const container = await renderHost([{ id: 'probe', label: 'Probe', content: <WorldProbe /> }])
+        expect(byTestId(container, 'probe').textContent).toBe('held')
+    })
+})

@@ -1,5 +1,68 @@
 # @sssb/create
 
+## 0.9.1
+
+No changes in this release.
+
+## 0.9.0
+
+### Minor Changes
+
+- f4d90ee: ### The starter's Simulator spec checks every tab its server serves
+
+    **Kind.** scaffold
+
+    **Action.** required
+
+    **What changed.** The starter's `tests/e2e/simulator.spec.ts` now expects the Mail, Messages, Events, Jobs, Hooks,
+    Errors and Snapshots tabs (and no Actors or Tours tab), and asks the Errors tab for the server's scrubbed event. Its
+    route file's comment names every framework tab.
+
+    **To adopt.** The tabs arrive with `@sssb/kit` on the route file and `SimulatorHost` you already mount, and with them
+    your app's own `tests/e2e/simulator.spec.ts`, as the generator wrote it, fails on its line expecting no Hooks tab:
+    `await expect(page.getByTestId('simulator-tab-hooks')).toHaveCount(0)`. Delete that line, or replace the spec's first
+    test with the starter's at this release.
+
+    **Now deletable.** A Simulator glue of the app's own, with its `api/simulator/<path>/route.ts` files, kept only to
+    reach Events, Messages, inbound mail, Hooks or Errors on `pnpm dev`. For a glue that adds an app's own tab or the dev
+    ticker control, see the entry for `SimulatorHost`'s `extraTabs` in this release.
+
+### Patch Changes
+
+- 27d0a99: ### Corrections from the release review
+
+    **Kind.** none
+
+    **Action.** none
+
+    **What changed.** SSSB's plugin commands `/sssb:new-actor` and `/sssb:a11y-review` now describe the `pnpm dev`
+    Simulator panel as this release builds it: `SimulatorHost` takes an app's own tabs (`extraTabs`), and a generated
+    app's panel has every framework tab but Actors, and Tours until the app registers one. The starter's Simulator route
+    comment names Tours. A comment in `@sssb/cdk`'s viewer-request function no longer says `clientAddress` reads
+    `X-Forwarded-For`. Two client races in the Simulator host that this release added, never released, are fixed: a poll
+    of the dev ticker no longer overwrites a start or stop, and the Snapshots tab's refreshes no longer land out of order.
+
+- 07e44c6: ### The starter's Simulator spec resets the world through the panel
+
+    **Kind.** scaffold
+
+    **Action.** optional
+
+    **What changed.** The starter's `tests/e2e/simulator.spec.ts` gains a test that holds every job with the
+    `jobs-held` flag from the Snapshots tab, sees the Jobs tab say so, then resets the world from the same tab and sees
+    the flag back where the seed has it, from the server and on the tab. Its route file's comment names the Snapshots tab beside People, Mail and Jobs.
+
+    **To adopt.** Nothing is needed for the tab itself: it arrives with `@sssb/kit` on the route file and `SimulatorHost`
+    you already mount. To keep the gate, copy the new `the world knobs` block (its test and the `afterEach` that turns
+    `jobs-held` off again) and its two helpers (`stampDocument`, `waitForReload`) from the starter's
+    `tests/e2e/simulator.spec.ts` at this release. Reset, presets and tours now run on your `pnpm dev`, so a
+    tour or preset written with `/sssb:new-tour` or `/sssb:new-preset` can be watched there as well as in the static demo.
+
+    **Now deletable.** A Simulator glue component of the app's own, kept beside SSSB's host only to reach reset,
+    snapshots, flags, agreements, presets or tours on `pnpm dev`, with the per-path `api/simulator/<path>/route.ts` files
+    it called (`reset`, `snapshots`, `flags`, `agreements`, `presets`). The host serves the other framework tabs in this
+    release too, and takes an app's own tabs (`extraTabs`): their entries say what else of such a glue goes.
+
 ## 0.8.0
 
 ### Minor Changes

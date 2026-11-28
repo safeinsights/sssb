@@ -140,7 +140,7 @@ export interface HooksAppProps {
  * layout shift); expanded = a right-docked column with its own dark skin so it reads as "not the
  * product". The column is sticky so it stays docked while long pages scroll. Router-agnostic —
  * navigation happens via `onSelect`/mail's `onOpenLink`, data arrives as props; the host owns fetching and polling
- * (the kit's own server host, ./simulator-host, an app's own glue, or the static demo's shell). Tab strip:
+ * (the kit's own server host, ./simulator-host, or the static demo's shell). Tab strip:
  * People / Mail / Messages / Events / Jobs / Hooks / …host `extraTabs`… / Errors / Snapshots / Tours —
  * `data-testid="simulator-tab-<id>"`, each tab but People present only when the host passes its props. App tabs are
  * registered on the seam (@sssb/app-config/simulator) and composed by the host into `extraTabs`, slotted in between

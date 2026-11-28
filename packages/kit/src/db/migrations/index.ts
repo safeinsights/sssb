@@ -14,6 +14,7 @@ import * as m0014 from './0014_audit_credential'
 import * as m0015 from './0015_app_user_grant'
 import * as m0016 from './0016_audit_detail'
 import * as m0017 from './0017_job_requester'
+import * as m0018 from './0018_organizations_write'
 import * as m0019 from './0019_job_attempts'
 import * as m0020 from './0020_job_runner_ref'
 import * as m0021 from './0021_schedule_failures'
@@ -49,6 +50,7 @@ export const frameworkMigrations: Record<string, Migration> = {
     '0015_app_user_grant': m0015,
     '0016_audit_detail': m0016,
     '0017_job_requester': m0017,
+    '0018_organizations_write': m0018,
     '0019_job_attempts': m0019,
     '0020_job_runner_ref': m0020,
     '0021_schedule_failures': m0021,

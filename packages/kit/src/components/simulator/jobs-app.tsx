@@ -33,7 +33,7 @@ export interface ScheduleRowLike {
     orgSlug: string
 }
 
-/** The simulated world-clock control surface, wired by the host (real glue / static twin). */
+/** The simulated world-clock control surface, wired by the host (the server host / the static twin). */
 export interface WorldClockLike {
     /** Current offset ahead of real time, in ms (0 = real time). */
     offsetMs: number
@@ -48,8 +48,8 @@ export interface WorldClockLike {
 }
 
 /**
- * The dev ticker, wired by the real glue only, and only when the dev server answers for it (a simulated `next dev`;
- * never a production build, the demo, e2e or the static twin, which has no server). `running`..`lastError` are the
+ * The dev ticker, wired by the server host only, and only when the app's own ticker route answers for it (a simulated
+ * `next dev`; never a production build, the demo, e2e or the static twin, which has no server). `running`..`lastError` are the
  * ticker's own status (@sssb/tools/ticker); `elsewhere` is a ticker this panel did not start, live on the same world.
  */
 export interface DevTickerLike {
