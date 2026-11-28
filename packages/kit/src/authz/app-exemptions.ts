@@ -18,6 +18,7 @@ import {
     scanRoutes,
     scanServerActions,
     serverActionFilesOutsideSrc,
+    unreadPageFiles,
     unreadRouteFiles,
 } from './route-scan'
 
@@ -397,8 +398,8 @@ function isDirectory(file: string): boolean {
     }
 }
 
-/** Where Next looks for Pages Router API routes: `pages/api` beside `src`, or inside it. */
-const PAGES_API_DIRS = ['pages/api', 'src/pages/api']
+/** Where Next looks for the Pages Router: `pages` beside `src`, or inside it. */
+const PAGES_DIRS = ['pages', 'src/pages']
 
 /**
  * The authorization scan over ONE app: every `route.*` under `<appDir>/src/app` (Next serves one from anywhere
@@ -419,6 +420,7 @@ export async function scanApp(appDir: string): Promise<AppScan> {
         label: name,
         dir: path.join(appDir, 'src/app'),
         exemptDir: path.join(appDir, 'src/app/api'),
+        appDir,
         // An app without one (a JS app's jsconfig.json, or neither) still gets scanned: relative re-exports resolve
         // without a config, and an alias that does not resolve is refused, loudly.
         tsconfig: ['tsconfig.json', 'jsconfig.json'].map((file) => path.join(appDir, file)).find((f) => existsSync(f)),
@@ -442,6 +444,13 @@ export async function scanApp(appDir: string): Promise<AppScan> {
                       `app's routes in src/app.`,
               ]
             : []),
+        ...(existsSync(root.dir) ? unreadPageFiles(root.dir) : []).map(
+            (file) =>
+                `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} is named like a page, layout or ` +
+                `metadata route, but the authorization scan reads only those with a .ts, .tsx, .js, .jsx or .mjs ` +
+                `extension. If Next serves it (a pageExtensions entry), nothing checked it: rename it to one of those, ` +
+                `or to a name Next does not render.`,
+        ),
         ...(existsSync(root.dir) ? unreadRouteFiles(root.dir) : []).map(
             (file) =>
                 `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} is named like a route, but the ` +
@@ -460,11 +469,14 @@ export async function scanApp(appDir: string): Promise<AppScan> {
                 `where the authorization scan does not judge them. Move them under src. (Actions a workspace package ` +
                 `exports are not read either.)`,
         ),
-        ...PAGES_API_DIRS.filter((dir) => existsSync(path.join(appDir, dir))).map(
-            (dir) =>
-                `${name}: ${dir} is a Pages Router API directory. SSSB apps are App Router, and the authorization scan ` +
-                `reads only route handlers under src/app and Server Actions, so nothing in ${dir} is checked. Move ` +
-                `each handler to a route.ts under src/app/api.`,
+        ...PAGES_DIRS.filter((dir) => isDirectory(path.join(appDir, dir))).map((dir) =>
+            isDirectory(path.join(appDir, dir, 'api'))
+                ? `${name}: ${dir}/api is a Pages Router API directory. SSSB apps are App Router, and the authorization ` +
+                  `scan reads only route handlers and pages under src/app and Server Actions, so nothing in ${dir} is ` +
+                  `checked. Move each handler to a route.ts under src/app/api, and each page under src/app.`
+                : `${name}: ${dir} is a Pages Router directory, whose pages Next renders on the server. SSSB apps are App ` +
+                  `Router, and the authorization scan reads only pages under src/app, so nothing in ${dir} is checked. ` +
+                  `Move each page under src/app (as a page.tsx).`,
         ),
     ]
     const label = `${name}/${APP_EXEMPTIONS_FILE}`
@@ -474,6 +486,15 @@ export async function scanApp(appDir: string): Promise<AppScan> {
         pages,
         actions,
         failures,
-        exemptionProblems: [...problems, ...staleAppExemptions(exemptions, judged, policy, label)],
+        // An intercepting page can match no exemption, so none keeps an entry alive.
+        exemptionProblems: [
+            ...problems,
+            ...staleAppExemptions(
+                exemptions,
+                judged.filter((route) => !route.intercepting),
+                policy,
+                label,
+            ),
+        ],
     }
 }

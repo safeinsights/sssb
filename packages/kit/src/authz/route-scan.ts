@@ -19,17 +19,18 @@ import ts from 'typescript'
  * `'use server'`; no exemption applies to one. The walks follow a symbolic link to a directory, as Next does.
  *
  * PAGES (`scanPages`, safeinsights/sssb#221). What Next renders on the server for a request outside a route handler is
- * judged as a READ: every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `forbidden` and `unauthorized`
- * file, and every metadata route (`sitemap`, `robots`, `manifest`, `opengraph-image`, `twitter-image`, `icon`,
- * `apple-icon`), with the route extensions. Its `default` export and its `generateMetadata`, `generateImageMetadata`
- * and `generateSitemaps` exports (PAGE_EXPORTS) are each a handler, labelled by export name, and pass as a read does:
- * by reaching `authorize`, by reading nothing, or by an app's `reads-only` exemption whose gate holds (no other gate
- * kind applies to a page). What a page may name and still read nothing is wider than for a route, and only for a page:
- * the page allow-list (PAGE_IMPORTS, PAGE_MEMBERS: the session, the catalog, the locale, a UI ability check), an
- * imported component it only renders as a JSX tag (out of sight, as an imported helper is), a component of its own file
- * it only renders (read, as part of the page), and a module it loads with `import()` only to render what it exports
- * (`outsideNamesOf`). A file whose prologue is `'use client'` is not judged: it runs in the browser, and reaches data
- * only through routes, which are.
+ * judged as a READ: every `page`, `layout`, `template`, `default`, `loading`, `not-found`, `global-not-found`,
+ * `forbidden` and `unauthorized` file, and every metadata route (`sitemap`, `robots`, `manifest`, `opengraph-image`,
+ * `twitter-image`, `icon`, `apple-icon`), with the route extensions. Its `default` export and its `generateMetadata`,
+ * `generateImageMetadata`, `generateSitemaps` and `generateViewport` exports (PAGE_EXPORTS) are each a handler, labelled
+ * by export name, and pass as a read does: by reaching `authorize`, by reading nothing, or by an app's `reads-only`
+ * exemption whose gate holds (no other gate kind applies to a page, and none at all to a page under an intercepting
+ * segment). What a page may name and still read nothing is wider than for a route, and only for a page: the page
+ * allow-list (PAGE_IMPORTS, PAGE_MEMBERS: the session, the catalog, the locale, a UI ability check), a component it only
+ * renders as a JSX tag from a client module or a package (out of sight, as an imported helper is), a component of its
+ * own file it only renders (read, as part of the page), and a client module or package it loads with `import()` only to
+ * render what it exports (`outsideNamesOf`). A component file whose prologue is `'use client'` is not judged: it runs in
+ * the browser, and reaches data only through routes, which are. A metadata route always is.
  *
  * WHAT "REACHES" MEANS. A call counts for a handler when it sits on that handler's own path:
  *
@@ -130,10 +131,16 @@ const JUDGED_VERBS: readonly string[] = [...MUTATING_VERBS, ...READ_VERBS]
 /**
  * The exports of a page, layout or metadata route that Next calls on the server per request, each judged as a READ
  * handler labelled by its name: the component (`default`), and the functions that compute its metadata or its
- * metadata routes' list. `generateStaticParams` runs at build time, and `metadata`, `viewport` and the route segment
- * options are values, so none of them is a handler.
+ * metadata routes' list, and `generateViewport`. `generateStaticParams` runs at build time, and `metadata`, `viewport`
+ * and the route segment options are values, so none of them is a handler.
  */
-const PAGE_EXPORTS: readonly string[] = ['default', 'generateMetadata', 'generateImageMetadata', 'generateSitemaps']
+const PAGE_EXPORTS: readonly string[] = [
+    'default',
+    'generateMetadata',
+    'generateImageMetadata',
+    'generateSitemaps',
+    'generateViewport',
+]
 
 /** Whether `verb` reads (GET, HEAD, OPTIONS, or a page's export: PAGE_EXPORTS) rather than mutates. */
 export function isReadVerb(verb: string): boolean {
@@ -145,12 +152,20 @@ const ROUTE_FILE = /^route\.(?:mjs|[jt]sx?)$/
 
 /**
  * The files Next renders on the server for a page's URL, with the route extensions: the page and what wraps or stands
- * in for it (`layout`, `template`, `default`, `loading`, `not-found`, `forbidden`, `unauthorized`), and the metadata
- * routes Next serves at their own URL without a `route.ts` (an image one may carry a one-digit suffix, `icon1.tsx`, as
- * Next's own matcher allows). `error` and `global-error` are not here: Next requires both to be client components.
+ * in for it (`layout`, `template`, `default`, `loading`, `not-found`, `global-not-found`, `forbidden`,
+ * `unauthorized`), and the metadata routes Next serves at their own URL without a `route.ts` (METADATA_FILE; an image one
+ * may carry a one-digit suffix, `icon1.tsx`, as Next's own matcher allows). `error` and `global-error` are not here:
+ * Next requires both to be client components.
  */
 const PAGE_FILE =
-    /^(?:page|layout|template|default|loading|not-found|forbidden|unauthorized|sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\.(?:mjs|[jt]sx?)$/
+    /^(?:page|layout|template|default|loading|not-found|global-not-found|forbidden|unauthorized|sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\.(?:mjs|[jt]sx?)$/
+
+/** The metadata routes among PAGE_FILE: they run on the server whatever their prologue says, so none is skipped as a client file. */
+const METADATA_FILE = /^(?:sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\./
+
+/** The base names PAGE_FILE reads, before the extension: a file named for one with another extension is not read. */
+const PAGE_BASE =
+    /^(?:page|layout|template|default|loading|not-found|global-not-found|forbidden|unauthorized|sitemap|robots|manifest|(?:opengraph-image|twitter-image|icon|apple-icon)\d?)\./
 
 /** Whether `name` (a file's base name) is one of the files `scanPages` judges. */
 export function isPageFileName(name: string): boolean {
@@ -190,6 +205,11 @@ export interface ScanRoot {
      * handlers are followed with. Without one, relative specifiers and packages resolve, aliases do not.
      */
     tsconfig?: string | undefined
+    /**
+     * The app's own directory: a component a page renders from a module resolved outside it (or under `node_modules`) is
+     * a package's. Default: `dir`.
+     */
+    appDir?: string | undefined
 }
 
 /**
@@ -265,6 +285,11 @@ export interface ScannedRoute {
     handlers: Handler[]
     /** The file is a page, layout or metadata route (`scanPages`), whose handlers are reads judged by `judge`'s page rules. */
     page?: true
+    /**
+     * The page is under an intercepting segment (`(.)x`): judged like any page, but no exemption applies to it, since Next
+     * also serves it at the URL it intercepts and a path-keyed entry cannot tell which.
+     */
+    intercepting?: true
 }
 
 export interface ScanOptions {
@@ -313,20 +338,22 @@ function scanFiles(roots: readonly ScanRoot[], options: ScanOptions, page: boole
                 rel,
                 ...(written === rel ? {} : { written }),
                 file,
-                handlers: intercepting
-                    ? [
-                          {
-                              verb: '*',
-                              refusal:
-                                  `the ${what} is under an intercepting segment (\`(.)x\`, \`(..)x\`, \`(...)x\`), which ` +
-                                  'Next also serves at the URL it intercepts, so the scan cannot tell which rules apply; ' +
-                                  `serve it from a ${what} that is not intercepting`,
-                          },
-                      ]
-                    : page
-                      ? scanner.pageHandlers(file)
-                      : scanner.handlers(file),
+                handlers:
+                    intercepting && !page
+                        ? [
+                              {
+                                  verb: '*',
+                                  refusal:
+                                      `the ${what} is under an intercepting segment (\`(.)x\`, \`(..)x\`, \`(...)x\`), which ` +
+                                      'Next also serves at the URL it intercepts, so the scan cannot tell which rules apply; ' +
+                                      `serve it from a ${what} that is not intercepting`,
+                              },
+                          ]
+                        : page
+                          ? scanner.pageHandlers(file)
+                          : scanner.handlers(file),
                 ...(page ? { page: true as const } : {}),
+                ...(page && intercepting ? { intercepting: true as const } : {}),
             }
         })
         for (const [dir, code] of unreadable) {
@@ -391,6 +418,22 @@ export function unreadRouteFiles(dir: string): string[] {
         !/^route\.(?:[\w-]+\.)*(?:test|spec|stories|bench|test-d)\.[cm]?[jt]sx?$/.test(name) &&
         !/\.d\.[cm]?ts$/.test(name) &&
         !name.endsWith('.snap')
+    return walkFiles(dir, named, () => true)
+}
+
+/**
+ * Files under `dir` named for a page, layout or metadata route (PAGE_BASE) with a code extension the scan does not read
+ * as one (`page.mts`, `layout.cjs`, `page.page.tsx`, `page.mdx`): Next serves it for a `pageExtensions` entry, which the
+ * scan does not read, so it may be a page nobody checked. A colocated test artefact, a declaration file, and an asset
+ * (`page.module.css`, a static `icon.png`, `manifest.json`, `robots.txt`) are not pages.
+ */
+export function unreadPageFiles(dir: string): string[] {
+    const named = (name: string) =>
+        PAGE_BASE.test(name) &&
+        !PAGE_FILE.test(name) &&
+        /\.(?:[cm]?[jt]sx?|mdx?)$/.test(name) &&
+        !/^[\w-]+\.(?:[\w-]+\.)*(?:test|spec|stories|bench|test-d)\.[cm]?[jt]sx?$/.test(name) &&
+        !/\.d\.[cm]?ts$/.test(name)
     return walkFiles(dir, named, () => true)
 }
 
@@ -801,7 +844,8 @@ function judgePage(
     policy: ScanPolicy,
     where: string,
 ): string | undefined {
-    const found = exemptionFor(policy, route.rel, verb)
+    // A page under an intercepting segment is also served at the URL it intercepts, so no path-keyed entry applies to it.
+    const found = route.intercepting ? undefined : exemptionFor(policy, route.rel, verb)
     const exemption = found?.mustMatch.kind === 'reads-only' ? found : undefined
     if (exemption && gateHolds(exemption.mustMatch, facts, verb)) return undefined
     const required = requiredFor(policy, route.rel)
@@ -832,11 +876,15 @@ function judgePage(
         `authorizes its self-only subject), because the session's org says where a person is placed, not that they may ` +
         `read there (the role \`none\` is placed with no standing). Load the data in the page and authorize there: a ` +
         `component that loads its own data is out of the scan's sight. A page reads nothing when it names nothing from ` +
-        `outside itself but the inert values a read route may name, ${describePageAllowance()}, an imported component ` +
-        `it only renders as a JSX tag, a component of its own file it only renders (which is read as part of it), and ` +
-        `what it loads with \`import()\` only to render it. Only if it reads nothing org-scoped, name it in the app's ` +
-        `authz-exemptions.mjs under \`outsideApi\` (keys relative to src/app), with a \`reads-only\` gate listing the ` +
-        `imports it reads.`
+        `outside itself but the inert values a read route may name, ${describePageAllowance()}, a component it only ` +
+        `renders as a JSX tag from a 'use client' module or a package (a server component of the app's own is named), ` +
+        `a component of its own file it only renders (which is read as part of it), and what it loads with ` +
+        `\`import()\` from such a module only to render it. ` +
+        (route.intercepting
+            ? `It is under an intercepting segment (\`(.)x\`), which Next also serves at the URL it intercepts, so no ` +
+              `exemption applies to it: authorize, or read nothing.`
+            : `Only if it reads nothing org-scoped, name it in the app's authz-exemptions.mjs under \`outsideApi\` (keys ` +
+              `relative to src/app), with a \`reads-only\` gate listing the imports it reads.`)
     )
 }
 
@@ -902,10 +950,42 @@ class RootScanner {
     private readonly sources = new Map<string, Source | string>()
     private readonly resolution: ts.CompilerOptions
     private readonly authorizeModules: readonly string[]
+    private readonly appDir: string
+    /** Whether a module, by the file importing it and its specifier, is one a page may render out of sight. */
+    private readonly renderable = new Map<string, boolean>()
 
     constructor(root: ScanRoot, authorizeModules: readonly string[]) {
         this.authorizeModules = authorizeModules
         this.resolution = root.tsconfig ? readCompilerOptions(root.tsconfig) : DEFAULT_RESOLUTION
+        this.appDir = path.resolve(root.appDir ?? root.dir)
+    }
+
+    /**
+     * Whether a page may render a component `specifier` names, imported from `from`, as reading nothing
+     * (safeinsights/sssb#221): its module is a client one (the file it resolves to opens with `'use client'`: it runs in
+     * the browser, and reaches data only through routes), or a package's (it resolves under `node_modules`, or outside the
+     * app's directory, as `@sssb/kit`'s screens do). A server component of the app's own, which may load its own data out
+     * of sight, is not: the page counts its name. A module that does not resolve, or could be any of several files, is
+     * not either.
+     */
+    private isRenderable(from: Source, specifier: string): boolean {
+        const key = `${from.fileName}\0${specifier}`
+        const known = this.renderable.get(key)
+        if (known !== undefined) return known
+        const resolved = ts.resolveModuleName(specifier, from.fileName, this.resolution, ts.sys).resolvedModule
+        let answer = false
+        if (resolved) {
+            const file = path.resolve(resolved.resolvedFileName)
+            const inApp = file.startsWith(this.appDir + path.sep)
+            if (resolved.isExternalLibraryImport || file.split(path.sep).includes('node_modules') || !inApp)
+                answer = true
+            else {
+                const target = this.resolve(from, specifier)
+                answer = typeof target !== 'string' && hasDirective(target.sf.statements, 'use client')
+            }
+        }
+        this.renderable.set(key, answer)
+        return answer
     }
 
     handlers(file: string): Handler[] {
@@ -925,11 +1005,13 @@ class RootScanner {
     pageHandlers(file: string): Handler[] {
         const src = this.load(file)
         if (typeof src === 'string') return [{ verb: '*', refusal: src }]
-        if (hasDirective(src.sf.statements, 'use client')) return []
+        // A metadata route runs on the server whatever its prologue says, so it is never skipped as a client file.
+        const component = !METADATA_FILE.test(path.basename(file))
+        if (component && hasDirective(src.sf.statements, 'use client')) return []
         return this.judgedExports(src, new Set(), PAGE_EXPORTS).flatMap(([verb, binding]): Handler[] => {
             const node = this.handlerOf(binding, new Set())
             if ('reason' in node) return [{ verb, refusal: node.reason }]
-            if (hasDirective(node.src.sf.statements, 'use client')) return []
+            if (component && hasDirective(node.src.sf.statements, 'use client')) return []
             return [{ verb, facts: this.facts(node, true) }]
         })
     }
@@ -1125,7 +1207,15 @@ class RootScanner {
         const reach = new Reach(node.src, this.authorizeModules)
         if ('fn' in node) {
             reach.invoke(node.fn)
-            const { names: outsideNames, sources, refusal: outsideRefusal } = outsideNamesOf(node.src, node.fn, page)
+            const {
+                names: outsideNames,
+                sources,
+                refusal: outsideRefusal,
+            } = outsideNamesOf(
+                node.src,
+                node.fn,
+                page ? (specifier) => this.isRenderable(node.src, specifier) : undefined,
+            )
             // Each listed import's module, resolved, so two routes importing one name from two modules can be told apart.
             const outsideSources =
                 sources === null
@@ -2290,7 +2380,8 @@ const PAGE_IMPORTS: Readonly<Record<string, readonly string[]>> = {
     // `getMessages` for NextIntlClientProvider is next-intl's own pattern). No data but the catalog and the locale.
     'next-intl/server': ['getMessages', 'getTranslations', 'setRequestLocale'],
     // The locale layout's check that the URL's locale segment is one the app serves: a function of its two arguments.
-    'next-intl': ['hasLocale'],
+    // `useTranslations` is the same catalog read, in a component that is not async.
+    'next-intl': ['hasLocale', 'useTranslations'],
     // A UI ability check of the caller's OWN abilities in their active org, which never throws and decides what a page
     // offers, not what it reads (the routes behind each control authorize). Never a substitute for authorize(...).
     '@sssb/kit/authz/authorize': ['canInActiveOrg'],
@@ -2330,6 +2421,26 @@ const PAGE_MEMBERS: Readonly<Record<string, Readonly<Record<string, Readonly<Rec
     '@sssb/kit/i18n/routing': { routing: { locales: 'read' } },
 }
 
+/** The names PAGE_MEMBERS allows only through members: never countable on a page, from any module. */
+const MEMBER_NAMES: ReadonlySet<string> = new Set(
+    Object.values(PAGE_MEMBERS).flatMap((objects) => Object.keys(objects)),
+)
+
+/** Why a page may not use `name` (one of MEMBER_NAMES) reached through `from` (another module, a namespace, import()). */
+function memberSource(name: string, from: string): string {
+    const owners = Object.entries(PAGE_MEMBERS)
+        .filter(([, objects]) => Object.hasOwn(objects, name))
+        .map(([module]) => module)
+        .join(', ')
+    return (
+        `\`${name}\` is reached through ${from}, and a page may use \`${name}\` only as imported by name from ${owners}, ` +
+        'through its listed members, since what else it reaches may be org-scoped; no exemption can list it'
+    )
+}
+
+/** A static asset a page may default-import as a value: a stylesheet (its class names) or an image (its URL). */
+const STATIC_ASSET = /\.(?:css|scss|png|jpe?g|gif|svg|webp|avif|ico)$/
+
 /** Member names that lead from any value to the `Function` constructor or a prototype the scan cannot see. */
 const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__'])
 
@@ -2357,14 +2468,19 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
  * - an import PAGE_MEMBERS names, only through a listed member (`auth.getCurrentUser()`, `routing.locales`): the import
  *   used any other way (`auth.listMembers`, `auth` passed along) is refused outright, whatever an exemption lists;
  * - an imported component it only RENDERS: a reference that is a JSX tag's name (`<DashboardGlue … />`, `<UI.Card>`),
- *   by any import, named, default or namespace. What the component does is out of sight, as an imported helper's is:
- *   one that loads its own data passes unseen, so a page loads its data itself and authorizes there;
+ *   by any import, named, default or namespace, when its module is a client one or a package's (`renderable`). What
+ *   it does is out of sight, as an imported helper's is; a server component of the app's own, which may load its own
+ *   data, is counted under its name, so a page loads its data itself and authorizes there;
+ * - a default import of a static asset (`styles` from `./page.module.css`, an image's URL);
  * - a component of its OWN file that it only renders (a function declared once and never reassigned, or a `const`
  *   bound to a function literal): its text is read as part of the page, by these same rules, once each;
  * - a module it loads with `import()` only to render what it takes from it, the one shape the app guide gives a real
  *   adapter's component: `const { RealUserMenu } = await import('…')`, or one element of an awaited global
  *   `Promise.all([...])` destructured the same way, every name a plain one kept under its exported name, each
- *   referred to only as a JSX tag's name. Any other `import()` is refused, as for a route.
+ *   referred to only as a JSX tag's name, from a client module or a package (from the app's own server module, the
+ *   name is counted). Any other `import()` is refused, as for a route;
+ * - never a name PAGE_MEMBERS allows through members (`auth`, `routing`) any other way, from any module, as a JSX tag
+ *   or a namespace's member included: it is refused, never counted, so no `reads-only` entry can list it.
  *
  * What it does not see: a member read through a computed key the scan cannot evaluate (`request[key]`). Like a gate,
  * it proves the KIND of handler, one that names nothing but inert values and its request, not that no data can reach
@@ -2380,11 +2496,13 @@ const ESCAPE_MEMBERS: ReadonlySet<string> = new Set(['constructor', '__proto__']
 function outsideNamesOf(
     src: Source,
     fn: ts.FunctionLikeDeclaration,
-    page = false,
+    /** For a page's export: whether a module the page renders a component from is one it may render out of sight. */
+    renderable?: (specifier: string) => boolean,
 ):
     | { names: ReadonlySet<string>; sources: ReadonlyMap<string, string>; refusal: null }
     | { names: null; sources: null; refusal: string } {
     const { checker, sf } = src
+    const page = renderable !== undefined
     const within = (node: ts.Node, root: ts.Node) => node.getStart(sf) >= root.getStart(sf) && node.end <= root.end
     const assigned = new Map<string, boolean>()
     const assignedGlobal = (name: string): boolean => {
@@ -2396,6 +2514,8 @@ function outsideNamesOf(
         const imported = valueImportOf(decl)
         if (imported !== undefined) {
             if (imported.kind !== 'named') return false
+            // A page's static asset (a stylesheet's class names, an image's URL): the bundler's output, no data.
+            if (page && ts.isImportClause(decl) && STATIC_ASSET.test(imported.module)) return true
             if (!ts.isImportSpecifier(decl) || decl.name.text !== imported.name) return false
             return (
                 (INERT_IMPORTS[imported.module] ?? []).includes(imported.name) ||
@@ -2444,6 +2564,12 @@ function outsideNamesOf(
             return refuse(`\`${id.text}\` is an \`import … = require(…)\`, a whole module`)
         }
         if (isAmbient(decl)) return refuse(`\`${id.text}\` is declared with \`declare\`, so its value is out of sight`)
+        if (page) {
+            return refuse(
+                `\`${id.text}\` is a declaration of the page's own file, which code of the file can change: render it as a ` +
+                    'component of this file (a JSX tag), or move it into a module and list the import',
+            )
+        }
         return refuse(
             `\`${id.text}\` is a declaration of the route's own file, which code of the file can change; put it in a ` +
                 'module and list the import',
@@ -2502,37 +2628,55 @@ function outsideNamesOf(
             if (decl === fn || (bound !== undefined && unwrap(bound) === fn)) {
                 return refuse('it refers to itself, and what is hung on a handler is out of sight')
             }
-            const specifier = dynamic.bindings.get(decl)
-            if (specifier !== undefined) {
-                return (
-                    isJsxTagName(id) ||
-                    refuse(
-                        `\`${id.text}\` is loaded with \`import('${specifier}')\`, and a page may use what it loads ` +
+            const loaded = dynamic.bindings.get(decl)
+            if (loaded !== undefined) {
+                if (MEMBER_NAMES.has(id.text)) return refuse(memberSource(id.text, `import('${loaded}')`))
+                if (!isJsxTagName(id)) {
+                    return refuse(
+                        `\`${id.text}\` is loaded with \`import('${loaded}')\`, and a page may use what it loads ` +
                             'with import() only to render it as a component (a JSX tag)',
                     )
-                )
+                }
+                // Rendered out of sight only from a client module or a package; a server module of the app is counted.
+                if (renderable?.(loaded) !== true) {
+                    names.add(id.text)
+                    sources.set(id.text, loaded)
+                }
+                return true
             }
             if (inside(decl) || allowedOutside(decl)) return true
             if (page) {
+                const imported = valueImportOf(decl)
+                // A name PAGE_MEMBERS allows only through members comes first, whatever else it is used as (a JSX tag
+                // included), and is never countable: no reads-only entry can list it, from SSSB's module or any other.
+                if (imported?.kind === 'named' && MEMBER_NAMES.has(imported.name)) {
+                    if (!ts.isImportSpecifier(decl) || decl.name.text !== imported.name) return count(decl, id)
+                    const members = PAGE_MEMBERS[imported.module]?.[imported.name]
+                    if (members === undefined) return refuse(memberSource(imported.name, `'${imported.module}'`))
+                    return memberUse(id, imported.name, members)
+                }
                 if (isJsxTagName(id)) {
-                    // An imported component the page renders: out of sight, as an imported helper is.
-                    if (valueImportOf(decl) !== undefined) return true
-                    // A component of the page's own file: in sight, so read as part of the page.
-                    const component = isDirectJsxTag(id) ? sameFileComponent(src, decl) : undefined
-                    if (component !== undefined) {
-                        if (!followed.has(component)) {
-                            followed.add(component)
-                            analyse(component)
+                    if (imported !== undefined) {
+                        // A namespace's member that PAGE_MEMBERS names (`<kit.auth.listMembers />`) is not a component.
+                        const member = ts.isPropertyAccessExpression(id.parent) ? id.parent.name.text : undefined
+                        if (imported.kind === 'namespace' && member !== undefined && MEMBER_NAMES.has(member)) {
+                            return refuse(memberSource(member, `the namespace import \`${id.text}\``))
                         }
-                        return refusal === null
+                        // An imported component the page renders, from a client module or a package: out of sight. A
+                        // server component of the app's own may load its own data, so it is counted below.
+                        if (renderable?.(imported.module) === true) return true
+                    } else {
+                        // A component of the page's own file: in sight, so read as part of the page.
+                        const component = isDirectJsxTag(id) ? sameFileComponent(src, decl) : undefined
+                        if (component !== undefined) {
+                            if (!followed.has(component)) {
+                                followed.add(component)
+                                analyse(component)
+                            }
+                            return refusal === null
+                        }
                     }
                 }
-                const imported = valueImportOf(decl)
-                const members =
-                    imported?.kind === 'named' && ts.isImportSpecifier(decl) && decl.name.text === imported.name
-                        ? PAGE_MEMBERS[imported.module]?.[imported.name]
-                        : undefined
-                if (members !== undefined && imported?.kind === 'named') return memberUse(id, imported.name, members)
             }
             return count(decl, id)
         }
