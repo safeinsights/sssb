@@ -962,6 +962,8 @@ class RootScanner {
     private readonly pathsBase: string
     /** `@sssb/kit`'s real package directory as the app resolves it, or undefined where it does not. */
     private readonly kitDir: string | undefined
+    /** The app directory's real path, which an installed package's `node_modules` sits at or above. */
+    private readonly appReal: string
     /** Whether a component, by importing file, specifier and exported name, is one a page may render out of sight. */
     private readonly renderable = new Map<string, boolean>()
 
@@ -970,17 +972,23 @@ class RootScanner {
         this.resolution = root.tsconfig ? readCompilerOptions(root.tsconfig) : DEFAULT_RESOLUTION
         this.appDir = path.resolve(root.appDir ?? root.dir)
         this.pathsBase = this.resolution.baseUrl ?? (root.tsconfig ? path.dirname(root.tsconfig) : this.appDir)
-        this.kitDir = kitPackageDir(this.appDir)
+        // An app inside the kit's own package directory (or the kit itself) is the kit's code, not an adopter of it.
+        const kit = kitPackageDir(this.appDir)
+        const app = realpathOrUndefined(this.appDir) ?? this.appDir
+        this.kitDir = kit !== undefined && (app === kit || app.startsWith(kit + path.sep)) ? undefined : kit
+        this.appReal = app
     }
 
     /**
      * Whether a page may render the component exported as `name` from the module `specifier` names, imported from
      * `from`, as reading nothing (safeinsights/sssb#221): it is declared in a client module (the module that DECLARES it,
      * followed through re-exports, opens with `'use client'`: it runs in the browser, and reaches data only through
-     * routes), or it is an installed package's (its file's real path has a `node_modules` segment, as pnpm's store does)
-     * or SSSB's own (`@sssb/kit`'s real package directory, as the app resolves it, so its screens stay out of sight here
-     * as for an adopter who installs it). Anything else, in the app or out of it (a workspace package of the adopter's
-     * own, linked or reached by a path or an alias), is out of sight only when it is a client module: a server component
+     * routes), or it is an installed package's (`isInstalled`: its file's real path runs through a `node_modules` at the
+     * app's directory or above it, where a package manager installs, and not through a pnpm `file:` or `link:`
+     * dependency) or SSSB's own (`@sssb/kit`'s real package directory, as the app resolves it, so its screens stay out of
+     * sight here as for an adopter who installs it; not trusted for an app inside that directory). Anything else, in the
+     * app or out of it (a workspace package of the adopter's own, linked or reached by a path or an alias, a
+     * `node_modules` folder under the app's `src`), is out of sight only when it is a client module: a server component
      * may load its own data, so the page counts its name. A module that does not resolve, a re-export that cannot be
      * followed or leads back to itself, and a module that could be any of several files, are not either.
      */
@@ -995,7 +1003,7 @@ class RootScanner {
         if (resolved) {
             const real = realpathOrUndefined(resolved.resolvedFileName)
             const kit = this.kitDir
-            if (real !== undefined && real.split(path.sep).includes('node_modules')) answer = true
+            if (real !== undefined && this.isInstalled(real)) answer = true
             else if (real !== undefined && kit !== undefined && real.startsWith(kit + path.sep)) answer = true
             else {
                 const target = this.resolve(from, specifier)
@@ -1017,26 +1025,49 @@ class RootScanner {
     }
 
     /**
-     * Whether a page's default import of `specifier` is a static asset (a stylesheet's class names, an image's URL), told
-     * by what the specifier lands on, never by its text alone: no `?` or `#` (a loader query), an asset extension
-     * (STATIC_ASSET), no resolution to code or a declaration (TypeScript resolves `./members.css` to a `members.css.ts`
-     * beside it; a `.d.css.ts` of `allowArbitraryExtensions` declares the asset and is fine), and for a relative or alias
-     * specifier the asset file itself on disk. A package's asset (a bare specifier no `paths` entry maps) is not looked up.
+     * Whether a resolved file's real path is an installed package's: it runs through a `node_modules` segment, the
+     * directory before the first one is the app's directory or one of its ancestors (where a package manager installs:
+     * the app's own, or a workspace root's), and no segment is a pnpm `file:` or `link:` dependency
+     * (`.pnpm/<name>@file+…`, `@link+…`), which is the adopter's own code injected or linked. A `node_modules` folder
+     * anywhere below the app's directory (under its `src`, say) is the app's code.
      */
-    private isStaticAsset(from: Source, specifier: string): boolean {
-        if (/[?#]/.test(specifier) || !STATIC_ASSET.test(specifier)) return false
-        const resolved = ts.resolveModuleName(specifier, from.fileName, this.resolution, ts.sys).resolvedModule
-        if (resolved && !/\.d\.[^./]+\.ts$/.test(resolved.resolvedFileName)) return false
-        const literal = this.literalFiles(from, specifier)
-        return literal === undefined || literal.some((file) => STATIC_ASSET.test(file) && isFile(file))
+    private isInstalled(real: string): boolean {
+        const segments = real.split(path.sep)
+        const first = segments.indexOf('node_modules')
+        if (first < 0 || segments.some((segment) => /@(?:file|link)\+/.test(segment))) return false
+        const above = segments.slice(0, first).join(path.sep)
+        return this.appReal === above || this.appReal.startsWith(above + path.sep)
     }
 
     /**
-     * The files a relative specifier, or one a `paths` entry maps, names as written (no extension added), or undefined
-     * for a bare package specifier.
+     * Whether a page's default import of `specifier` is a static asset (a stylesheet's class names, an image's URL), told
+     * by the file it names, never by its text alone: a relative specifier (`./`, `../`) or one a tsconfig `paths` entry
+     * maps, with no `?` or `#` (a loader query) and an asset extension (STATIC_ASSET), whose literal target file exists
+     * with an asset extension, and which TypeScript's resolution does not land on code (`./members.css` resolves to a
+     * `members.css.ts` beside it) or a declaration, but the asset's own sibling `.d.css.ts` of `allowArbitraryExtensions`.
+     * A bare specifier (a package, `baseUrl`, a package's self-reference or `imports`, a bundler alias) is never one: it
+     * is counted as any default import is.
+     */
+    private isStaticAsset(from: Source, specifier: string): boolean {
+        if (/[?#]/.test(specifier) || !STATIC_ASSET.test(specifier)) return false
+        const literal = this.literalFiles(from, specifier)?.filter((file) => STATIC_ASSET.test(file) && isFile(file))
+        if (literal === undefined || literal.length === 0) return false
+        const resolved = ts.resolveModuleName(specifier, from.fileName, this.resolution, ts.sys).resolvedModule
+        if (resolved === undefined) return true
+        const landed = path.resolve(resolved.resolvedFileName)
+        // The asset's own declaration: `members.d.css.ts` beside `members.css`.
+        return literal.some((file) => {
+            const ext = path.extname(file)
+            return landed === path.join(path.dirname(file), `${path.basename(file, ext)}.d${ext}.ts`)
+        })
+    }
+
+    /**
+     * The files a relative specifier (`./`, `../`), or one a `paths` entry maps, names as written (no extension added),
+     * or undefined for any other specifier.
      */
     private literalFiles(from: Source, specifier: string): string[] | undefined {
-        if (/^\.{1,2}\//.test(specifier) || path.isAbsolute(specifier)) {
+        if (/^\.{1,2}\//.test(specifier)) {
             return [path.resolve(path.dirname(from.fileName), specifier)]
         }
         const mapped = Object.entries(this.resolution.paths ?? {}).flatMap(([pattern, targets]) => {

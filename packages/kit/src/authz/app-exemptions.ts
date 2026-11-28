@@ -1,6 +1,7 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import ts from 'typescript'
 import { FRAMEWORK_POLICY, isGate } from './route-policy'
 import {
     type Exemption,
@@ -398,6 +399,42 @@ function isDirectory(file: string): boolean {
     }
 }
 
+/** The names Next loads its config from, beside the app's `package.json`. */
+const NEXT_CONFIGS = [
+    'next.config.js',
+    'next.config.mjs',
+    'next.config.cjs',
+    'next.config.ts',
+    'next.config.mts',
+    'next.config.cts',
+]
+
+/**
+ * The app's Next configs that name `pageExtensions` (as a property, a shorthand or a string key; read with the
+ * TypeScript parser, so a comment does not count). The scan reads only its own extensions, so a custom list would let
+ * Next serve a route or page nobody checked: the check fails it rather than pass silently.
+ */
+function configsSettingPageExtensions(appDir: string): string[] {
+    return NEXT_CONFIGS.filter((name) => {
+        let text: string
+        try {
+            text = readFileSync(path.join(appDir, name), 'utf8')
+        } catch {
+            return false
+        }
+        if (!text.includes('pageExtensions')) return false
+        const sf = ts.createSourceFile(name, text, ts.ScriptTarget.ESNext, false)
+        let found = false
+        const visit = (node: ts.Node): void => {
+            if (found) return
+            if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === 'pageExtensions') found = true
+            else ts.forEachChild(node, visit)
+        }
+        visit(sf)
+        return found
+    })
+}
+
 /** Where Next looks for the Pages Router: `pages` beside `src`, or inside it. */
 const PAGES_DIRS = ['pages', 'src/pages']
 
@@ -468,6 +505,12 @@ export async function scanApp(appDir: string): Promise<AppScan> {
                 `${name}: ${path.relative(appDir, file).split(path.sep).join('/')} declares Server Actions outside src, ` +
                 `where the authorization scan does not judge them. Move them under src. (Actions a workspace package ` +
                 `exports are not read either.)`,
+        ),
+        ...configsSettingPageExtensions(appDir).map(
+            (config) =>
+                `${name}: ${config} sets pageExtensions. The authorization scan reads route and page files with the .ts, ` +
+                `.tsx, .js, .jsx and .mjs extensions only, not the config, so a route or page Next serves for another ` +
+                `extension would go unchecked. Leave pageExtensions at Next's default.`,
         ),
         ...PAGES_DIRS.filter((dir) => isDirectory(path.join(appDir, dir))).map((dir) =>
             isDirectory(path.join(appDir, dir, 'api'))
