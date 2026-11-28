@@ -8507,10 +8507,10 @@ did not settle:
       first draft had.
 - **Narrowed in review.** The first draft rendered any imported component out of sight, so an async server component
   of the app's own that loads its data (`<MemberList slug={user.orgSlug} />` calling `auth.listMembers`) passed as
-  reading nothing, by a named, default or namespace import and through `import()` alike. A tag is now out of sight only
+  reading nothing, by a named, default or namespace import and through `import()` alike. Round 1 made a tag out of sight only
   when its module resolves to a file whose prologue is `'use client'` or to a package (under `node_modules`, or outside
   the app's directory: `@sssb/kit`'s screens resolve to the framework's source in this repository); otherwise its name
-  is counted. Every component both apps render was already one of those, so neither app's verdict changed; seen
+  is counted (narrowed again in rounds 2 and 3, below). Every component both apps render was already one of those, so neither app's verdict changed; seen
   working by taking `'use client'` off the starter's `WelcomeScreen`, which turned its home page red ("it names
   `WelcomeScreen`"). Also: `auth` and `routing` are checked before the tag allowance (`<auth.listMembers />` passed),
   through a namespace and `import()` too, and refused from any other module (an app's re-export of `auth` plus a
@@ -8548,6 +8548,16 @@ did not settle:
   folder, which Next does not route: that drops a route there from the route walk too, which never served one, while
   the Server Action walk still enters it. Neither app has a `_` folder under `src/app`; both apps' verdicts and file
   counts are unchanged.
+- **Narrowed rather than patched (round 3).** A third round found more resolution edges in the same two allowances,
+  so both shrank instead of gaining cases. An asset is now only a relative or `paths`-alias specifier whose literal
+  file exists (no `?` or `#`, no resolution to code, no declaration but the asset's own sibling `.d.css.ts`); a bare
+  specifier (a package's `styles.css`, `baseUrl`, a self-reference, `imports`, a bundler alias) is never one, and is
+  refused as any default import is. "Installed" now means a real path through a `node_modules` whose parent is the
+  app's directory or an ancestor (where a package manager installs), never one below the app's root (`src/node_modules`)
+  and never a pnpm `file:` or `link:` dependency (`.pnpm/<name>@file+…`), which are the adopter's own code; the kit's
+  directory is not trusted for an app inside it. And a `next.config` that sets `pageExtensions` now fails the check
+  (read with the TypeScript parser, so a comment does not count), since the scan reads no custom extension and the
+  unread-file guard catches only `.mts`, `.cts`, `.cjs`, `.mdx` and `.md`. Neither app nor the fixture changed verdict.
 - **#259: authorize, and `none` does not reach the dashboard.** The dashboard and the org page authorize `read
 Membership` on the active org before `listMembers`, anchored on its slug as the invite route's check is
   (`listMembers` takes the slug, so the subject is the session's org by construction). Rejected: listing members only

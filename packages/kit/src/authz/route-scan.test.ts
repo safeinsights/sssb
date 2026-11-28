@@ -3887,12 +3887,15 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
                 }),
             ),
         ).toMatch(/^refusal: `asset` is a default import/)
-        for (const specifier of ['./members?x.css', './members.css#x', './gone.png']) {
-            expect(
-                defaultOf(scanCase({ 'page.tsx': ASSET_PAGE(specifier), 'members.css': '.x {}\n' })),
-                specifier,
-            ).toMatch(/^refusal: `asset` is a default import/)
+        // A loader query or a hash is refused by its text, where the file lookup would not catch it: the file named
+        // with the character exists.
+        for (const specifier of ['./members?x.css', './members#x.css']) {
+            const files = { 'page.tsx': ASSET_PAGE(specifier), 'members?x.css': '.x {}\n', 'members#x.css': '.x {}\n' }
+            expect(defaultOf(scanCase(files)), specifier).toMatch(/^refusal: `asset` is a default import/)
         }
+        expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./gone.png') }))).toMatch(
+            /^refusal: `asset` is a default import/,
+        )
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('./members.css'), 'members.css': '.x {}\n' }))).toBe(
             'reads nothing',
         )
@@ -3933,12 +3936,6 @@ describe('round-2 review of the page scan: allowances decided by the resolved fi
         expect(defaultOf(scanCase({ 'page.tsx': ASSET_PAGE('some-ui/styles.css') }))).toMatch(
             /^refusal: `asset` is a default import/,
         )
-        // A loader query or a hash is refused by its text, where no file lookup would catch it: a package's specifier,
-        // and a file whose name carries the character.
-        for (const specifier of ['some-ui/styles.css?inline', './members?x.css', './members#x.css']) {
-            const files = { 'page.tsx': ASSET_PAGE(specifier), 'members?x.css': '.x {}\n', 'members#x.css': '.x {}\n' }
-            expect(defaultOf(scanCase(files)), specifier).toMatch(/^refusal: `asset` is a default import/)
-        }
     })
 
     it('follows a re-export to the module that declares the component, and fails closed', () => {

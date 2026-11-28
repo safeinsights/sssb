@@ -148,7 +148,7 @@ export function appExemptionsFrom(value: unknown, label: string): { exemptions: 
                     outside
                         ? `${where} must name one route file (route.ts, route.tsx, route.js, route.jsx, route.mjs), or one ` +
                               'page, layout or metadata route file (page, layout, template, default, loading, not-found, ' +
-                              'forbidden, unauthorized, sitemap, robots, manifest, opengraph-image, twitter-image, icon, ' +
+                              'global-not-found, forbidden, unauthorized, sitemap, robots, manifest, opengraph-image, twitter-image, icon, ' +
                               'apple-icon, with one of those extensions)'
                         : `${where} must name one route file (route.ts, route.tsx, route.js, route.jsx, route.mjs)`,
                 )
@@ -375,7 +375,7 @@ export interface AppScan {
     routes: ScannedRoute[]
     /**
      * Every page, layout and metadata route under the app's `src/app` (safeinsights/sssb#221), each export Next calls
-     * judged as a read; a `'use client'` one has none.
+     * judged as a read; a `'use client'` COMPONENT file has none (a metadata route is judged whatever its prologue).
      */
     pages: ScannedRoute[]
     /** Every Server Action under the app's `src`. */

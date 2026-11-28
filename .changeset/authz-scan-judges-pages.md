@@ -26,13 +26,15 @@ What the check newly **accepts**, in a page only (a route is judged as before):
   `isDemoMode` (`@sssb/kit/adapters/index`), `sameOriginPath` (`@sssb/kit/core/same-origin-path`), `getTenantTheme`
   (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`), each a named import under its exported name;
 - a default import of a static asset (a `.css`, `.module.css` or `.scss` stylesheet, a `.png`, `.jpg`, `.jpeg`, `.gif`,
-  `.svg`, `.webp`, `.avif` or `.ico` image) used as a value, when the specifier has no `?` or `#`, does not resolve to
-  code or a declaration (a `.d.css.ts` of `allowArbitraryExtensions` excepted), and, for a relative or alias specifier,
-  names a file that exists;
+  `.svg`, `.webp`, `.avif` or `.ico` image) used as a value, only by a relative specifier (`./`, `../`) or a tsconfig
+  `paths` alias, with no `?` or `#`, whose literal file exists with one of those extensions, and which TypeScript's
+  resolution does not land on code or on a declaration other than the asset's own sibling `.d.<ext>.ts`
+  (`allowArbitraryExtensions`);
 - an imported component used only as a JSX tag (by a named, default or namespace import) declared in a client module
   (the module that declares it, followed through a barrel's re-exports, opens with `'use client'`), in an installed
-  package (its file's real path is under `node_modules`) or in `@sssb/kit` (its real package directory, as the app
-  resolves it);
+  package (its file's real path runs through a `node_modules` whose parent is the app's directory or an ancestor of it,
+  and through no pnpm `file:` or `link:` dependency) or in `@sssb/kit` (its real package directory, as the app resolves
+  it, unless the app is inside it);
 - a component of the page's own file used only as a JSX tag (a function declared once and never reassigned, or a
   `const` bound to a function), whose code is read as part of the page;
 - `const { Form } = await import('…')`, alone or as one element of an awaited global `Promise.all([...])` destructured
@@ -55,7 +57,10 @@ What it newly **refuses**:
   package, linked into `node_modules` or reached by a path or an alias, which may load its own data) rendered as a tag
   or loaded with `import()`: its name is counted, so the page authorizes or an entry lists it; and a default import
   whose specifier only looks like an asset (`'./members.css'` beside a `members.css.ts`, `'./x.css?inline'`, a file that
-  does not exist);
+  does not exist) or is bare (`'some-ui/styles.css'`, a `baseUrl` path, a package's self-reference or `imports`, a
+  bundler alias): none is an asset here, so each is refused as any default import is; and a component in a
+  `node_modules` folder below the app's root (under its `src`) or in a pnpm `file:` or `link:` dependency, which is the
+  adopter's own code, unless it is a client one;
 - `auth` (and `routing`) used any other way, whatever an entry lists: another member (`auth.listMembers`,
   `auth.getMember`, `routing.defaultLocale`), the object passed along, aliased, spread, destructured, read by a
   computed key, rendered as a tag (`<auth.listMembers />`) or reached through a namespace or `import()`, a listed method
@@ -68,7 +73,9 @@ What it newly **refuses**:
   `src/app/api/service/` that is not wrapped by `withServiceCaller`;
 - a `pages` or `src/pages` directory (the Pages Router), where before only `pages/api` failed, and a file named for a
   page, layout or metadata route with one extension the check does not read (`page.mts`, `page.cts`, `layout.cjs`,
-  `page.mdx`, `default.md`); a file with a middle segment (`page.css.ts`, `layout.styles.ts`) is a module of its own.
+  `page.mdx`, `default.md`); a file with a middle segment (`page.css.ts`, `layout.styles.ts`) is a module of its own;
+- a `next.config.*` that sets `pageExtensions` at all (read with the TypeScript parser: a comment does not count), since
+  the check reads no custom extension: leave it at Next's default.
 
 Pages are matched by URL as routes are, so a route group's layout and its parent layout share one key
 (`[locale]/layout.tsx`): one entry covers both, each judged on its own. The generated app ships an

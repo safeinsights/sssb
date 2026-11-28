@@ -147,8 +147,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
 - A Server Action is a POST endpoint: every export of a `'use server'` file, and every function whose body opens
   with `'use server'`, calls `authorize(...)` by the same rules, lives under `src`, and can match no exemption. The
   app serves routes and pages from `src/app` alone: a root-level `app/` directory, a `pages` directory beside `src` or
-  inside it (the Pages Router), or a file named `route.<ext>`, `page.<ext>` or for another page file below with an
-  extension the check does not read (`route.mts`, `page.mdx`, a custom `pageExtensions`) fails it. A private folder
+  inside it (the Pages Router), a file named `route.<ext>` with an extension the check does not read (`route.mts`), a
+  page file below named with `.mts`, `.cts`, `.cjs`, `.mdx` or `.md` (`page.mdx`), or a `next.config` that sets
+  `pageExtensions` at all (the check does not read custom extensions) fails it. A private folder
   (`_lib`), which Next does not route, holds no route or page the check reads; a Server Action there is still judged.
 - An exemption is an entry in the app's `authz-exemptions.mjs` (`{ files, prefixes }`, keys relative to
   `src/app/api`), with a reason and a `mustMatch` gate; it covers every verb of the routes it names (a `reads-only`
@@ -190,18 +191,19 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   is a team's member list), its copy and locale (`setRequestLocale`, `getTranslations` and `getMessages` from
   `next-intl/server`, `hasLocale` and `useTranslations` from `next-intl`, `routing.locales`), `canInActiveOrg`,
   `isDemoMode`, `sameOriginPath`, `getTenantTheme`, Mantine's `mantineHtmlProps` and a default-imported stylesheet or
-  image (the file itself, with no `?` or `#`, and no code beside it of the same name); a component it only renders as
-  a JSX tag, declared in a `'use client'` module (a barrel's re-export is followed to it) or in an installed package
-  (one under `node_modules`) or SSSB's kit; a component of its own
-  file it only renders, which is read as part of it; and a real adapter's component it loads with
+  image named by a relative specifier or a tsconfig `paths` alias, with no `?` or `#`, whose file exists and is not
+  code beside one of the same name (a bare specifier, a package's asset included, is never one); a component it only
+  renders as a JSX tag, declared in a `'use client'` module (a barrel's re-export is followed to it), in an installed
+  package (under a `node_modules` at the app or above it, not a workspace link or a pnpm `file:` or `link:`
+  dependency, which are your own code) or in SSSB's kit; a component of its own file it only renders, which is read as part of it; and a real adapter's component it loads with
   `const { Form } = await import('…')` (alone, or in an awaited `Promise.all`) only to render it. Anything else it names
-  (the seed, a port, a data helper, a server component of your own, in the app or a workspace package, `auth` used any
-  other way) means it
+  (the seed, a port, a data helper, a server component of your own, in the app or a workspace package) means it
   authorizes, as `src/app/[locale]/(protected)/dashboard/page.tsx` would before reading the team's data, or, only if
   it reads nothing org-scoped, has a `reads-only` entry under `outsideApi` keyed by its file, as `authz-exemptions.mjs`
   names the sign-in page's, or an `outsideApi.prefixes` entry above it, which covers the pages under it as it covers the
   routes. A route group is dropped from the key, so a group's layout shares its parent's (`[locale]/layout.tsx`). A page
-  under an intercepting segment (`(.)x`) can match no entry: it authorizes or reads nothing.
+  under an intercepting segment (`(.)x`) can match no entry: it authorizes or reads nothing. `auth` used any other way,
+  and a value of the page's own file, are refused outright: no entry can excuse them, so such a page authorizes.
 - A component from an installed package, SSSB's kit or a `'use client'` module is out of the check's sight, as a
   helper in another module is. A server component of your own (in the app, or a workspace package it links or reaches
   by a path or an alias) is named instead, since it may load its own data: load the data in the page,

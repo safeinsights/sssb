@@ -217,8 +217,9 @@ export interface ScanRoot {
      */
     tsconfig?: string | undefined
     /**
-     * The app's own directory: a component a page renders from a module resolved outside it (or under `node_modules`) is
-     * a package's. Default: `dir`.
+     * The app's own directory: where `@sssb/kit` is resolved from (its real package directory is out of a page's sight,
+     * unless the app sits inside it), where a tsconfig's `paths` are measured from without a `baseUrl` or tsconfig, and
+     * what an installed package's `node_modules` must sit at or above (`isInstalled`). Default: `dir`.
      */
     appDir?: string | undefined
 }
@@ -315,8 +316,9 @@ export function scanRoutes(roots: readonly ScanRoot[], options: ScanOptions = {}
 
 /**
  * Every page, layout and metadata route under every root (PAGE_FILE), each with its exports Next calls (PAGE_EXPORTS)
- * analysed as reads; a `'use client'` file has none. Matched by URL as a route is (`exemptRel`), and refused under an
- * intercepting segment, as a route is (safeinsights/sssb#221).
+ * analysed as reads; a `'use client'` COMPONENT file has none (a metadata route is judged whatever its prologue).
+ * Matched by URL as a route is (`exemptRel`). A page under an intercepting segment is judged, marked `intercepting` so
+ * that no exemption applies to it, where a route there is refused outright (safeinsights/sssb#221).
  */
 export function scanPages(roots: readonly ScanRoot[], options: ScanOptions = {}): ScannedRoute[] {
     return scanFiles(roots, options, true)
@@ -434,8 +436,9 @@ export function unreadRouteFiles(dir: string): string[] {
 
 /**
  * Files under `dir` named for a page, layout or metadata route with one extension of code the scan does not read
- * (`page.mts`, `layout.cjs`, `page.mdx`, `default.md`): Next serves it for a `pageExtensions` entry, which the scan does
- * not read, so it may be a page nobody checked. Only `<name>.<extension>`: a file with a middle segment (`page.css.ts`,
+ * (`.mts`, `.cts`, `.cjs`, `.mdx` or `.md`: `page.mts`, `layout.cjs`, `page.mdx`, `default.md`): Next serves it for a
+ * `pageExtensions` entry, so it may be a page nobody checked. (An app whose `next.config` sets `pageExtensions` at all
+ * fails the check itself: `scanApp`.) Only `<name>.<extension>`: a file with a middle segment (`page.css.ts`,
  * `layout.styles.ts`, `page.spec.e2e.ts`) is a module of its own, and an asset (`page.module.css`, a static `icon.png`,
  * `manifest.json`, `robots.txt`) is not code. A private folder (`_lib`) is not walked, as Next routes nothing in it.
  */
@@ -1098,8 +1101,9 @@ class RootScanner {
 
     /**
      * A page's handlers: each export Next calls (PAGE_EXPORTS), through re-exports, analysed as a read with the page
-     * allowances. None for a `'use client'` file, or for an export whose function is in one (re-exported from it): a
-     * client component runs in the browser, and reaches data only through routes, which are judged.
+     * allowances. None for a `'use client'` COMPONENT file, or for an export whose function is in one (re-exported from
+     * it): a client component runs in the browser, and reaches data only through routes, which are judged. A metadata
+     * route is judged whatever its prologue: it runs on the server.
      */
     pageHandlers(file: string): Handler[] {
         const src = this.load(file)
@@ -2477,7 +2481,9 @@ const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
  * still read nothing. Pages only: a route keeps INERT_IMPORTS alone. Each is a case nearly every page of an app on SSSB
  * has, and none carries org-scoped data. Refuse by default: an entry here is named with the case it serves, and the
  * decision log's 2026-11-27 entry for `fix/authz-pages` lists them. Anything else a page names (the seed, the simulated
- * world, a port, a data helper, a value of its own file) authorizes, or is named by the app's own `reads-only` entry.
+ * world, a port, a data helper) authorizes, or is named by the app's own `reads-only` entry. A value of the page's own
+ * file, and `auth` or `routing` used any other way than PAGE_MEMBERS lists, are refused outright: no entry can excuse
+ * them.
  */
 const PAGE_IMPORTS: Readonly<Record<string, readonly string[]>> = {
     // The catalog and the locale: what every page reads to render its copy in the request's language (a layout's
@@ -2671,7 +2677,7 @@ function outsideNamesOf(
     }
     /**
      * Counts a non-inert declaration from outside the handler under its name, or refuses it. Only an IMPORT counts: under
-     * its exported name (a default import under its local one). Nothing of the route's own file does (but the primitive
+     * its exported name (never a default import, which has no exported name). Nothing of the route's own file does (but the primitive
      * consts reading nothing allows): an object, a function or any other value there can be filled or changed by code
      * of the file the scan does not walk, the handler's own callers included, as four rounds of review showed. A shared
      * value goes in a module, and the gate lists its import.

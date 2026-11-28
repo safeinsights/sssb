@@ -985,13 +985,18 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
         expect(fine.failures).toEqual([])
     })
 
-    it('covers the pages under an outsideApi prefix entry too', async () => {
+    it('covers the pages under an outsideApi prefix entry too, which fail without it', async () => {
         const SEED =
             "import { findTenant } from '../../../../seed'\nexport default function P() { return findTenant('x') }\n"
         const exemptions = `export default { outsideApi: { prefixes: { 'public/': ${readsOnly(['findTenant'])} } } }\n`
-        const scan = await scanApp(app({ 'public/about/page.tsx': SEED }, exemptions))
+        const scan = await scanApp(app({ 'public/about/page.tsx': SEED, 'public/team/page.tsx': SEED }, exemptions))
         expect(scan.failures).toEqual([])
         expect(scan.exemptionProblems).toEqual([])
+        const without = await scanApp(app({ 'public/about/page.tsx': SEED, 'public/team/page.tsx': SEED }))
+        expect(without.failures).toEqual([
+            expect.stringMatching(/^acme: \.\.\/public\/about\/page\.tsx default .*it names `findTenant`/),
+            expect.stringMatching(/^acme: \.\.\/public\/team\/page\.tsx default .*it names `findTenant`/),
+        ])
     })
 
     it('fails a file named like a page with an extension the scan does not read, and leaves assets and tests alone', async () => {
@@ -1078,5 +1083,22 @@ describe('round-3 review of the page scan (safeinsights/sssb#221)', () => {
         expect(
             (await scanApp(withConfig('next.config.ts', 'export default { reactStrictMode: true }\n'))).failures,
         ).toEqual([])
+    })
+})
+
+describe('the unread-file guards walk no private folder (safeinsights/sssb#221)', () => {
+    it('fails an unread route or page file in a routed folder, and leaves one in a _ folder alone', async () => {
+        const scan = await scanApp(
+            app({
+                'x/route.mts': 'export {}\n',
+                '_lib/route.mts': 'export {}\n',
+                'y/page.mdx': '# y\n',
+                '_docs/page.mdx': '# d\n',
+            }),
+        )
+        expect(scan.failures.map((failure) => failure.split(' ')[1]).sort()).toEqual([
+            'src/app/x/route.mts',
+            'src/app/y/page.mdx',
+        ])
     })
 })
