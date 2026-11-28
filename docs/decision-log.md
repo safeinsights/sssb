@@ -9374,3 +9374,27 @@ drain lists for half its window" above), the sweep's own window (#268), and migr
 - **Merge mechanics.** `drain-budget.ts` (the passes and the hints' `listOne` shape, `{ rows, nextDue }`), `jobs.ts`
   (both imports) and the module count in `adopting-reference.md` (99 on `int-followups`, plus `due-hints.ts` and the `0022` migration: 101)
   conflicted. #287's drain tests now return `{ rows }`.
+- **Review of the merged branch** (one Opus round, one Fable security pass, the merge changing the design). Neither
+  found a hint that can hide due work, or a way across tenants (Fable probed a cross-tenant insert and a tenant move
+  as `app_user`, the 0018 organizations writes, temp-schema shadowing of the function and a direct call, all refused).
+  Fixed here:
+    - **Both: a tenant's first raise waited on its open transaction.** The raise's update path skips a locked row,
+      but creating a missing row is an `INSERT … ON CONFLICT DO NOTHING`, which waits on another transaction's
+      uncommitted insert of the same key (the trigger's "unknown"); a probe waited 3 s. The worst case was the first
+      tick after the migration, when every tenant's raise is a create. Migration 0022 now writes every existing tenant
+      an "unknown" row per drain, so the raises after it update. The insert path remains only for a tenant created
+      since, on its first raise per drain, while a write of its own is open. Rejected: skipping the raise when the row
+      is missing, which would list such a tenant every tick until it wrote something; a `lock_timeout`, which needs a
+      transaction (four Data API calls a raise, the cost the single-statement raise removed).
+    - **Fable: the owner's queries named `due_hints` unqualified,** so a temporary table `app_user` created on a pooled
+      pg connection could stand in for it on that connection's next owner query (probed). `tenantsToList` and
+      `raiseHint` now go through `withSchema('public')`. Arbitrary SQL as `app_user` is already worse than this, so
+      it is hardening.
+    - **Fable: no proof that a refused cross-tenant write leaves the other tenant's hint alone.** `rls-proofs.ts` now
+      moves a schedule to the other tenant as `app_user`, sees RLS refuse it, and checks that tenant's hint unchanged.
+      Accepted, as before: writes of one tenant that make work due sooner queue on that tenant's hint row until they
+      commit (the version bump the compare-and-set needs), and two of its transactions touching two drains' hints in
+      opposite order can deadlock (Fable reproduced it), within that tenant only.
+      Proofs: the backfill on a database migrated to 0021 with tenants (`due-hints.test.ts`), the temporary table not
+      standing in (same), the refused cross-tenant move (`rls-proofs.ts`, every transport). Removing the backfill or the
+      qualification turns its test red.

@@ -12,5 +12,5 @@
 when each of the scheduled tick's drains may next find work. It also adds one `SECURITY DEFINER` trigger function,
 `sssb_note_due`, and triggers on `job_schedules`, `webhook_deliveries` and `jobs` that keep the table current.
 `app_user` has no privilege on the table or the function. The migrator applies it on its next run, after any app
-migrations a database has already run, which the order-independence rule allows. The first tick after it lists every
-tenant once, as before, and records their hints.
+migrations a database has already run, which the order-independence rule allows. It writes every existing tenant's hints
+as "unknown", so the first tick after it lists every tenant once, as before, and records their hints.

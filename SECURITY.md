@@ -92,11 +92,14 @@ the interesting reports are about that shape being wrong:
     tick); only the migration owner, the role the server connects as, reads and writes it. Database
     triggers keep it current through one `SECURITY DEFINER` function, `sssb_note_due`, with its
     `search_path` pinned and `EXECUTE` revoked from `PUBLIC` and from `app_user`. It writes only from the row being
-    written, which RLS has already confined to the writer's tenant, and it only ever lowers a hint.
+    written, which RLS has already confined to the writer's tenant, and it only ever lowers a hint. The owner's own
+    reads and writes of it name `public.due_hints`, so a temporary table of that name on a pooled connection cannot
+    stand in for it.
     The framework's RLS proofs (`packages/kit/src/db/rls-proofs.ts`) assert that `app_user` can
     neither read nor write the table nor call the function, read from the catalog as well as tried
     (privileges, `prosecdef`, the pinned `search_path`), and that its own write still lowers its
-    tenant's hint. A way to read or write `due_hints` as `app_user`, or to make the function write a
+    tenant's hint while a write naming another tenant, which RLS refuses, leaves that tenant's hint as it was. A
+    way to read or write `due_hints` as `app_user`, or to make the function write a
     row for another tenant, is in scope.
 
 - **Authorization.** `authorize()` is the single choke point for resource-level decisions. A build-time
