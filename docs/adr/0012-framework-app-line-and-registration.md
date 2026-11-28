@@ -1277,7 +1277,7 @@ directive, so it is neither an action nor accepted by reference, and an escaped 
 whose name a page counts. A module-level `const` of the page's file is still refused, by design (code of the file can change it); its
 failure now names the ways through, inline or a module the entry lists.
 
-**A read that reads nothing passes under a required gate.** `service/`'s gate (the handler is `withServiceCaller`'s
+**A route's read that reads nothing passes under a required gate.** `service/`'s gate (the handler is `withServiceCaller`'s
 call) was checked before the reads-nothing pass, so an inline-headers CORS `OPTIONS` under `api/service/` failed with
 no way through. A read that names nothing but inert values reads no data, so the wrapper that builds the actor it would
 authorize adds nothing: the pass now comes first. Every other read there, and every mutation, still needs the wrapper.

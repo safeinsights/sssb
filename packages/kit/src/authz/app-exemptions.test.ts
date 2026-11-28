@@ -585,9 +585,33 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
             ),
         )
         expect(scan.failures).toEqual([
-            expect.stringMatching(/It imports `corsHeaders` from 'acme-cors' \(a module no pin can name/),
+            expect.stringMatching(
+                /It imports `corsHeaders` from 'acme-cors' \(a module that does not resolve: install it, or check the specifier\), which the gate pins to acme-cors\./,
+            ),
         ])
-        expect(scan.exemptionProblems).toHaveLength(1)
+        // The entry's problem says the module is missing, and does not send the author to import from it.
+        expect(scan.exemptionProblems).toEqual([
+            "acme/authz-exemptions.mjs: files `cors/route.ts` pins `corsHeaders` to acme-cors, but src/app/api/cors/route.ts imports it from 'acme-cors' (a module that does not resolve: install it, or check the specifier), so it cannot answer to its pin",
+        ])
+    })
+
+    it('reports no pin problem for a name the map only inherits, such as `toString`', async () => {
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'src/cors.ts' })} } }\n`
+        const scan = await scanApp(
+            app(
+                {
+                    '../cors.ts':
+                        "export const corsHeaders = { allow: 'GET' }\nexport function toString() { return '' }\n",
+                    'api/cors/route.ts':
+                        "import { corsHeaders, toString } from '../../../cors'\n" +
+                        'export function OPTIONS() { return new Response(toString(), { headers: corsHeaders }) }\n',
+                },
+                exemptions,
+            ),
+        )
+        // The read fails for the unlisted name, and the entry has nothing to say about a name it never listed.
+        expect(scan.failures).toEqual([expect.stringMatching(/It names `toString`, which the gate does not list\./)])
+        expect(scan.exemptionProblems).toEqual([])
     })
 
     it('does not let a nearer node_modules swap a package under its pin', async () => {

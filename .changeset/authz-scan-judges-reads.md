@@ -43,6 +43,6 @@ A GET under `src/app/api/webhooks/` that neither authorizes nor reads nothing pa
 webhook guard (`withWebhookSecret`, `withMailgunSignature` or `withStandardWebhookSignature`), the gate of SSSB's
 `webhooks/` exemption. An app's own
 entry cannot replace that gate, but for one: a provider's verification handshake (a GET that checks a token and
-echoes a challenge) that is not wrapped can have a `reads-only` entry for its own file, listing the imports it reads
+echoes a challenge) that is not wrapped can have a `reads-only` entry for its own file, mapping each import it reads to its module
 (see the reads-only gate's entry in these notes). A public read outside `src/app/api` (a feed, a sitemap route) can
 have one too, under the exemptions file's `outsideApi` key.

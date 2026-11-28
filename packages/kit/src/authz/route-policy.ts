@@ -116,9 +116,10 @@ export const EXEMPT_FILES: Readonly<Record<string, Exemption>> = {
 }
 
 /**
- * Gates a handler under a prefix, read or mutation, must pass IN ADDITION to reaching authorize(...). A read that
- * reads nothing (./route-scan.ts `readsNothing`) passes without one: it reads no data, so it has no actor to authorize,
- * and the wrapper that builds the actor adds nothing (an inline-headers CORS preflight). Authorizing an
+ * Gates a handler under a prefix, read or mutation, must pass IN ADDITION to reaching authorize(...). A route's read
+ * handler that reads nothing (./route-scan.ts `readsNothing`) passes without one: it reads no data, so it has no actor
+ * to authorize, and the wrapper that builds the actor adds nothing (an inline-headers CORS preflight). A page under the
+ * prefix still needs it (`judgePage` asks for the gate first). Authorizing an
  * actor means something only if the actor came from a verified credential: `authorize(` alone is satisfied
  * just as well by a `{ kind: 'machine', credential: { kind: 'service-key' } … }` literal built from the
  * request. So a service handler must also BE the wrapper call that verifies its caller and BUILDS that

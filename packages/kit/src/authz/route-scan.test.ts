@@ -77,7 +77,7 @@ function reading(names: Record<string, string | string[]>): Pick<HandlerFacts, '
         outsideSources: new Map(
             Object.entries(names).map(([name, modules]) => [
                 name,
-                [modules].flat().map((module) => ({ specifier: module, pins: [module] })),
+                [modules].flat().map((module) => ({ specifier: module, resolves: true, pins: [module] })),
             ]),
         ),
     }
@@ -2229,7 +2229,9 @@ describe('the names a read refers to from outside itself, for a reads-only gate 
             'GET',
         )
         // './cors' does not resolve here, so the import answers to no pin: a relative specifier is never one.
-        expect([...(facts.outsideSources ?? [])]).toEqual([['corsHeaders', [{ specifier: './cors', pins: [] }]]])
+        expect([...(facts.outsideSources ?? [])]).toEqual([
+            ['corsHeaders', [{ specifier: './cors', resolves: false, pins: [] }]],
+        ])
         expect(
             names("export function GET() { const { ['constructor']: F } = () => 1; return Response.json(F) }"),
         ).toBeNull()
@@ -2440,7 +2442,7 @@ describe('judging a handler against a policy', () => {
         expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/other.ts'] })), 'GET')).toBe(false)
         expect(gateHolds(gate, facts(reading({ corsHeaders: ['src/cors.ts', 'src/cors.ts'] })), 'GET')).toBe(true)
         // A pin is matched against what the import answers to, any one of them.
-        const answers = { specifier: '@/cors', pins: ['@/cors', 'src/cors.ts', 'src/lib/cors.ts'] }
+        const answers = { specifier: '@/cors', resolves: true, pins: ['@/cors', 'src/cors.ts', 'src/lib/cors.ts'] }
         expect(
             gateHolds(
                 gate,
@@ -2514,7 +2516,7 @@ describe('judging a handler against a policy', () => {
             ),
         ).toMatch(/It names `db`, which the gate does not list\./)
         // A listed name from another module than its pin is named with the module it came from, and the pin.
-        const elsewhere = { specifier: '@/lib/posts', pins: ['@/lib/posts', 'src/lib/posts.ts'] }
+        const elsewhere = { specifier: '@/lib/posts', resolves: true, pins: ['@/lib/posts', 'src/lib/posts.ts'] }
         expect(
             judge(
                 route('feed/route.ts'),

@@ -9113,13 +9113,18 @@ Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its modul
   `judgeServerAction`'s message names the always-rethrow exception the guide has.
 - **Proofs.** `route-scan.test.ts` ("the page shapes the authorization review found failing") and
   `app-exemptions.test.ts` (the pin's matching rules, a nearer `node_modules`, the malformed formats, a page handing on
-  an unauthorized action that still fails as an action). Each new guard was mutated and seen red: each of the three
-  allow-list entries, the attribute-value test, the `src`, `node_modules`, prologue, body and missing-export checks of
-  the action test, the reads-nothing order (and narrowing it to reads), the pin check (ignored, `some` for `every`, an
-  unplaced source passing, an inherited key), each source of a pin (the specifier resolved from the app, a relative
-  one, a `node_modules` path, the resolved and the declaring file), each of `isGate`'s and `isPin`'s refusals, and the
-  entry's pin and unused-name problems. Three refusals that turned out equivalent (an array of names, an empty pin, a
-  leading `/`: each already fails another check) were dropped rather than kept untested.
+  an unauthorized action that still fails as an action). Each new guard was mutated and seen red: each of the two
+  allow-list entries, and putting `headers` and `cookies` back; the attribute-value test and its attribute parent; the
+  `src`, `node_modules`, prologue, body and missing-export checks of the action test, and the raw-text directive match;
+  the reads-nothing order (and narrowing it to reads); the pin check (ignored, `some` for `every`, an unplaced source
+  passing, an inherited key, in the gate and in the entry's problem); each source of a pin (the specifier resolved from
+  the app and from the file, an unresolved one, one spelled as an app file's path, a `node_modules` path, the resolved
+  file, and the declaring file under the listed name); each of `isGate`'s and `isPin`'s refusals; and the entry's pin
+  and unused-name problems. Five checks that turned out equivalent were dropped rather than kept untested, each
+  because another check already refuses what it would: `isGate`'s refusal of an array of names (an array's keys are
+  never identifiers), `isPin`'s refusals of an empty pin and of a leading `/` (each has an empty segment), and
+  `pinsOf`'s refusals of a relative and of an absolute specifier as a specifier pin (no pin with a `.`, `..` or empty
+  segment can be written to match one).
 - **Review round (an Opus round and a Fable pass, no realistic bypass), fixed here:**
     - The declaring-file pin ignored which export it was: a barrel's `export { secretRows as corsHeaders } from './cors'`
       (or the import-then-export form) passed `names: { corsHeaders: 'src/lib/cors.ts' }`. `declaringBinding` now

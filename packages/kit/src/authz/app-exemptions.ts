@@ -351,12 +351,17 @@ function staleAppExemptions(
                     for (const source of sources.filter((s) => !s.pins.includes(pin))) {
                         const at = `${n}\0${source.specifier}\0${route.file}`
                         if (elsewhere.has(at)) continue
+                        // A pin that is the import's own specifier, unresolved: the module is missing, not another one.
+                        const missing = !source.resolves && source.specifier === pin
                         elsewhere.set(
                             at,
                             `${label}: ${key(kind, rel)} pins \`${n}\` to ${pin}, but ${shown(route)} imports it from ` +
-                                `${describeSource(source)}: the entry's reason was written for the module it pins, ` +
-                                `so it does not cover another. Import the name from ${pin}, or, only if the reason ` +
-                                'covers the module the read imports, pin that one',
+                                `${describeSource(source)}` +
+                                (missing
+                                    ? ', so it cannot answer to its pin'
+                                    : ": the entry's reason was written for the module it pins, so it does not cover " +
+                                      `another. Import the name from ${pin}, or, only if the reason covers the module ` +
+                                      'the read imports, pin that one'),
                         )
                     }
                 }

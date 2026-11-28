@@ -256,14 +256,15 @@ export type Gate =
     | { kind: 'reads-only'; names: Readonly<Record<string, string>> }
 
 /**
- * Where one name a handler reads comes from (`HandlerFacts.outsideSources`): the import's specifier, and the pins a
- * `reads-only` gate may give the name and hold for this import (`RootScanner.pinsOf`):
+ * Where one name a handler reads comes from (`HandlerFacts.outsideSources`): the import's specifier, whether it
+ * resolves, and the pins a `reads-only` gate may give the name and hold for this import (`RootScanner.pinsOf`):
  *
- * - the specifier itself, when it is not relative (a package's `next/headers`, `@sssb/kit/adapters/fake/auth`, or an
- *   alias's `@/seed`), it resolves, and from the app's directory to the file it resolves to here (so a `node_modules`
- *   nearer the importing file cannot swap the module under the pin, and an uninstalled package answers to nothing),
- *   and it is not the path of a file in the app (that string is a path pin only, below, so a tsconfig `paths` entry
- *   spelled like one cannot answer to it);
+ * - the specifier itself (a package's `next/headers`, `@sssb/kit/adapters/fake/auth`, or an alias's `@/seed`), when it
+ *   resolves, and from the app's directory to the file it resolves to here (so a `node_modules` nearer the importing
+ *   file cannot swap the module under the pin, and an uninstalled package answers to nothing), and it is not the path
+ *   of a file in the app (that string is a path pin only, below, so a tsconfig `paths` entry spelled like one cannot
+ *   answer to it). A relative or absolute specifier may land here too, but no pin can be written to match it: a pin
+ *   has no `.`, `..` or empty segment (`isPin` in ./route-policy.ts);
  * - the app-relative path, `/`-separated and with its extension, of the file the import resolves to, and of the file
  *   that declares the export (followed through re-exports) when it declares it under the name imported (a barrel's
  *   `export { rows as corsHeaders }` leaves `corsHeaders` the barrel's): `src/seed/index.ts`, `src/lib/cors.ts`. Only a
@@ -271,6 +272,8 @@ export type Gate =
  */
 export interface ImportSource {
     specifier: string
+    /** The specifier resolves from the importing file. */
+    resolves: boolean
     pins: readonly string[]
 }
 
@@ -805,6 +808,9 @@ function readsOnlyShortfall(gate: Extract<Gate, { kind: 'reads-only' }>, facts: 
 
 /** An import's module as a failure names it: the specifier, and the file it lands on in the app, if it does. */
 export function describeSource(source: ImportSource): string {
+    if (!source.resolves) {
+        return `'${source.specifier}' (a module that does not resolve: install it, or check the specifier)`
+    }
     const [file] = source.pins.filter((pin) => pin !== source.specifier)
     if (file !== undefined) return `'${source.specifier}' (${file})`
     return source.pins.includes(source.specifier)
@@ -1158,17 +1164,16 @@ class RootScanner {
      * resolves to from `from`, and is not itself the path of a file in the app; the app-relative path of that file; and
      * that of the file declaring the export, when it declares it under the name imported.
      */
-    private pinsOf(from: Source, specifier: string, name: string): string[] {
+    private pinsOf(from: Source, specifier: string, name: string): ImportSource {
         const pins = new Set<string>()
         const resolvedFrom = (file: string) =>
             ts.resolveModuleName(specifier, file, this.resolution, ts.sys).resolvedModule?.resolvedFileName
         const resolved = resolvedFrom(from.fileName)
-        // A specifier pin: not relative, resolving (from the app's directory as from the file, to one file), and not
-        // the path of a file in the app, which is a path pin only, so a `paths` entry spelled like a path
-        // (`"src/*": ["./evil/*"]`) cannot answer to the pin of the file it names.
+        // A specifier pin: resolving (from the app's directory as from the file, to one file), and not the path of a
+        // file in the app, which is a path pin only, so a `paths` entry spelled like a path (`"src/*": ["./evil/*"]`)
+        // cannot answer to the pin of the file it names. A relative or absolute specifier needs no test here: no pin can
+        // be written to match one (`isPin`).
         if (
-            !/^\.\.?(?:\/|$)/.test(specifier) &&
-            !path.isAbsolute(specifier) &&
             resolved !== undefined &&
             resolvedFrom(path.join(this.appDir, 'package.json')) === resolved &&
             !isFile(path.join(this.appDir, specifier))
@@ -1193,7 +1198,7 @@ class RootScanner {
             const rel = file === undefined ? undefined : inApp(file)
             if (rel !== undefined) pins.add(rel)
         }
-        return [...pins]
+        return { specifier, resolves: resolved !== undefined, pins: [...pins] }
     }
 
     /**
@@ -1518,10 +1523,7 @@ class RootScanner {
                     : new Map(
                           [...sources].map(([name, specifiers]): [string, ImportSource[]] => [
                               name,
-                              [...specifiers].map((specifier) => ({
-                                  specifier,
-                                  pins: this.pinsOf(node.src, specifier, name),
-                              })),
+                              [...specifiers].map((specifier) => this.pinsOf(node.src, specifier, name)),
                           ]),
                       )
             return {
@@ -2669,7 +2671,7 @@ const INERT_IMPORTS: Readonly<Record<string, readonly string[]>> = {
  * THE PAGE ALLOW-LIST (safeinsights/sssb#221): the named imports a PAGE's export may name, besides INERT_IMPORTS, and
  * still read nothing. Pages only: a route keeps INERT_IMPORTS alone. Each is a case nearly every page of an app on SSSB
  * has, and none carries org-scoped data. Refuse by default: an entry here is named with the case it serves, and the
- * decision log's 2026-11-27 entry for `fix/authz-pages` lists them. Anything else a page names (the seed, the simulated
+ * decision log's 2026-11-27 entries for `fix/authz-pages` and `fix/review-page-shapes` list them. Anything else a page names (the seed, the simulated
  * world, a port, a data helper) authorizes, or is named by the app's own `reads-only` entry. A value of the page's own
  * file, and `auth` or `routing` used any other way than PAGE_MEMBERS lists, are refused outright: no entry can excuse
  * them.
