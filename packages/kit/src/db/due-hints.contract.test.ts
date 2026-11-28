@@ -239,7 +239,7 @@ describe('the due hints at a size, on real Postgres with its statistics', () => 
         expect(hint, 'not set: listed again next tick').toEqual([])
     }, 300_000)
 
-    test('forty thousand tenants with events and no hints: the read is a probe a tenant, and its bound holds over all its pages', async () => {
+    test('forty thousand tenants listed through their events: the read is a probe a tenant, and its bound holds over all its pages', async () => {
         const admin = realDb.getDb()
         const now = new Date()
         await sql`DELETE FROM due_hint_events`.execute(admin)
@@ -248,10 +248,15 @@ describe('the due hints at a size, on real Postgres with its statistics', () => 
             INSERT INTO tenants (slug, name) SELECT 'many-' || g, 'Many ' || g FROM generate_series(1, 38500) g
         `.execute(admin)
         try {
-            // Every tenant wrote work due in twelve hours since it was last listed, and none has a hint yet.
+            // Every tenant's hint is hours off, and every tenant has since written work now due: each is listed through
+            // the probe of its events, on twenty pages.
+            await sql`
+                INSERT INTO due_hints (tenant_id, drain, list_after, version)
+                SELECT id, 'retries', ${new Date(now.getTime() + 6 * 3_600_000)}::timestamptz, 1 FROM tenants
+            `.execute(admin)
             await sql`
                 INSERT INTO due_hint_events (tenant_id, drain, due)
-                SELECT id, 'retries', ${new Date(now.getTime() + 12 * 3_600_000)}::timestamptz FROM tenants
+                SELECT id, 'retries', ${new Date(now.getTime() - 3_600_000)}::timestamptz FROM tenants
             `.execute(admin)
             for (const table of ['tenants', 'due_hints', 'due_hint_events'])
                 await sql`ANALYZE ${sql.table(table)}`.execute(admin)
@@ -267,13 +272,15 @@ describe('the due hints at a size, on real Postgres with its statistics', () => 
             try {
                 started = Date.now()
                 await tenantsToList(realDb, 'retries', now, { deadline: Date.now() + 100 })
-                expect(Date.now() - started).toBeLessThan(1_500)
+                // It stops within a page of its bound, well before every page: under half the full read's time.
+                expect(Date.now() - started).toBeLessThan(elapsed / 2)
             } finally {
                 warn.mockRestore()
             }
         } finally {
             await sql`DELETE FROM tenants WHERE slug LIKE 'many-%'`.execute(admin)
             await sql`DELETE FROM due_hint_events`.execute(admin)
+            await sql`DELETE FROM due_hints`.execute(admin)
         }
     }, 300_000)
 })
