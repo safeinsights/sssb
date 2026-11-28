@@ -2457,9 +2457,16 @@ describe('judging a handler against a policy', () => {
                 false,
             )
         }
-        // A key the map inherits is no listed name.
+        // A key the map inherits is no listed name, and the failure says it is not listed.
         const inherited = facts(reading({ toString: 'src/cors.ts' }))
-        expect(gateHolds({ kind: 'reads-only', names: {} }, inherited, 'GET')).toBe(false)
+        expect(gateHolds(gate, inherited, 'GET')).toBe(false)
+        expect(
+            judge(
+                { root: 'r', rel: 'cors/route.ts', file: '/x/cors/route.ts', handlers: [] },
+                { verb: 'GET', facts: inherited },
+                { ...policy, exemptFiles: { 'cors/route.ts': { reason: 'cors', mustMatch: gate } } },
+            ),
+        ).toMatch(/It names `toString`, which the gate does not list\./)
     })
 
     it('a reads-only exact entry applies to reads; a mutation at its path falls to the prefix it sits under', () => {

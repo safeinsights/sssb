@@ -688,7 +688,9 @@ export function judgeServerAction(action: ScannedAction): string | undefined {
         `does one whose denial cannot reach the action: in an async function or a callback whose promise it neither ` +
         `awaits nor returns, or in a try whose catch does not rethrow (the useActionState shape, ` +
         `\`try { authorize(...); … } catch (e) { return { error } }\`, swallows the denial). Call authorize(...) first, ` +
-        `before any try (or in a function in this file that it calls, awaiting it if it is async).`
+        `before any try but one whose catch always rethrows (\`catch (error) { throw error instanceof ForbiddenError ? ` +
+        `new NotFoundError() : error }\`, the app guide's shape for a two-sided subject), or in a function in this file ` +
+        `that it calls, awaiting it if it is async.`
     )
 }
 

@@ -729,7 +729,11 @@ describe("the fix review's verdict (X3, X9, X10, X11)", () => {
                     "export async function save() { try { authorize(user, 'depot', 'create', { type: 'Docket', orgId: 'depot' }); return { ok: true } } catch (e) { return { error: String(e) } } }\n",
             }),
         )
-        expect(scan.failures).toEqual([expect.stringMatching(/try whose catch does not rethrow.*before any try/)])
+        expect(scan.failures).toEqual([
+            expect.stringMatching(
+                /try whose catch does not rethrow.*before any try but one whose catch always rethrows/,
+            ),
+        ])
     })
 
     it('X11: two links per level to the same directory are walked once, so a deep tree stays quick', async () => {

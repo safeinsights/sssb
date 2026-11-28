@@ -158,10 +158,9 @@ export function isGate(gate: unknown): gate is Gate {
     if (typeof gate !== 'object' || gate === null || !('kind' in gate)) return false
     if (gate.kind === 'opens-with-simulated-404') return true
     if (gate.kind === 'reads-only') {
-        // A map of an import's exported name (not a dotted callee) to the module it is pinned to (`isPin`).
-        if (!('names' in gate) || typeof gate.names !== 'object' || gate.names === null || Array.isArray(gate.names)) {
-            return false
-        }
+        // A map of an import's exported name (not a dotted callee) to the module it is pinned to (`isPin`). The list
+        // this used to be fails too: an array's keys are its indexes, never identifiers.
+        if (!('names' in gate) || typeof gate.names !== 'object' || gate.names === null) return false
         const entries = Object.entries(gate.names)
         return entries.length > 0 && entries.every(([name, module]) => /^[A-Za-z_$][\w$]*$/.test(name) && isPin(module))
     }
@@ -181,7 +180,7 @@ export function isGate(gate: unknown): gate is Gate {
  * specifier would mean another module from each importing file, so it is never one.
  */
 function isPin(module: unknown): module is string {
-    if (typeof module !== 'string' || module === '' || module.trim() !== module) return false
-    if (module.startsWith('/') || module.includes('\\')) return false
+    if (typeof module !== 'string' || module.trim() !== module || module.includes('\\')) return false
+    // An empty segment refuses an empty pin, a leading `/` and a doubled one alike.
     return module.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..')
 }
