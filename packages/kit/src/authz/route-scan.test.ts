@@ -3805,7 +3805,7 @@ describe('round-1 review of the page scan (safeinsights/sssb#221)', () => {
         )
         expect(why).toContain(
             'the inert values a read route may name, `getLocale`, `getMessages`, `getTranslations`, `setRequestLocale` ' +
-                '(next-intl/server), `use` (react), `headers` (next/headers), `hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
+                '(next-intl/server), `use` (react), `hasLocale`, `useTranslations` (next-intl), `canInActiveOrg` (@sssb/kit/authz/authorize), `isDemoMode` ' +
                 '(@sssb/kit/adapters/index), `sameOriginPath` (@sssb/kit/core/same-origin-path), `getTenantTheme` ' +
                 '(@sssb/kit/theme), `mantineHtmlProps` (@mantine/core), `auth.getCurrentUser()`, `auth.listMyOrgs()`, ' +
                 '`auth.refusal()`, `auth.requireUser()`, `auth.signInPath()` (@sssb/kit/adapters/index; `auth` itself, or ' +
@@ -4323,7 +4323,7 @@ describe('round-3 review of the page scan: asset and package allowances narrowed
 })
 
 describe('the page shapes the authorization review found failing (Z1), and a preflight under service/ (Z4)', () => {
-    it('passes React `use`, `getLocale` and `headers()`: request-scoped readers that carry no org data', () => {
+    it('passes React `use` and `getLocale`: request-scoped readers that carry no org data', () => {
         expect(
             pageDefault(
                 "import { use } from 'react'\nimport { useTranslations } from 'next-intl'\n" +
@@ -4335,11 +4335,19 @@ describe('the page shapes the authorization review found failing (Z1), and a pre
         ).toBe('reads nothing')
         expect(
             pageDefault(
-                "import { getLocale } from 'next-intl/server'\nimport { headers } from 'next/headers'\n" +
-                    'export default async function P() { const l = await getLocale(); const h = await headers()\n' +
-                    '  return <p>{l}{h.get("user-agent")}</p> }\n',
+                "import { getLocale } from 'next-intl/server'\n" +
+                    'export default async function P() { const l = await getLocale()\n  return <p>{l}</p> }\n',
             ),
         ).toBe('reads nothing')
+    })
+
+    it('counts `headers()` and `cookies()`: the request headers carry the Cookie and Authorization credential', () => {
+        expect(
+            pageDefault(
+                "import { headers } from 'next/headers'\n" +
+                    'export default async function P() { return <p>{(await headers()).get("cookie")}</p> }\n',
+            ),
+        ).toBe('names: headers')
     })
 
     it('holds each to its module and name: `cookies` (the session) and a look-alike `use` are counted', () => {
@@ -4398,6 +4406,8 @@ describe('the page shapes the authorization review found failing (Z1), and a pre
             '{String(saveItem)}',
             '<Glue {...{ action: saveItem }} />',
             '<Glue action={[saveItem]} />',
+            // A JSX child is no attribute: rendered, not handed on.
+            '<div>{saveItem}</div>',
         ]) {
             expect(pageDefault(handsOn('./src/actions', `<form action={saveItem} />${jsx}`), files), jsx).toBe(
                 'names: saveItem',
@@ -4420,6 +4430,10 @@ describe('the page shapes the authorization review found failing (Z1), and a pre
 
     it("counts an action the Server Action walk does not judge: outside src, a package's, or a plain re-export", () => {
         expect(pageDefault(handsOn('./lib/actions'), { 'lib/actions.ts': ACTION })).toBe('names: saveItem')
+        // A workspace package's action, outside the app's directory: the Server Action walk never reads it.
+        expect(
+            pageDefault(handsOn('../workspace-actions/actions'), { '../workspace-actions/actions.ts': ACTION }),
+        ).toBe('names: saveItem')
         expect(pageDefault(handsOn('./src/node_modules/acts'), { 'src/node_modules/acts/index.ts': ACTION })).toBe(
             'names: saveItem',
         )
@@ -4443,6 +4457,36 @@ describe('the page shapes the authorization review found failing (Z1), and a pre
                 'src/actions.ts': "'use server'\nexport async function other() { return 1 }\n",
             }),
         ).toBe('names: saveItem')
+    })
+
+    it("matches 'use server' by its source text: an escaped one is no directive, so no action to hand on", () => {
+        for (const escaped of ["'use\\x20server'", '"use\\u0020server"', "'use \\\nserver'"]) {
+            const files = { 'src/actions.ts': `${escaped}\nexport async function saveItem() { return 1 }\n` }
+            expect(pageDefault(handsOn('./src/actions'), files), escaped).toBe('names: saveItem')
+            const inline = {
+                'src/inline.ts': `export async function saveItem() { ${escaped}\n  return 1 }\n`,
+            }
+            expect(pageDefault(handsOn('./src/inline'), inline), escaped).toBe('names: saveItem')
+        }
+        // Double quotes are the directive too.
+        expect(
+            pageDefault(handsOn('./src/actions'), {
+                'src/actions.ts': '"use server"\nexport async function saveItem() { return 1 }\n',
+            }),
+        ).toBe('reads nothing')
+    })
+
+    it("matches 'use client' by its source text too: an escaped one leaves a server component, which is counted", () => {
+        expect(
+            pageDefault("import { Card } from './card'\nexport default function P() { return <Card /> }\n", {
+                'card.tsx': "'use\\x20client'\nexport async function Card() { return null }\n",
+            }),
+        ).toBe('names: Card')
+        expect(
+            pageDefault("import { Card } from './card'\nexport default function P() { return <Card /> }\n", {
+                'card.tsx': '"use client"\nexport function Card() { return null }\n',
+            }),
+        ).toBe('reads nothing')
     })
 
     it('keeps refusing a module-level const of the page file, and names the ways through', () => {

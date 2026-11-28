@@ -513,6 +513,83 @@ describe('reads-only entries: a way through for reads that touch no org data (sa
         expect(await verdict('@/lib/cors', '@/lib')).toBe(false)
     })
 
+    it("holds the declaring-file pin to the export it names: a barrel's rename is the barrel's export", async () => {
+        const route =
+            "import { corsHeaders } from '../../../lib'\nexport function OPTIONS() { return new Response(null, { headers: corsHeaders }) }\n"
+        const cors =
+            "export const corsHeaders = { allow: 'GET' }\nexport async function secretRows(org?: string) { return [org] }\n"
+        const verdict = async (barrel: string, pin: string, own = cors) => {
+            const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: pin })} } }\n`
+            const scan = await scanApp(
+                app({ '../lib/cors.ts': own, '../lib/index.ts': barrel, 'api/cors/route.ts': route }, exemptions),
+            )
+            return [...scan.failures, ...scan.exemptionProblems]
+        }
+        // `secretRows` renamed on the way is not cors.ts's `corsHeaders`, in either form; the barrel itself is pinnable.
+        for (const barrel of [
+            "export { secretRows as corsHeaders } from './cors'\n",
+            "import { secretRows } from './cors'\nexport { secretRows as corsHeaders }\n",
+        ]) {
+            expect(await verdict(barrel, 'src/lib/cors.ts'), barrel).toEqual([
+                expect.stringMatching(
+                    /It imports `corsHeaders` from '\.\.\/\.\.\/\.\.\/lib' \(src\/lib\/index\.ts\), which the gate pins to src\/lib\/cors\.ts/,
+                ),
+                expect.stringMatching(
+                    /pins `corsHeaders` to src\/lib\/cors\.ts, but src\/app\/api\/cors\/route\.ts imports it from/,
+                ),
+            ])
+            expect(await verdict(barrel, 'src/lib/index.ts'), barrel).toEqual([])
+        }
+        // A plain re-export keeps the name, and so does cors.ts's own local rename: cors.ts exports `corsHeaders`.
+        expect(await verdict("export { corsHeaders } from './cors'\n", 'src/lib/cors.ts')).toEqual([])
+        expect(
+            await verdict(
+                "export { corsHeaders } from './cors'\n",
+                'src/lib/cors.ts',
+                "const headers = { allow: 'GET' }\nexport { headers as corsHeaders }\n",
+            ),
+        ).toEqual([])
+    })
+
+    it('keeps a path pin a path: a tsconfig `paths` entry spelled like the file cannot answer to it', async () => {
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'src/lib/cors.ts' })} } }\n`
+        const scan = await scanApp(
+            app(
+                {
+                    '../lib/cors.ts': "export const corsHeaders = { allow: 'GET' }\n",
+                    '../../evil/lib/cors.ts': 'export async function corsHeaders(org?: string) { return [org] }\n',
+                    '../../tsconfig.json': JSON.stringify({ compilerOptions: { paths: { 'src/*': ['./evil/*'] } } }),
+                    'api/cors/route.ts':
+                        "import { corsHeaders } from 'src/lib/cors.ts'\nexport function OPTIONS() { return new Response(null, { headers: corsHeaders }) }\n",
+                },
+                exemptions,
+            ),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(
+                /It imports `corsHeaders` from 'src\/lib\/cors\.ts' \(evil\/lib\/cors\.ts\), which the gate pins to src\/lib\/cors\.ts/,
+            ),
+        ])
+        expect(scan.exemptionProblems).toHaveLength(1)
+    })
+
+    it('pins no specifier that does not resolve: an uninstalled package answers to nothing', async () => {
+        const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'acme-cors' })} } }\n`
+        const scan = await scanApp(
+            app(
+                {
+                    'api/cors/route.ts':
+                        "import { corsHeaders } from 'acme-cors'\nexport function OPTIONS() { return new Response(null, { headers: corsHeaders }) }\n",
+                },
+                exemptions,
+            ),
+        )
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/It imports `corsHeaders` from 'acme-cors' \(a module no pin can name/),
+        ])
+        expect(scan.exemptionProblems).toHaveLength(1)
+    })
+
     it('does not let a nearer node_modules swap a package under its pin', async () => {
         const exemptions = `export default { files: { 'cors/route.ts': ${readsOnly({ corsHeaders: 'acme-cors' })} } }\n`
         const pkg = (dir: string, body: string) => ({
@@ -1266,6 +1343,21 @@ describe('the unread-file guards walk no private folder (safeinsights/sssb#221)'
 })
 
 describe('a page that hands on a Server Action, which is judged on its own (Z1)', () => {
+    it("judges no action behind an escaped 'use server', and counts the name on the page that hands it on", async () => {
+        const scan = await scanApp(
+            app({
+                '[locale]/form/page.tsx':
+                    "import { saveItem } from '../../../lib/actions'\nexport default function P() { return <form action={saveItem} /> }\n",
+                '../lib/actions.ts':
+                    "'use\\x20server'\nexport async function saveItem(form: FormData) { return form }\n",
+            }),
+        )
+        expect(scan.actions).toEqual([])
+        expect(scan.failures).toEqual([
+            expect.stringMatching(/^acme: \.\.\/\[locale\]\/form\/page\.tsx default .*it names `saveItem`/),
+        ])
+    })
+
     it('passes the page, and fails the action that does not authorize', async () => {
         const scan = await scanApp(
             app({

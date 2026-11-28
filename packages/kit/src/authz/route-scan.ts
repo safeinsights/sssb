@@ -260,11 +260,14 @@ export type Gate =
  * `reads-only` gate may give the name and hold for this import (`RootScanner.pinsOf`):
  *
  * - the specifier itself, when it is not relative (a package's `next/headers`, `@sssb/kit/adapters/fake/auth`, or an
- *   alias's `@/seed`) and it resolves from the app's directory to the file it resolves to here, so a `node_modules`
- *   nearer the importing file cannot swap the module under the pin;
+ *   alias's `@/seed`), it resolves, and from the app's directory to the file it resolves to here (so a `node_modules`
+ *   nearer the importing file cannot swap the module under the pin, and an uninstalled package answers to nothing),
+ *   and it is not the path of a file in the app (that string is a path pin only, below, so a tsconfig `paths` entry
+ *   spelled like one cannot answer to it);
  * - the app-relative path, `/`-separated and with its extension, of the file the import resolves to, and of the file
- *   that declares the export (followed through re-exports): `src/seed/index.ts`, `src/lib/cors.ts`. Only a file inside
- *   the app's directory and not through a `node_modules` has one.
+ *   that declares the export (followed through re-exports) when it declares it under the name imported (a barrel's
+ *   `export { rows as corsHeaders }` leaves `corsHeaders` the barrel's): `src/seed/index.ts`, `src/lib/cors.ts`. Only a
+ *   file inside the app's directory and not through a `node_modules` has one.
  */
 export interface ImportSource {
     specifier: string
@@ -543,16 +546,22 @@ function isSourceFile(name: string): boolean {
     return /\.(?:[cm]?[jt]sx?)$/.test(name) && !/\.d\.[cm]?ts$/.test(name)
 }
 
-/** Whether `statements` opens with a `'use server'` directive (a string-literal statement in the prologue). */
-function hasUseServer(statements: readonly ts.Statement[]): boolean {
-    return hasDirective(statements, 'use server')
+/** Whether `statements` (of `sf`) open with a `'use server'` directive (`hasDirective`). */
+function hasUseServer(sf: ts.SourceFile, statements: readonly ts.Statement[]): boolean {
+    return hasDirective(sf, statements, 'use server')
 }
 
-/** Whether `statements` opens with the directive `text` (a string-literal statement in the prologue). */
-function hasDirective(statements: readonly ts.Statement[], text: string): boolean {
+/**
+ * Whether `statements` (of `sf`) open with the directive `text`: a string-literal statement in the prologue whose RAW
+ * source text is `'text'` or `"text"`. As ECMAScript matches `'use strict'`, an escaped or continued one
+ * (`'use\x20server'`) is a prologue string but not the directive, so it is matched by its source, not its value; the
+ * text pre-filter of `declaresServerActions` then agrees with it.
+ */
+function hasDirective(sf: ts.SourceFile, statements: readonly ts.Statement[], text: string): boolean {
     for (const statement of statements) {
         if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) return false
-        if (statement.expression.text === text) return true
+        const raw = sf.text.slice(statement.expression.getStart(sf), statement.expression.end)
+        if (raw === `'${text}'` || raw === `"${text}"`) return true
     }
     return false
 }
@@ -568,11 +577,11 @@ function declaresServerActions(file: string): boolean {
     }
     if (!text.includes('use server')) return false
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, false)
-    let found = hasUseServer(sf.statements)
+    let found = hasUseServer(sf, sf.statements)
     const visit = (node: ts.Node): void => {
         if (found) return
         if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
-            if (hasUseServer(node.body.statements)) found = true
+            if (hasUseServer(sf, node.body.statements)) found = true
         }
         ts.forEachChild(node, visit)
     }
@@ -1085,12 +1094,13 @@ class RootScanner {
             else {
                 const target = this.resolve(from, specifier)
                 if (typeof target === 'string') answer = false
-                else if (name === undefined) answer = hasDirective(target.sf.statements, 'use client')
+                else if (name === undefined) answer = hasDirective(target.sf, target.sf.statements, 'use client')
                 else {
                     // Follow the export to the module that declares it: a server barrel's re-export of a client
                     // component is the client component.
                     const binding = this.exportNamed(target, name, new Set())
-                    if (binding?.kind === 'decl') answer = hasDirective(binding.src.sf.statements, 'use client')
+                    if (binding?.kind === 'decl')
+                        answer = hasDirective(binding.src.sf, binding.src.sf.statements, 'use client')
                     else if (binding?.kind === 'module') {
                         answer = this.isRenderable(binding.src, binding.specifier, binding.name, seen)
                     }
@@ -1125,8 +1135,10 @@ class RootScanner {
         from: Source,
         specifier: string,
         name: string,
-    ): Extract<Binding, { kind: 'decl' }> | undefined {
+    ): { binding: Extract<Binding, { kind: 'decl' }>; exported: string } | undefined {
         let binding: Binding | undefined = { kind: 'module', src: from, specifier, name }
+        /** The name the declaring module exports it under: the last link's, after every rename on the way. */
+        let exported = name
         const seen = new Set<string>()
         while (binding?.kind === 'module') {
             const target = this.resolve(binding.src, binding.specifier)
@@ -1134,23 +1146,34 @@ class RootScanner {
             const key = `${target.fileName}\0${binding.name}`
             if (seen.has(key)) return undefined
             seen.add(key)
+            exported = binding.name
             binding = this.exportNamed(target, binding.name, new Set())
         }
-        return binding?.kind === 'decl' ? binding : undefined
+        return binding?.kind === 'decl' ? { binding, exported } : undefined
     }
 
     /**
      * The pins a `reads-only` gate may give the export `name` of `specifier`, imported from `from`, and hold
-     * (`ImportSource`): the specifier when it is not relative and resolves from the app's directory to the file it
-     * resolves to from `from`; the app-relative path of that file; and that of the file declaring the export.
+     * (`ImportSource`): the specifier when it is not relative, resolves from the app's directory to the file it
+     * resolves to from `from`, and is not itself the path of a file in the app; the app-relative path of that file; and
+     * that of the file declaring the export, when it declares it under the name imported.
      */
     private pinsOf(from: Source, specifier: string, name: string): string[] {
         const pins = new Set<string>()
         const resolvedFrom = (file: string) =>
             ts.resolveModuleName(specifier, file, this.resolution, ts.sys).resolvedModule?.resolvedFileName
         const resolved = resolvedFrom(from.fileName)
-        if (!/^\.\.?(?:\/|$)/.test(specifier) && !path.isAbsolute(specifier)) {
-            if (resolvedFrom(path.join(this.appDir, 'package.json')) === resolved) pins.add(specifier)
+        // A specifier pin: not relative, resolving (from the app's directory as from the file, to one file), and not
+        // the path of a file in the app, which is a path pin only, so a `paths` entry spelled like a path
+        // (`"src/*": ["./evil/*"]`) cannot answer to the pin of the file it names.
+        if (
+            !/^\.\.?(?:\/|$)/.test(specifier) &&
+            !path.isAbsolute(specifier) &&
+            resolved !== undefined &&
+            resolvedFrom(path.join(this.appDir, 'package.json')) === resolved &&
+            !isFile(path.join(this.appDir, specifier))
+        ) {
+            pins.add(specifier)
         }
         const inApp = (file: string): string | undefined => {
             const rel = path
@@ -1162,7 +1185,11 @@ class RootScanner {
                 ? undefined
                 : rel
         }
-        for (const file of [resolved, this.declaringBinding(from, specifier, name)?.src.fileName]) {
+        // The declaring file answers only for the export the pin names: a barrel's `export { rows as corsHeaders }`
+        // makes `corsHeaders` the barrel's, not the file that declares `rows`.
+        const declaring = this.declaringBinding(from, specifier, name)
+        const declared = declaring?.exported === name ? declaring.binding.src.fileName : undefined
+        for (const file of [resolved, declared]) {
             const rel = file === undefined ? undefined : inApp(file)
             if (rel !== undefined) pins.add(rel)
         }
@@ -1179,13 +1206,13 @@ class RootScanner {
      * anything else exported, are not one.
      */
     private isJudgedServerAction(from: Source, specifier: string, name: string): boolean {
-        const binding = this.declaringBinding(from, specifier, name)
+        const binding = this.declaringBinding(from, specifier, name)?.binding
         if (binding === undefined) return false
         const real = realpathOrUndefined(binding.src.fileName)
         const srcDir = realpathOrUndefined(path.join(this.appDir, 'src'))
         if (real === undefined || srcDir === undefined || !real.startsWith(srcDir + path.sep)) return false
         if (real.split(path.sep).includes('node_modules')) return false
-        if (hasUseServer(binding.src.sf.statements)) return true
+        if (hasUseServer(binding.src.sf, binding.src.sf.statements)) return true
         const decl = binding.decl
         const fn = ts.isFunctionDeclaration(decl)
             ? decl
@@ -1197,7 +1224,7 @@ class RootScanner {
             (ts.isFunctionDeclaration(fn) || isFunctionLiteral(fn)) &&
             fn.body !== undefined &&
             ts.isBlock(fn.body) &&
-            hasUseServer(fn.body.statements)
+            hasUseServer(binding.src.sf, fn.body.statements)
         )
     }
 
@@ -1269,11 +1296,11 @@ class RootScanner {
         if (typeof src === 'string') return [{ verb: '*', refusal: src }]
         // A metadata route runs on the server whatever its prologue says, so it is never skipped as a client file.
         const component = !METADATA_FILE.test(path.basename(file))
-        if (component && hasDirective(src.sf.statements, 'use client')) return []
+        if (component && hasDirective(src.sf, src.sf.statements, 'use client')) return []
         return this.judgedExports(src, new Set(), PAGE_EXPORTS).flatMap(([verb, binding]): Handler[] => {
             const node = this.handlerOf(binding, new Set())
             if ('reason' in node) return [{ verb, refusal: node.reason }]
-            if (component && hasDirective(node.src.sf.statements, 'use client')) return []
+            if (component && hasDirective(node.src.sf, node.src.sf.statements, 'use client')) return []
             return [{ verb, facts: this.facts(node, true) }]
         })
     }
@@ -1283,7 +1310,7 @@ class RootScanner {
         const src = this.load(file)
         if (typeof src === 'string') return [{ name: '*', handler: { verb: 'action', refusal: src } }]
         const out: Array<{ name: string; handler: Handler }> = []
-        if (hasUseServer(src.sf.statements)) {
+        if (hasUseServer(src.sf, src.sf.statements)) {
             const { named, stars } = exportsOf(src)
             for (const [name, binding] of named) {
                 const node = this.handlerOf(binding, new Set())
@@ -1302,7 +1329,7 @@ class RootScanner {
         }
         const visit = (node: ts.Node): void => {
             if (ts.isFunctionLike(node) && 'body' in node && node.body && ts.isBlock(node.body)) {
-                if (hasUseServer(node.body.statements)) {
+                if (hasUseServer(src.sf, node.body.statements)) {
                     const fn = node as ts.FunctionLikeDeclaration
                     const line = src.sf.getLineAndCharacterOfPosition(fn.getStart(src.sf)).line + 1
                     const label = fn.name && ts.isIdentifier(fn.name) ? fn.name.text : 'inline'
@@ -2655,9 +2682,8 @@ const PAGE_IMPORTS: Readonly<Record<string, readonly string[]>> = {
     // React's `use`, as next-intl's documented sync page unwraps its params (`const { locale } = use(params)`): it only
     // unwraps the promise or context it is handed, and that value's own names are judged where the page writes them.
     react: ['use'],
-    // The request's own headers: what the client sent (a user agent, a language, a forwarded host), no org data. Not
-    // `cookies`, which carries the session: a page reaches the session through `auth` (PAGE_MEMBERS) alone.
-    'next/headers': ['headers'],
+    // Not `headers` or `cookies` (`next/headers`): the request's headers carry its Cookie and Authorization, the
+    // session's credential, which a page could render into its HTML. A page that reads them names them in its entry.
     // The locale layout's check that the URL's locale segment is one the app serves: a function of its two arguments.
     // `useTranslations` is the same catalog read, in a component that is not async.
     'next-intl': ['hasLocale', 'useTranslations'],
@@ -2972,8 +2998,10 @@ function outsideNamesOf(
                     return memberUse(id, imported.name, members)
                 }
                 // An imported Server Action handed on by reference, a JSX attribute's whole value (`<form
-                // action={saveItem}>`, `<Form action={saveItem} />`): not called here, so nothing of it runs in the
-                // render, and the scan judges it on its own as the POST it is. Called, or used any other way, it counts.
+                // action={saveItem}>`, `<Form action={saveItem} />`). The page does not call it, though a component it
+                // hands it to may, even during the render; either way the scan judges it on its own as the POST it is,
+                // so it must reach authorize itself (any reachable authorize: ADR-0012's may-reach limit). Called by
+                // the page, or used any other way, it counts.
                 if (
                     imported?.kind === 'named' &&
                     isJsxAttributeValue(id) &&
