@@ -350,9 +350,29 @@ describe('the Clerk adapter, reading the person once per server render', () => {
         ['setActiveOrg', ({ realAuth }) => realAuth.setActiveOrg('org-2')],
         ['the identity source, current', ({ clerkIdentitySource }) => clerkIdentitySource.current()],
         ['the identity source, account', ({ clerkIdentitySource }) => clerkIdentitySource.account('user_1')],
-    ])('%s calls Clerk for nothing while keyless mode is on outside a production build', async (_, call) => {
+    ])('%s calls Clerk for nothing under next dev with keyless mode on, or with no secret key', async (_, call) => {
+        const adapter = await import('./auth')
+        vi.stubEnv('NODE_ENV', 'development')
         vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '')
-        await expect(call(await import('./auth'))).rejects.toThrow(/NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/)
+        await expect(call(adapter)).rejects.toThrow(/NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/)
+        vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '1')
+        vi.stubEnv('CLERK_SECRET_KEY', '')
+        await expect(call(adapter)).rejects.toThrow(/Set CLERK_SECRET_KEY/)
         expect([h.authCalls, h.clientCalls, h.calls]).toEqual([0, 0, []])
     })
+
+    // safeinsights/sssb#222's review, A3: a job program, an ops script or a test run is not `next dev`.
+    it.each([['test'], [undefined]])(
+        'a process with the secret key and NODE_ENV %s, no flag, reads the person and lists a team',
+        async (nodeEnv) => {
+            vi.stubEnv('NODE_ENV', nodeEnv)
+            vi.stubEnv('NEXT_PUBLIC_CLERK_KEYLESS_DISABLED', '')
+            h.user = PAT
+            h.myMemberships = [myMembership(1, 'admin')]
+            h.orgMembers = [member(1, 'member')]
+            const { realAuth } = await import('./auth')
+            expect((await realAuth.getCurrentUser())?.role).toBe('admin')
+            expect(await realAuth.listMembers('depot')).toHaveLength(1)
+        },
+    )
 })

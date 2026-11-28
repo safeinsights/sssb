@@ -834,13 +834,15 @@ domain" is a proof.
 SSSB's file opens with a worked row — closed, dated, owned, with a proof column that was thought through
 rather than restated. Read it once for the level of detail each row deserves before you fill in your own.
 
-**Running real mode under `next dev`.** Set `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1` wherever real mode runs outside
-a production build (the showcase's `dev:real` in SSSB's repository does). Outside one, Clerk's keyless fallback
-would read request data under a key Clerk publishes, so on a path your proxy's matcher skips a forged
-`x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter refuses to read a
-session or call Clerk's Backend API there until the variable and `CLERK_SECRET_KEY` are set, and names what is
-missing when it refuses. A production build (`next build`, then
-`next start`) needs nothing.
+**Running real mode under `next dev`.** Set `NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1` for the whole of your `dev:real`
+script, the preflight included (the showcase's, in SSSB's repository, exports it first). Under `next dev`
+(`NODE_ENV=development`) Clerk's keyless fallback would read request data under a key Clerk publishes, so on a path your
+proxy's matcher skips a forged `x-clerk-auth-*` header could sign anyone in (safeinsights/sssb#193); SSSB's Clerk adapter
+refuses to read a session or call Clerk's Backend API there until the variable is set, and also in any process with no
+`CLERK_SECRET_KEY`, and names what is missing when it refuses. A production build (`next build`, then `next start`) needs
+nothing, and neither does another process with the secret key set, such as a job program on CodeBuild or an ops script.
+`sssb check-real-env` reports it: as a failure if it runs with `NODE_ENV=development`, and otherwise as a `notice:` saying
+what `next dev` would do.
 
 ### Ports your app does not use
 

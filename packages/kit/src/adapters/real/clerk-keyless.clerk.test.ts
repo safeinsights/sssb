@@ -198,3 +198,48 @@ describe("forged request data on a request that reads no session: Clerk's Backen
         expect(sent).toEqual([])
     })
 })
+
+// safeinsights/sssb#222's review, A3: the guard refuses what Clerk leaves open and no more. What it lets through, a job
+// program or an ops script or a test run with the secret key set, is a process Clerk itself refuses the same forgeries in.
+describe('what the guard lets through is refused by Clerk itself: the secret key set, and not NODE_ENV=development', () => {
+    it.each([['test'], ['production'], [undefined]])(
+        'with NODE_ENV %s and the flag unset, a forgery under the keyless key fails to decrypt: Clerk throws, SSSB does not stand in the way',
+        async (nodeEnv) => {
+            vi.stubEnv('NODE_ENV', nodeEnv)
+            const { clerkKeylessProblem } = await import('./clerk-keyless')
+            expect(clerkKeylessProblem({ ...process.env })).toBeNull()
+            const { auth } = await import('@clerk/nextjs/server')
+            await expect(auth()).rejects.toThrow(/encryption key/i)
+            // The adapter reaches Clerk, whose own refusal is what answers (not the guard's).
+            const { realAuth } = await import('./auth')
+            await expect(realAuth.getCurrentUser()).rejects.toThrow(/encryption key/i)
+        },
+    )
+
+    it('the keyless fallback is what NODE_ENV=development adds: Clerk signs the forgery in, and the guard refuses it', async () => {
+        vi.stubEnv('NODE_ENV', 'development')
+        const { auth } = await import('@clerk/nextjs/server')
+        expect((await auth()).userId).toBe('user_victim')
+        const { clerkKeylessProblem } = await import('./clerk-keyless')
+        expect(clerkKeylessProblem({ ...process.env, NODE_ENV: 'development' })).toMatch(
+            /NEXT_PUBLIC_CLERK_KEYLESS_DISABLED=1/,
+        )
+    })
+
+    it('a production process with no secret key at all is forgeable too, which is why the guard asks for the key in every NODE_ENV', async () => {
+        vi.stubEnv('NODE_ENV', 'production')
+        vi.stubEnv('CLERK_SECRET_KEY', '')
+        const token = forgedToken()
+        // No request data: Clerk checks the token header's signature against its secret key, which is empty.
+        h.headers = new Headers({
+            'x-clerk-auth-status': 'signed-in',
+            'x-clerk-auth-token': token,
+            'x-clerk-auth-signature': createHmac('sha1', '').update(token).digest('hex'),
+            'x-clerk-clerk-url': 'http://localhost:3000/en/some.page',
+        })
+        const { auth } = await import('@clerk/nextjs/server')
+        expect((await auth()).userId).toBe('user_victim')
+        const { realAuth } = await import('./auth')
+        await expect(realAuth.getCurrentUser()).rejects.toThrow(/Set CLERK_SECRET_KEY/)
+    })
+})
