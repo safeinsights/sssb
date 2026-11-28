@@ -8549,8 +8549,7 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
     - Both runners' sweeps take tenants in a fresh random order (the drains' `shuffled`) and stop judging once the budget
       is spent: before each tenant, each BatchGetBuilds call and each failure. What a sweep leaves, the next tick's sweep
       finds; nothing it skips is lost, since a lost job stays lost.
-    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the
-      schedules at least four seconds of theirs.
+    - The schedules' window still ends 6 s after the tick's start, so a sweep that uses its whole window leaves the schedules about four seconds of theirs (the sweep's last judgment may run a little past its deadline).
     - `lazyJobs` passes the budget through. A sweep called with no budget judges everything, as before.
     - Not changed: the sweep still lists every tenant once a tick within its window (the drains' due hints,
       safeinsights/sssb#263, do not extend to it).
