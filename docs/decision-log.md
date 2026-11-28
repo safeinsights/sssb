@@ -9091,6 +9091,7 @@ dev", and the framework's own `digest-email` job, which calls `ctx.auth.listMemb
   already broken (every Backend API call and sign-in fails), and a format check can refuse a legitimate key. (3) A notice
   from a preflight run with `NODE_ENV=production` that is then followed by `next dev`: it fails closed on the first
   request, and a production-looking preflight is not the `dev:real` this notice speaks for.
+
 ## A drain lists for half its window; a retry that may have started is left to the sweep (2026-11-28, `fix/review-drains-and-retry-start`)
 
 Two findings of the whole-branch review of `int-fixes` before 0.10.0, both where #217's bounded drains, #238's retries
