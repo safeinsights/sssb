@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { ForbiddenError } from '@sssb/kit/ports/errors'
 import type { AuthUser } from '@sssb/kit/ports/auth'
 import OrgPage from './page'
 
 // The real authorize runs (pure abilities, the showcase's seam); only the adapters are faked.
-const h = vi.hoisted(() => ({ getCurrentUser: vi.fn(), listMembers: vi.fn() }))
+const h = vi.hoisted(() => ({ getCurrentUser: vi.fn(), listMembers: vi.fn(), redirect: vi.fn() }))
 vi.mock('@sssb/kit/adapters/index', () => ({
     auth: { getCurrentUser: h.getCurrentUser, listMembers: h.listMembers, signInPath: () => '/signin' },
 }))
 vi.mock('next/navigation', () => ({
-    redirect: () => {
+    redirect: (to: string) => {
+        h.redirect(to)
         throw new Error('NEXT_REDIRECT')
     },
 }))
@@ -46,9 +46,10 @@ describe('the org page', () => {
         expect(page.props.members).toEqual(MEMBERS)
     })
 
-    test('refuses a person placed in the org without standing (the role none), before the member list is read', async () => {
+    test('sends a person placed in the org without standing (the role none) to their profile, never reading the members', async () => {
         h.getCurrentUser.mockResolvedValue(user({ role: 'none', restricted: true }))
-        await expect(OrgPage({ params: Promise.resolve({ locale: 'en' }) })).rejects.toBeInstanceOf(ForbiddenError)
+        await expect(OrgPage({ params: Promise.resolve({ locale: 'en' }) })).rejects.toThrow('NEXT_REDIRECT')
+        expect(h.redirect).toHaveBeenCalledWith('/en/profile')
         expect(h.listMembers).not.toHaveBeenCalled()
     })
 })

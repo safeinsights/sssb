@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { ForbiddenError } from '@sssb/kit/ports/errors'
 import type { AuthUser } from '@sssb/kit/ports/auth'
 import DashboardPage from './page'
 
@@ -57,9 +56,11 @@ describe('the dashboard (safeinsights/sssb#259)', () => {
         expect(h.listMembers).toHaveBeenCalledWith('frontline')
     })
 
-    test('refuses a person placed in the org without standing (the role none), before the member list is read', async () => {
+    test('sends a person placed in the org without standing (the role none) to their profile, never reading the members', async () => {
         h.getCurrentUser.mockResolvedValue(user({ role: 'none', restricted: true }))
-        await expect(render()).rejects.toBeInstanceOf(ForbiddenError)
+        // Next's redirect throws its own NEXT_REDIRECT, which it answers with a redirect, not an error page.
+        await expect(render()).rejects.toThrow('NEXT_REDIRECT')
+        expect(h.redirect).toHaveBeenCalledWith('/en/profile')
         expect(h.listMembers).not.toHaveBeenCalled()
     })
 

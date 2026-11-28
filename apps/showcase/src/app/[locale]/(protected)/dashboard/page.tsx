@@ -10,9 +10,12 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
     const user = await auth.getCurrentUser()
     if (!user) redirect(`/${locale}${auth.signInPath()}`)
     // The team's member list (the assignee picker below) is org-scoped data, and being placed in the org is not standing
-    // in it: a person without standing (the role `none`) may not read it (safeinsights/sssb#259), so they do not reach
-    // the dashboard, whose every card reads through a route that refuses them too. The list is the active org's, keyed
-    // by its slug, so the slug anchors both sides, as the invite route's Membership check does.
+    // in it: a person without standing (the role `none`) may not read it (safeinsights/sssb#259), and every card here
+    // reads through a route that refuses them too. So they do not reach the dashboard: they go to their own profile, the
+    // one page here that is theirs, until a no-standing screen exists (safeinsights/sssb#265). The check never throws;
+    // authorize, on the path every other request takes, is what holds. The list is the active org's, keyed by its slug,
+    // so the slug anchors both sides, as the invite route's Membership check does.
+    if (!canInActiveOrg(user, 'read', 'Membership')) redirect(`/${locale}/profile`)
     authorize(user, user.orgSlug, 'read', { type: 'Membership', orgId: user.orgSlug })
 
     // Reflect the server-side authorization in the UI. Every registered Ticket ability has a control on
