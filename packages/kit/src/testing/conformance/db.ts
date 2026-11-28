@@ -20,10 +20,13 @@ const migrationPrefix = (name: string): number => Number(/^(\d{4})_/.exec(name)?
 /**
  * The parts of a schema a migration can change and that must not depend on the order it ran in: above
  * all, the tenancy machinery (RLS enabled and FORCED per table, its policies and their roles, app_user's
- * grants down to the column), then shape (columns, constraints, indexes) and code (triggers, functions).
+ * grants down to the column, and what it can reach through the roles it is a member of), then shape (columns, constraints, indexes) and code (triggers, functions).
  */
 export async function schemaOf(db: Kysely<DB>) {
     const rows = async (query: ReturnType<typeof sql>) => (await query.execute(db)).rows
+    // A schema with no app_user (a synthetic registry's) has nothing to reach; the privilege functions would throw.
+    const appUser = (await rows(sql`SELECT 1 FROM pg_roles WHERE rolname = 'app_user'`)).length > 0
+    const ifAppUser = async (query: ReturnType<typeof sql>) => (appUser ? rows(query) : [])
     return {
         rls: await rows(sql`
             SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c
@@ -38,6 +41,26 @@ export async function schemaOf(db: Kysely<DB>) {
         columnGrants: await rows(sql`
             SELECT table_name, column_name, privilege_type FROM information_schema.column_privileges
             WHERE grantee = 'app_user' ORDER BY table_name, column_name, privilege_type`),
+        // What app_user can do, INHERITED included: a grant to a role app_user is a member of (an app's
+        // `GRANT reviewer TO app_user` with a default privilege for reviewer) reaches it as surely as one to it, and
+        // the grant lists above name only app_user.
+        reach: await ifAppUser(sql`
+            SELECT relname, privilege, on_table, on_a_column FROM (
+                SELECT c.relname, p.privilege,
+                    has_table_privilege('app_user', c.oid, p.privilege) AS on_table,
+                    CASE WHEN p.privilege IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
+                        THEN has_any_column_privilege('app_user', c.oid, p.privilege) ELSE false END AS on_a_column
+                FROM pg_class c
+                CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'),
+                    ('TRIGGER')) AS p (privilege)
+                WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'v', 'm', 'p')
+            ) reachable
+            WHERE on_table OR on_a_column
+            ORDER BY 1, 2`),
+        executes: await ifAppUser(sql`
+            SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args FROM pg_proc p
+            WHERE p.pronamespace = 'public'::regnamespace AND has_function_privilege('app_user', p.oid, 'EXECUTE')
+            ORDER BY 1, 2`),
         columns: await rows(sql`
             SELECT table_name, column_name, data_type, is_nullable, column_default
             FROM information_schema.columns WHERE table_schema = 'public'

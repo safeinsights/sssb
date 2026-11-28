@@ -8571,6 +8571,11 @@ listing costs every tenant every tick, whether or not it has anything due. Measu
   serialize on that tenant's hint row for the rest of their transactions. Two such transactions touching two drains in
   opposite orders can deadlock. That is confined to the tenant's own writers and never crosses tenants, and the tick
   takes no part in it.
+    - **Corrected later** (the review of `int-followups`, "Due-hint writes append; the tick alone sets hints" below):
+      the tick did take part, and so it crossed tenants. The tick's own writes that make work due (arming a retry,
+      enqueueing a delivery) waited on a tenant's open transaction holding the row, and its first raise of a tenant
+      with no row waited on that tenant's uncommitted insert, stalling the tick for every tenant. The design no longer
+      has the coupling at all.
 - **What review changed** (Opus rounds 1 and 2, the security review on Fable, then a check of the last fixes as a
   diff):
     - the epoch on a first trigger write;
@@ -9423,3 +9428,94 @@ drain lists for half its window" above), the sweep's own window (#268), and migr
       Proofs: the backfill on a database migrated to 0021 with tenants (`due-hints.test.ts`), the temporary table not
       standing in (same), the refused cross-tenant move (`rls-proofs.ts`, every transport). Removing the backfill or the
       qualification turns its test red.
+
+## Due-hint writes append; the tick alone sets hints; 0022 revokes every grant (2026-11-28, `fix/review-due-hints`)
+
+The whole-branch review of `int-followups` (frozen at 4551899) found three blockers and a vacuous proof in the due
+hints (safeinsights/sssb#202, "The tick lists only the tenants with work due" and "The due hints beside 0.10.0's
+listing share" above). Migration 0022 has not shipped, so it is edited in place.
+
+- **B1 (security): a default privilege reached `due_hints` on an upgrade.** 0022 revoked from `PUBLIC` and `app_user`
+  by name. On an upgraded database it runs after the app's 1001+ migrations, so an app's `ALTER DEFAULT PRIVILEGES
+… GRANT SELECT ON TABLES TO reviewer` with `GRANT reviewer TO app_user` (the guide's own shape) gave `app_user` a
+  cross-tenant read. Nothing gated it: fresh databases run 0022 first, and `migration-order` compared only grants
+  naming `app_user`.
+    - **The fix:** 0022 revokes every grant on its tables (column grants go with `REVOKE ALL`) and its function but the
+      owner's, read from their ACLs, then refuses to finish if `app_user` can still reach them (as a member of the
+      owning role would).
+    - **The gate:** `schemaOf` (conformance `migration-order`) now compares what `app_user` can reach, inherited
+      included: `has_table_privilege` and `has_any_column_privilege` on every public relation, and EXECUTE on every
+      public function. `migrate.test.ts` reproduces the review's case (the real framework migrations plus an app
+      migration with that default privilege, upgraded); it was red before the fix, and the old `schemaOf` passed it,
+      which is the gap. The proofs' catalog check (`rls-proofs.ts`) now reads column privileges too.
+- **B2 (availability across tenants) and B3 (notes): one tenant's open transaction could stall the tick for every
+  tenant.** A trigger lowering a shared hint row held that row's lock until its transaction ended. The tick's first
+  raise of a tenant with no row (an insert) waited on that tenant's uncommitted insert of the same key (K1), and the
+  tick's own writes that make work due (arming a retry in `recordJobStatus`, enqueueing a delivery) waited on a
+  tenant's held row (K2); the review's probes D and E waited 3 s and 2.5 s. One tenant's writes also serialized on
+  each other and could deadlock across drains (B3).
+    - **The fix, a design change:** the trigger no longer touches `due_hints`. It appends a row to a second owner-only
+      table, `due_hint_events` (tenant, drain, due time, the writing transaction's id), which has no unique key, so the
+      append waits on nothing and nothing waits on it. Only the tick writes `due_hints`. A drain reads, in one query,
+      the tenants whose hint or an event has come, with that read's snapshot; lists them; then, in one statement for
+      the drain (chunked at 200 tenants), sets each listed tenant's hint (the epoch if it had rows, else its next due
+      time capped at a day) by compare-and-set on `version`, and deletes up to 500 of that tenant's events the snapshot
+      could see
+      (`pg_visible_in_snapshot`). An event committed after the read survives, so its tenant is listed again; of two
+      overlapping ticks, the one whose read is stale sets nothing and deletes nothing.
+    - **Why not the suggested bounds:** a `lock_timeout` on the tick's trigger-firing writes would turn a wait into a
+      failed retry arm or a failed status write; creating hint rows with the tenant fixes K1 only. Removing the shared
+      lock fixes K1, K2 and B3 together, and no tenant's write now waits because of the hints at all.
+    - **Cost:** an idle tick is still one call a drain (the read). A tick that lists tenants adds one settling
+      statement a drain, where it used to add a raise per tenant with nothing due. Each write that makes work due
+      inserts one event row; the tick deletes them as it lists their tenants.
+    - **Accepted:** events of a tenant whose work is far off stay until it is listed (at its earliest due time, or the
+      day's cap), and a tenant listed with rows is listed once more after its work is done. Events pile up where no
+      hinted tick runs at all (safeinsights/sssb#308).
+    - The decision log's "the tick takes no part in it" and "never crosses tenants" (the lock-coupling line above) were
+      wrong; that entry now says so.
+    - **The notes (B3):** `due-hints-migration.md` now says what a write that makes work due does (one appended row,
+      no wait, no lock another write needs), so there is no serialization or deadlock to warn about.
+- **S1: the proof that `app_user`'s write lowers its hint was vacuous.** The owner had inserted the schedule, so the
+  hint already sat at the epoch, and the proof passed with the triggers dropped. It now asserts that no event at the
+  new time exists, has `app_user` move its schedule earlier, and asserts the event that write appended; dropping the
+  update trigger turns it red. The cross-tenant proof checks the other tenant's events as well as its hint.
+- **Also:** the function's `search_path` is `pg_catalog, pg_temp` (the review's S6: `public` was not needed, every name
+  in the body is qualified).
+- **Proofs.**
+    - `migrate.test.ts`: the B1 upgrade case.
+    - `due-hints.test.ts` (16, with the review's three): every append path (insert, earlier move, re-enable, status-only move, retry armed,
+      delivery enqueued), the tick's advance appending nothing, the hint set to the earliest next due time and capped,
+      an event committed after the read surviving, a stale settle setting and deleting nothing, events consumed for a
+      tenant listed with rows, unreadable hints, temporary tables not standing in.
+    - `db.contract.test.ts` on real Postgres: the review's probes D and E as tests (a hinted drain, and the tick's retry
+      arm, each return in well under a second beside a tenant transaction held open), and a write committed while a
+      drain lists keeping its event.
+    - `rls-proofs.ts` on every transport: both tables refused, inherited and column privileges included, the function,
+      the append by `app_user`'s own write, the refused cross-tenant write.
+    - Mutations, each red in the named tests: no revocation block (B1 test, RLS proofs); the update trigger off (S1's
+      proof, the append tests); deleting every event rather than the snapshot's (the survival test); no
+      compare-and-set (the stale-settle test); listing ignoring events (the drain tests); the old shared-row upsert
+      put back in the trigger (probes D and E, 2.7 s and 3.0 s).
+- **Review of this branch** (one Opus round, one Fable security pass on B1 and B2). Neither found a way to hide due
+  work or to cross tenants; B1 held under seven default-privilege shapes (to `PUBLIC`, globally, with grant option, an
+  odd role name, a non-inheriting membership, a two-level chain) and the owner-membership refusal. Fixed here:
+    - **Opus: a Simulator clock reset could hide a tenant's still-due rows for up to a day.** A tenant listed with rows
+      had its hint set to the tick's `now`, which `resetClock` moves back. It is set to the epoch now, so it is listed
+      again whatever the clock does (the review's probe, as a test).
+    - **Fable: one tenant's piled-up events cost the whole tick** (3M events: a 3.7 s settle inside the shared windows).
+      A settle deletes at most 500 of a tenant's events per drain, read along the events index (`LATERAL … LIMIT`);
+      the rest stay and only mean the tenant is listed again. Deduplicating in the trigger was rejected: a write that
+      skipped its append because an earlier event existed could lose its due time to a settle that deleted that event.
+      Test on real Postgres: 2M events of one tenant, and the next drain still starts another tenant's retry inside a
+      window measured from the tick's start; unbounded, it stops on time.
+    - **Fable: the refusal was pinned by nothing, and its list missed REFERENCES and TRIGGER.** Both: a test upgrades
+      a database where `app_user` is a member of the owning role and sees 0022 refuse.
+    - **Fable: nothing pinned the events table's lack of a unique key**, which is what keeps an append from waiting. A
+      test reads it from the catalog.
+    - The family fence: the two statements live in `family.ts` (`readDueHints`, `settleDueHints`), and the unused
+      `lockRowsNotHeld` is gone.
+      Filed: safeinsights/sssb#308 (events where no hinted tick runs), #309 (events copied from another cluster are never
+      visible, so never deleted: cost only), #310 (a non-inheriting, settable membership of `app_user` is outside every
+      gate; predates this branch). Accepted: a tenant deleted between a read and its settle fails that 200-tenant chunk
+      for one tick, whose tenants are listed again.

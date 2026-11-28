@@ -85,22 +85,28 @@ the interesting reports are about that shape being wrong:
     section is updated too. A way to make any of them leak something beyond the above — to write
     another tenant's team, or to reach tenant CONTENT through them — is very much in scope.
 
-    **One framework table is out of `app_user`'s reach altogether**: `due_hints`
-    (`packages/kit/src/db/migrations/0022_due_hints.ts`), which tells the scheduled tick when each
-    tenant may next have work due. It is cross-tenant and has no RLS, so `app_user` holds no privilege
-    on it (it would tell one tenant when another has work, or let it hide another's work from the
-    tick); only the migration owner, the role the server connects as, reads and writes it. Database
-    triggers keep it current through one `SECURITY DEFINER` function, `sssb_note_due`, with its
-    `search_path` pinned and `EXECUTE` revoked from `PUBLIC` and from `app_user`. It writes only from the row being
-    written, which RLS has already confined to the writer's tenant, and it only ever lowers a hint. The owner's own
-    reads and writes of it name `public.due_hints`, so a temporary table of that name on a pooled connection cannot
-    stand in for it.
-    The framework's RLS proofs (`packages/kit/src/db/rls-proofs.ts`) assert that `app_user` can
-    neither read nor write the table nor call the function, read from the catalog as well as tried
-    (privileges, `prosecdef`, the pinned `search_path`), and that its own write still lowers its
-    tenant's hint while a write naming another tenant, which RLS refuses, leaves that tenant's hint as it was. A
-    way to read or write `due_hints` as `app_user`, or to make the function write a
-    row for another tenant, is in scope.
+    **Two framework tables are out of `app_user`'s reach altogether**: `due_hints` and
+    `due_hint_events` (`packages/kit/src/db/migrations/0022_due_hints.ts`), which tell the scheduled
+    tick when each tenant may next have work due. They are cross-tenant and have no RLS, so `app_user`
+    can reach neither, directly or by inheriting from a role it is a member of (a membership it can only
+    `SET ROLE` to is outside the gates: safeinsights/sssb#310) (they would tell one tenant when
+    another has work, or let it hide another's work from the tick). Migration 0022 revokes every grant
+    on them but the owner's, including any an app migration's default privileges gave (on an upgrade
+    those run first), and refuses to finish if `app_user` can still read, write or
+    reference either table or call the function. Only the migration
+    owner, the role the server connects as, reads and writes them. A database trigger appends to
+    `due_hint_events` through one `SECURITY DEFINER` function, `sssb_note_due`, with its `search_path`
+    pinned (`pg_catalog, pg_temp`) and `EXECUTE` revoked from everyone but the owner. It writes only
+    from the row being written, which RLS has already confined to the writer's tenant. The owner's own
+    reads and writes name `public.`, so a temporary table of the same name on a pooled connection
+    cannot stand in. The framework's RLS proofs (`packages/kit/src/db/rls-proofs.ts`) assert that
+    `app_user` can neither read nor write either table nor call the function, tried and read from the
+    catalog (table and column privileges, inherited included; `prosecdef`; the pinned `search_path`);
+    that its own write appends an event for its tenant; and that a write naming another tenant, which
+    RLS refuses, leaves that tenant's hint and events as they were. The conformance suite's
+    `migration-order` check compares what `app_user` can reach, inherited included, on the upgrade
+    path and a fresh database. A way to read or write either table as `app_user`, or to make the
+    function write a row for another tenant, is in scope.
 
 - **Authorization.** `authorize()` is the single choke point for resource-level decisions. A build-time
   scan fails any mutating API route that neither calls it nor carries a justified exemption.

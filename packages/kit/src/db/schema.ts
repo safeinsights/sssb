@@ -233,13 +233,24 @@ interface ServiceKeysTable {
 // Every existing `import type { DB }` keeps working.
 /**
  * When a tenant may next have work due for one of the tick's drains (0022_due_hints): an owner-only table, never
- * reachable by `app_user`, lowered by triggers and raised by the drain (./due-hints.ts).
+ * reachable by `app_user`, written only by the tick (./due-hints.ts).
  */
 interface DueHintsTable {
     tenant_id: string
     drain: 'schedules' | 'retries' | 'deliveries'
     list_after: Date | string
     version: Generated<string | number>
+}
+
+/**
+ * A write that made a tenant's work due sooner (0022_due_hints): appended by a trigger, deleted by the tick once its
+ * listing has accounted for it. Owner-only, as `due_hints` is.
+ */
+interface DueHintEventsTable {
+    tenant_id: string
+    drain: 'schedules' | 'retries' | 'deliveries'
+    due: Date | string
+    writer: Generated<string>
 }
 
 export interface DB extends AppTables {
@@ -258,4 +269,5 @@ export interface DB extends AppTables {
     agreements: AgreementsTable
     agreement_acceptances: AgreementAcceptancesTable
     due_hints: DueHintsTable
+    due_hint_events: DueHintEventsTable
 }
