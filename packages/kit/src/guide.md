@@ -177,9 +177,10 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `{ kind: 'reads-only', names: { corsHeaders: '@/lib/cors' } }`: the read may then name, besides those inert
   values, only the listed imports (by exported name; not a default import), each from the module the entry pins it to,
   so the reason covers exactly what it reads; every name listed must be in use. A pin is the specifier the import
-  writes when it is not relative (`'next/headers'`, `'@sssb/kit/adapters/fake/auth'`, an alias's `'@/lib/cors'`), or
-  the path from the app's directory, with its extension, of the file the import resolves to or of the one that
-  declares the name (`'src/seed/index.ts'`); an import of the name from any other module fails the read and the entry. The gate holds for a handler that is a function: one exported as a
+  writes when it is not relative and resolves (`'next/headers'`, `'@sssb/kit/adapters/fake/auth'`, an alias's
+  `'@/lib/cors'`), or the path from the app's directory, with its extension, of the file the import resolves to or of
+  the one that declares the name under that name (`'src/seed/index.ts'`); a pin that is the path of a file in the app
+  is only ever a path. An import of the name from any other module fails the read and the entry. The gate holds for a handler that is a function: one exported as a
   wrapper's result (`export const GET = withPortErrors(…)`) cannot use it. A
   value of the route's own file (a headers object, a helper) cannot be listed, since code of the file can change it:
   put it in a module and list the import. Such an
@@ -199,7 +200,8 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `auth.listMyOrgs()`, never `auth` itself, another member of it, or an `auth` from any other module: `auth.listMembers`
   is a team's member list), its copy and locale (`setRequestLocale`, `getTranslations`, `getMessages` and `getLocale`
   from `next-intl/server`, `hasLocale` and `useTranslations` from `next-intl`, `routing.locales`), React's `use` (a sync
-  page's `use(params)`), the request's `headers()` from `next/headers` (never `cookies()`, which carries the session),
+  page's `use(params)`; not `headers()` or `cookies()` from `next/headers`, whose Cookie and Authorization carry the
+  session's credential: a page that reads them names them in its entry, `{ headers: 'next/headers' }`),
   `canInActiveOrg`, `isDemoMode`, `sameOriginPath`, `getTenantTheme`, Mantine's `mantineHtmlProps` and a default-imported stylesheet or
   image named by a relative specifier or a tsconfig `paths` alias, with no `?` or `#`, whose file exists and is not
   code beside one of the same name (a bare specifier, a package's asset included, is never one); a component it only
@@ -209,7 +211,9 @@ preset, SSSB's conformance suite or `sssb doctor`; keep the rest by hand.
   `const { Form } = await import('…')` (alone, or in an awaited `Promise.all`) only to render it; and an imported Server
   Action it only hands on as a JSX attribute's whole value (`<form action={saveItem}>`, never called), declared in a
   `'use server'` module under `src` (a barrel's re-export is followed to it) or opening its own body with
-  `'use server'`, since the check judges the action itself. Anything else it names
+  `'use server'`, written as such (an escaped `'use\x20server'` is no directive). A component it hands the action to may
+  call it, even while rendering; that is safe because the check judges the action itself, which must reach `authorize`
+  on its own path. Anything else it names
   (the seed, a port, a data helper, a server component of your own, in the app or a workspace package) means it
   authorizes, as `src/app/[locale]/(protected)/dashboard/page.tsx` would before reading the team's data, or, only if
   it reads nothing org-scoped, has a `reads-only` entry under `outsideApi` keyed by its file, as `authz-exemptions.mjs`

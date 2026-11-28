@@ -9059,18 +9059,20 @@ Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its modul
 
 - **Seen failing first.** The reviewer's scratch app with four everyday pages failed four times at `cfe96f2`: a sync
   page's `use(params)` ("it names `use`"), a page calling `getLocale()` and `headers()`, a page handing
-  `<Form action={saveItem} />` an imported Server Action, and a module-level `const LINKS = [...]`. After: the first three
-  pass, and the fourth still fails, its message naming the ways through.
-- **The page allow-list, three more entries** (pages only; routes keep INERT_IMPORTS), each named in PAGE_IMPORTS with
+  `<Form action={saveItem} />` an imported Server Action, and a module-level `const LINKS = [...]`. After: the sync page
+  and the action pass, `getLocale` passes, and `headers()` and the `const` still fail by decision, each with its way
+  through (an entry pinning `headers` to `next/headers`; the value inline or in a module).
+- **The page allow-list, two more entries** (pages only; routes keep INERT_IMPORTS), each named in PAGE_IMPORTS with
   its reason:
     - `use` (`react`): next-intl's documented sync page, `const { locale } = use(params)`. `use` only unwraps the
       promise or context it is handed; what it is handed is the page's own parameter or another name, judged where the
       page writes it.
     - `getLocale` (`next-intl/server`): the request's locale. The pages entry above left it out because neither app
       needed it; an adopter's page does.
-    - `headers` (`next/headers`): the request's own headers, what the client sent, no org data.
-    - **Not `cookies`**: it carries the session cookie, and a page reaches the session through `auth`'s listed members
-      alone. No page of either app needs it; a page that does lists it in its entry, pinned to `next/headers`.
+    - **Not `headers` or `cookies`** (`next/headers`). The first draft allowed `headers`; review dropped it:
+      `headers()` returns the Cookie and Authorization headers, the session's credential, so a page could render the
+      token into its HTML with a green scan. No page of either app needs either; a page that does names it in its entry,
+      `names: { headers: 'next/headers' }`, with a reason.
 - **A Server Action handed on by reference.** Only as the whole value of a JSX attribute (`action={saveItem}`,
   `formAction={…}`, any attribute), by a named or default import, when the module that declares it (followed through
   re-exports, the client-component walk reused as `declaringBinding`) is a file under the app's `src`, not through a
@@ -9118,6 +9120,22 @@ Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its modul
   one, a `node_modules` path, the resolved and the declaring file), each of `isGate`'s and `isPin`'s refusals, and the
   entry's pin and unused-name problems. Three refusals that turned out equivalent (an array of names, an empty pin, a
   leading `/`: each already fails another check) were dropped rather than kept untested.
+- **Review round (an Opus round and a Fable pass, no realistic bypass), fixed here:**
+    - The declaring-file pin ignored which export it was: a barrel's `export { secretRows as corsHeaders } from './cors'`
+      (or the import-then-export form) passed `names: { corsHeaders: 'src/lib/cors.ts' }`. `declaringBinding` now
+      returns the name at the end of the re-export chain, and the declaring file answers only when it is the name
+      listed; a plain re-export and the file's own local rename still hold.
+    - An escaped directive, `'use\x20server'`, counted for the by-reference check (the AST's value) while the Server
+      Action walk's text pre-filter skipped the file, so a page could hand on an action nobody judged. Directives are now
+      matched by their raw source text everywhere (`'use client'` too), as ECMAScript matches `'use strict'`, and the
+      pre-filter agrees.
+    - Specifier and path pins shared one namespace: with `paths: { "src/*": ["./evil/*"] }`, the specifier
+      `'src/lib/cors.ts'` answered to the path pin of the real file. A string that is the path of a file in the app is
+      now a path pin only.
+    - An unresolved bare specifier answered to its own text (`undefined === undefined`); a specifier pin now requires it
+      to resolve.
+    - Two mutants had survived: the under-`src` check (its tests' apps had no `src`, so a missing directory refused the
+      action) and the attribute-parent check (no JSX-child case). Both have cases now.
 - **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
   gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
   filed separately.

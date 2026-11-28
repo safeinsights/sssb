@@ -1235,14 +1235,19 @@ names only, so an entry written for `corsHeaders`, a constant headers object, al
 `{ corsHeaders: 'src/lib/cors.ts' }`, and the gate holds only when every import of every listed name answers to its pin.
 An import answers to:
 
-- the specifier it writes, when that specifier is not relative and resolves from the app's own directory to the file it
-  resolves to from the importing file: a package (`'next/headers'`, `'@acme/ui'`, `'@sssb/kit/adapters/fake/auth'`) or
-  an alias (`'@/lib/cors'`). A relative specifier names another module from each importing file, so it is never one; and
-  a `node_modules` nearer the importing file than the app's own cannot swap a package under its pin;
+- the specifier it writes, when that specifier is not relative, resolves, and resolves from the app's own directory to
+  the file it resolves to from the importing file: a package (`'next/headers'`, `'@acme/ui'`,
+  `'@sssb/kit/adapters/fake/auth'`) or an alias (`'@/lib/cors'`). A relative specifier names another module from each
+  importing file, so it is never one; a `node_modules` nearer the importing file than the app's own cannot swap a
+  package under its pin; and an uninstalled package answers to nothing. A specifier that is the path of a file in the
+  app is never a specifier pin: that string is a path pin only, so a tsconfig `paths` entry spelled like a path
+  (`"src/*": ["./evil/*"]`) cannot make `'src/lib/cors.ts'` answer to the file's pin;
 - the path from the app's directory, `/`-separated and with its extension, of the file the import resolves to, and of
-  the file that declares the export, followed through re-exports as the client-component check follows one
-  (`'src/seed/index.ts'`, or `'src/lib/cors.ts'` behind a `src/lib/index.ts` barrel). A file outside the app's
-  directory or through a `node_modules` has no path pin; it is named by its specifier.
+  the file that declares the export under the name imported, followed through re-exports as the client-component check
+  follows one (`'src/seed/index.ts'`, or `'src/lib/cors.ts'` behind a `src/lib/index.ts` barrel). A barrel's
+  `export { secretRows as corsHeaders }` makes `corsHeaders` the barrel's: the file declaring `secretRows` does not
+  answer for it. A file outside the app's directory or through a `node_modules` has no path pin; it is named by its
+  specifier.
 
 An import the scan cannot place answers to nothing, so the gate fails closed. A pin is validated with the entry: a
 non-empty string with no `.` or `..` segment, no leading `/` or `./`, no backslash and no surrounding space, under an
@@ -1256,15 +1261,20 @@ changed before 0.10.0 shipped, so no released app wrote the list.
 edit to `src/lib/cors.ts` that makes `corsHeaders` read rows is still out of sight, as any helper in another module is.
 A package pin trusts the package and its version as a whole. As with every gate, it proves the KIND of read.
 
-**Four page shapes.** The page allow-list grows by three named imports, each a request-scoped reader with no org data:
+**Four page shapes.** The page allow-list grows by two named imports, each a request-scoped reader with no org data:
 React's `use` (next-intl's documented synchronous page unwraps its params with it; `use` only unwraps what it is
-handed, and that value's names are judged), `getLocale` (`next-intl/server`, the request's locale) and `headers`
-(`next/headers`, what the client sent). `cookies` is left out: it carries the session, which a page reads through
-`auth`'s listed members alone. And a page may hand on an imported Server Action by reference, as the whole value of a
-JSX attribute (`<form action={saveItem}>`), when the module that declares it is a `'use server'` file under the app's
-`src`, or its function's own body opens with `'use server'`: the Server Action scan judges it as the POST it is, and
-nothing of it runs in the render. Called, or used any other way, it is counted, as is any other import handed on as a
-prop. A module-level `const` of the page's file is still refused, by design (code of the file can change it); its
+handed, and that value's names are judged) and `getLocale` (`next-intl/server`, the request's locale). Not `headers`
+or `cookies` (`next/headers`): the request's headers carry its Cookie and Authorization, the session's credential, so
+a page could render the credential into its HTML with a green scan; a page that reads them names them in its entry,
+pinned to `next/headers`, with a reason. And a page may hand on an imported Server Action by reference, as the whole
+value of a JSX attribute (`<form action={saveItem}>`), when the module that declares it is a `'use server'` file under
+the app's `src`, or its function's own body opens with `'use server'`. The page does not call it, but a component it
+hands it to may, even during the render; that is safe because the Server Action scan judges the action as the POST it
+is, so it must reach `authorize` itself (with the may-reach limit above: any reachable `authorize` counts). Called by
+the page, or used any other way, it is counted, as is any other import handed on as a prop. A directive (`'use server'`,
+`'use client'`) is matched by its source text, as ECMAScript matches `'use strict'`: an escaped `'use\x20server'` is no
+directive, so it is neither an action nor accepted by reference, and an escaped `'use client'` leaves a server component,
+whose name a page counts. A module-level `const` of the page's file is still refused, by design (code of the file can change it); its
 failure now names the ways through, inline or a module the entry lists.
 
 **A read that reads nothing passes under a required gate.** `service/`'s gate (the handler is `withServiceCaller`'s

@@ -13,9 +13,11 @@
 from outside itself but inert values and the listed imports, each by its exported name and from the module the entry
 pins it to; a value of the route's own file cannot be listed (import it from a module instead). The pin is the
 module: the specifier the import writes when it is not relative (`'next/headers'`, `'@acme/ui'`,
-`'@sssb/kit/adapters/fake/auth'`, or an alias such as `'@/lib/cors'`), resolving from the app's directory to the same
-file, or the path from the app's directory, with its extension, of the file the import resolves to or of the file that
-declares the name (`'src/lib/cors.ts'`). A read that imports a listed name from any other module fails, and so does
+`'@sssb/kit/adapters/fake/auth'`, or an alias such as `'@/lib/cors'`) and resolves, from the app's directory and from
+the importing file to the same file; or the path from the app's directory, with its extension, of the file the import
+resolves to or of the file that declares the name under that name (`'src/lib/cors.ts'`; a barrel's
+`export { rows as corsHeaders }` makes it the barrel's). A pin that is the path of a file in the app is only a path,
+never matched as a specifier. A read that imports a listed name from any other module fails, and so does
 the entry, naming both modules: a reason written for one module does not cover another's export of the same name. Such an entry applies to
 reads only: a mutation at its path keeps the gate it had. It is the one kind an app may put outside `src/app/api`,
 under a new key `outsideApi: { files, prefixes }` with keys relative to `src/app` (a public feed, a sitemap route), or

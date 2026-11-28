@@ -23,11 +23,10 @@ What the check newly **accepts**, in a page only (a route is judged as before):
   `auth.listMyOrgs()` (`@sssb/kit/adapters/index`), each called;
 - `setRequestLocale`, `getTranslations`, `getMessages` and `getLocale` (`next-intl/server`), `hasLocale` and
   `useTranslations` (`next-intl`), `use` (`react`: next-intl's sync page, `const { locale } = use(params)`; `use` only
-  unwraps what it is handed, and that value's names are judged), `headers` (`next/headers`: the request's own headers,
-  what the client sent; `cookies` is not on the list, since it carries the session, which a page reads through `auth`),
-  `routing.locales` (`@sssb/kit/i18n/routing`), `canInActiveOrg` (`@sssb/kit/authz/authorize`),
-  `isDemoMode` (`@sssb/kit/adapters/index`), `sameOriginPath` (`@sssb/kit/core/same-origin-path`), `getTenantTheme`
-  (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`), each a named import under its exported name;
+  unwraps what it is handed, and that value's names are judged), `routing.locales` (`@sssb/kit/i18n/routing`),
+  `canInActiveOrg` (`@sssb/kit/authz/authorize`), `isDemoMode` (`@sssb/kit/adapters/index`), `sameOriginPath`
+  (`@sssb/kit/core/same-origin-path`), `getTenantTheme` (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`),
+  each a named import under its exported name;
 - a default import of a static asset (a `.css`, `.module.css` or `.scss` stylesheet, a `.png`, `.jpg`, `.jpeg`, `.gif`,
   `.svg`, `.webp`, `.avif` or `.ico` image) used as a value, only by a relative specifier (`./`, `../`) or a tsconfig
   `paths` alias, with no `?` or `#`, whose literal file exists with one of those extensions, and which TypeScript's
@@ -41,9 +40,12 @@ What the check newly **accepts**, in a page only (a route is judged as before):
 - an imported Server Action handed on by reference, the whole value of a JSX attribute (`<form action={saveItem}>`,
   `<Form action={saveItem} />`, `formAction={…}`), by a named or default import, when the module that declares it
   (followed through a barrel's re-exports) is a file under `src` whose prologue is `'use server'`, or the exported
-  function's own body opens with `'use server'`: the check judges the action itself, as the POST it is. Called from the
-  page, used any other way (`saveItem.bind(…)`, inside an array or a spread), or declared outside `src` or in a package,
-  it is counted; so is any other import handed on as a prop;
+  function's own body opens with `'use server'` (written as such: an escaped `'use\x20server'`, which is no directive,
+  is neither an action nor accepted here). A component it is handed to may call it, even during the render; that is safe
+  because the check judges the action itself, as the POST it is, which must reach `authorize` on its own path (any
+  reachable `authorize` counts, the limit below). Called from the page, used any other way (`saveItem.bind(…)`, inside
+  an array or a spread), or declared outside `src` or in a package, it is counted; so is any other import handed on as a
+  prop;
 - a component of the page's own file used only as a JSX tag (a function declared once and never reassigned, or a
   `const` bound to a function), whose code is read as part of the page;
 - `const { Form } = await import('…')`, alone or as one element of an awaited global `Promise.all([...])` destructured
@@ -60,18 +62,21 @@ What the check newly **accepts**, in a page only (a route is judged as before):
 
 What it newly **refuses**:
 
-- a page's export that names anything else and does not reach `authorize(...)`: the seed, the simulated world, a port,
-  a data helper, `db`, `analytics`, `next/og`'s `ImageResponse`, `cookies` (`next/headers`), a value of the page's own
-  file (a module-level `const LINKS = [...]` included: code of the file can change it, so no entry can list it; write
-  it inline where the page uses it, or move it into a module and list the import in the page's entry, and a `const`
-  bound to a primitive literal is already inert), a component passed as a value or called, and a server component of your own (a module without `'use client'`, in the app or in a workspace
-  package, linked into `node_modules` or reached by a path or an alias, which may load its own data) rendered as a tag
-  or loaded with `import()`: its name is counted, so the page authorizes or an entry lists it; and a default import
-  whose specifier only looks like an asset (`'./members.css'` beside a `members.css.ts`, `'./x.css?inline'`, a file that
-  does not exist) or is bare (`'some-ui/styles.css'`, a `baseUrl` path, a package's self-reference or `imports`, a
-  bundler alias): none is an asset here, so each is refused as any default import is; and a component in a
-  `node_modules` folder below the app's root (under its `src`) or in a pnpm `file:` or `link:` dependency, which is the
-  adopter's own code, unless it is a client one;
+- a page's export that names anything else and does not reach `authorize(...)`: the seed, the simulated world, a port, a
+  data helper, `db`, `analytics`, `next/og`'s `ImageResponse`, `headers` and `cookies` (`next/headers`: the request's
+  headers carry its Cookie and Authorization, the session's credential, which a page could render into its HTML; a page
+  that reads them names them in its entry, `names: { headers: 'next/headers' }`, with a reason), a value of the page's
+  own file (a module-level `const LINKS = [...]` included: code of the file can change it, so no entry can list it;
+  write it inline where the page uses it, or move it into a module and list the import in the page's entry, and a
+  `const` bound to a primitive literal is already inert), a component passed as a value or called, and a server
+  component of your own (a module without `'use client'`, in the app or in a workspace package, linked into
+  `node_modules` or reached by a path or an alias, which may load its own data) rendered as a tag or loaded with
+  `import()`: its name is counted, so the page authorizes or an entry lists it; and a default import whose specifier
+  only looks like an asset (`'./members.css'` beside a `members.css.ts`, `'./x.css?inline'`, a file that does not exist)
+  or is bare (`'some-ui/styles.css'`, a `baseUrl` path, a package's self-reference or `imports`, a bundler alias): none
+  is an asset here, so each is refused as any default import is; and a component in a `node_modules` folder below the
+  app's root (under its `src`) or in a pnpm `file:` or `link:` dependency, which is the adopter's own code, unless it is
+  a client one;
 - `auth` (and `routing`) used any other way, whatever an entry lists: another member (`auth.listMembers`,
   `auth.getMember`, `routing.defaultLocale`), the object passed along, aliased, spread, destructured, read by a
   computed key, rendered as a tag (`<auth.listMembers />`) or reached through a namespace or `import()`, a listed method

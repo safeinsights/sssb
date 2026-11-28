@@ -4429,10 +4429,15 @@ describe('the page shapes the authorization review found failing (Z1), and a pre
     })
 
     it("counts an action the Server Action walk does not judge: outside src, a package's, or a plain re-export", () => {
-        expect(pageDefault(handsOn('./lib/actions'), { 'lib/actions.ts': ACTION })).toBe('names: saveItem')
-        // A workspace package's action, outside the app's directory: the Server Action walk never reads it.
+        // The app has a src (so the check is the file's place, not a missing directory): an action beside it, and a
+        // workspace package's outside the app's directory, are actions the Server Action walk never reads.
+        const SRC = { 'src/keep.ts': 'export {}\n' }
+        expect(pageDefault(handsOn('./lib/actions'), { ...SRC, 'lib/actions.ts': ACTION })).toBe('names: saveItem')
         expect(
-            pageDefault(handsOn('../workspace-actions/actions'), { '../workspace-actions/actions.ts': ACTION }),
+            pageDefault(handsOn('../workspace-actions/actions'), {
+                ...SRC,
+                '../workspace-actions/actions.ts': ACTION,
+            }),
         ).toBe('names: saveItem')
         expect(pageDefault(handsOn('./src/node_modules/acts'), { 'src/node_modules/acts/index.ts': ACTION })).toBe(
             'names: saveItem',
