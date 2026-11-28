@@ -13,6 +13,7 @@ import { authRequiredEnv, authSettings, fixedOrgProblem } from '../auth-tenancy'
 import { configuredAuth } from '../configured-auth'
 import { orgNameForSlugs } from '../../db/org-lookup'
 import { clerkIdentitySource, realAuth } from './auth'
+import { assertEdgeSettings } from '../edge-headers'
 import { clerkAuthorizedParties } from './clerk-authorized-parties'
 import {
     DATABASE_ENV,
@@ -114,6 +115,13 @@ export function assertRealEnv(): void {
         clerkAuthorizedParties(process.env['CLERK_AUTHORIZED_PARTIES'])
     } catch (error) {
         throw new CutoverPendingError(['auth-dev'], (error as Error).message)
+    }
+    // The app's public origin and the edge switch, both optional (../edge-headers.ts): `publicOrigin` refuses a
+    // malformed one when first called, which would be the first link a visitor needs; this refuses it at boot.
+    try {
+        assertEdgeSettings(process.env)
+    } catch (error) {
+        throw new CutoverPendingError(['domains-and-certs'], (error as Error).message)
     }
 }
 

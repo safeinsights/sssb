@@ -32,6 +32,7 @@ const CLI = path.join(REPO, 'packages/create/bin/create.js')
 const HEAD = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim()
 /** The generator's version, the fixed group's: the only one its workspaces may install. */
 const VERSION: string = JSON.parse(readFileSync(path.join(REPO, 'packages/create/package.json'), 'utf8')).version
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const SEAM_SPECIFIERS: string[] = JSON.parse(
     readFileSync(path.join(REPO, 'packages/kit/src/testing/seam-specifiers.json'), 'utf8'),
 ).specifiers
@@ -576,9 +577,13 @@ describe('@sssb/create: the generated workspace', () => {
     // The workspace's guide copy is stamped with the hash of the guide packed into the generator: another version's
     // @sssb/kit ships another guide, and `sssb doctor` would fail the first `pnpm verify`.
     it("refuses --sssb of any version but the generator's own", () => {
+        // A version that is never the generator's own: the next minor. A fixed literal here broke the release commit
+        // the day the packages reached it (v0.9.0).
+        const [major, minor] = VERSION.split('.').map(Number)
+        const OTHER = `${major}.${minor + 1}.0`
         const other = makeTestTmpDir('create-other-')
         for (const pkg of ['kit', 'tools', 'eslint-plugin', 'cdk'])
-            writeFileSync(path.join(other, `sssb-${pkg}-0.9.0.tgz`), '')
+            writeFileSync(path.join(other, `sssb-${pkg}-${OTHER}.tgz`), '')
         const run = (sssb: string) => () =>
             generate({
                 templateDir: template,
@@ -590,10 +595,10 @@ describe('@sssb/create: the generated workspace', () => {
         expect(run(other)).toThrow(CreateError)
         expect(run(other)).toThrow(
             new RegExp(
-                `is @sssb 0\\.9\\.0, and this generator writes workspaces of @sssb ${VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+                `is @sssb ${escapeRegExp(OTHER)}, and this generator writes workspaces of @sssb ${escapeRegExp(VERSION)}`,
             ),
         )
-        for (const version of ['0.9.0', '^0.9.0', `${VERSION}-rc.1`])
+        for (const version of [OTHER, `^${OTHER}`, `${VERSION}-rc.1`])
             expect(run(version), version).toThrow(/run @sssb\/create@/)
         for (const version of [VERSION, `^${VERSION}`, `~${VERSION}`]) expect(run(version), version).not.toThrow()
     })

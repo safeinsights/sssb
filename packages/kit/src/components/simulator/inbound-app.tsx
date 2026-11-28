@@ -54,7 +54,7 @@ function statusColor(status: string): string {
 
 /**
  * The Mail tab's "compose inbound" affordance + inbound list: the world emails the app. Data
- * and callbacks only — the glue (simulator-glue.tsx) owns fetching and the POST, and the static-demo
+ * and callbacks only — the host (`./simulator-host`) owns fetching and the POST, and the static-demo
  * twin drives the same props over its in-memory intake. Native <select>s (not Mantine comboboxes) keep
  * the compose form trivially Playwright-selectable. The handler is a free-text field so an unknown slug
  * can be sent on purpose to demonstrate the 'unmatched' path.

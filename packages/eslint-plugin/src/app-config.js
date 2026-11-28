@@ -301,6 +301,16 @@ export async function appConfig(plugin, options = /** @type {any} */ ({})) {
             plugins: sssb,
             rules: { 'sssb/no-process-env': 'error' },
         }),
+        // The visitor's origin and address (safeinsights/sssb#131, #132): through @sssb/kit/adapters/edge-headers, never
+        // `request.url`'s origin or a forwarded header, in every module of src/ but its tests, which build the requests
+        // they send. Behind SssbApp the one names the server's own bind address and the other holds what the visitor
+        // wrote.
+        at('request-origin', {
+            files: files('src'),
+            ignores: [TEST_FILES],
+            plugins: sssb,
+            rules: { 'sssb/no-raw-request-origin': 'error' },
+        }),
         // An app's REAL adapters read their own configuration from process.env, but never the run mode.
         at('run-mode', {
             files: files('src/adapters/real'),

@@ -375,7 +375,7 @@ Three boundary rules keep Simulator honest. **Feedback stays inside Simulator** 
 render as a notice overlay anchored to the panel's bottom edge (absolute, so a notice never shifts the
 panel's own scroll), with a pulsing pill badge when collapsed, never as app-level toasts, and product copy
 never references the panel (it ships in real mode, where Simulator doesn't exist). **Real builds ship zero
-Simulator client code** — the layout dynamic-imports the glue only in simulated mode (the
+Simulator client code** — the layout dynamic-imports the panel's host only in simulated mode (the
 `/api/simulator/*` handlers still compile into the server artifact; their first-line 404 gate is the
 containment there). **The components stay router-agnostic and vendor-free** — which is exactly what made the
 extraction cheap when it came: the panel now lives in the framework package

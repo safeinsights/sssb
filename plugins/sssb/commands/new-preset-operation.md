@@ -78,8 +78,8 @@ registers on its own server-only seam module and never on `src/app-config/preset
    registered preset from `file://` and waits for its "Preset loaded" notice, so a missing static half fails there
    (`/sssb:new-preset` step 8 says how to add that loop, and why it imports the preset list module rather than
    `src/app-config/presets.ts`, which now imports your definition). Assert the kind's visible effect in the static
-   demo's preset load test; a server-side preset spec needs a Snapshots tab on `pnpm dev`, which a generated app's
-   Simulator does not have (`/sssb:new-preset` step 10). Then `pnpm check:demo-size` and `pnpm verify`.
+   demo's preset load test, and, if you want the server's too, in a spec that loads it from the Snapshots tab on
+   `pnpm dev` (`/sssb:new-preset` step 10). Then `pnpm check:demo-size` and `pnpm verify`.
 
 ## `--from <SSSB kind>`: replace one of SSSB's kinds
 

@@ -26,7 +26,7 @@ export interface CompatibleStorageSettings {
     accessKeyId: string
     /** `STORAGE_SECRET_ACCESS_KEY`. */
     secretAccessKey: string
-    /** `STORAGE_UPLOAD_TARGET`: `post` if the store accepts a presigned POST, `none` if it does not. */
+    /** `STORAGE_UPLOAD_TARGET`: `post` if the store accepts a presigned POST, `put` if it takes a presigned PUT, `none` for no browser upload. */
     uploadTarget: string
     /** `STORAGE_FORCE_PATH_STYLE`: `true`, `false`, or unset (empty counts as unset) for the SDK's own addressing. */
     forcePathStyle?: string | undefined
@@ -35,8 +35,9 @@ export interface CompatibleStorageSettings {
 /**
  * The storage port on an S3-compatible store: the same adapter as `createRealStorage`, pointed at `endpoint` with the
  * store's own key pair. Everything but the upload target is S3's API, which these stores implement (ADR-0015, section
- * 6 lists what R2 does). `createUploadTarget` is an S3 presigned POST, which R2 does not accept, so it follows
- * `uploadTarget`: with `none` it fails naming the setting rather than minting a URL the store would refuse.
+ * 6 lists what R2 does). `createUploadTarget` follows `uploadTarget`: an S3 presigned POST for `post` (MinIO),
+ * a presigned PUT for `put` (R2, which has no POST), and with `none` it fails naming the setting rather than minting a
+ * URL the store would refuse.
  *
  * AUTHORED — CUTOVER (`storage-compatible-store`, `storage-compatible-credentials`, and the live round trip
  * `storage-compatible-live`): typechecked and run with the SDK's transport replaced, never against a real store.
@@ -53,6 +54,7 @@ export function createCompatibleStorage(settings: CompatibleStorageSettings): St
         endpoint,
         credentials: { accessKeyId, secretAccessKey },
         forcePathStyle,
+        uploadTarget: target === 'put' ? 'put' : 'post',
         // The SDK's default (since v3.729, `WHEN_SUPPORTED`) puts a CRC32 checksum on every PutObject, which stores
         // older than that default can reject; Cloudflare tells R2 users to ask for checksums only where an operation
         // requires one. `WHEN_REQUIRED` does that, and no more: DeleteObjects requires one, so it still carries CRC32
@@ -61,14 +63,14 @@ export function createCompatibleStorage(settings: CompatibleStorageSettings): St
         requestChecksumCalculation: 'WHEN_REQUIRED',
         responseChecksumValidation: 'WHEN_REQUIRED',
     })
-    if (target === 'post') return s3
+    if (target !== 'none') return s3
     return {
         ...s3,
         createUploadTarget: async () => {
             throw new Error(
-                'storage createUploadTarget: STORAGE_UPLOAD_TARGET=none, so this store is declared not to accept a ' +
-                    'presigned POST (Cloudflare R2 does not). Set STORAGE_UPLOAD_TARGET=post for a store that does, ' +
-                    'such as MinIO, or upload another way.',
+                'storage createUploadTarget: STORAGE_UPLOAD_TARGET=none, so this deployment takes no browser upload. Set ' +
+                    'STORAGE_UPLOAD_TARGET=post for a store that accepts a presigned POST (MinIO) or put for one that ' +
+                    'takes a presigned PUT instead (Cloudflare R2), or upload another way.',
             )
         },
     }

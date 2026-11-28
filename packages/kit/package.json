@@ -1,6 +1,6 @@
 {
     "name": "@sssb/kit",
-    "version": "0.8.0",
+    "version": "0.9.1",
     "license": "MIT",
     "repository": {
         "type": "git",
@@ -37,6 +37,7 @@
         "./adapters/fake/sms": "./src/adapters/fake/sms.ts",
         "./adapters/fake/storage": "./src/adapters/fake/storage.ts",
         "./adapters/fake/webhooks": "./src/adapters/fake/webhooks.ts",
+        "./adapters/edge-headers": "./src/adapters/edge-headers.ts",
         "./adapters/index": "./src/adapters/index.ts",
         "./adapters/proxy": "./src/adapters/proxy.ts",
         "./adapters/real/accept-invite-form": "./src/adapters/real/accept-invite-form.tsx",
@@ -159,6 +160,7 @@
         "./server-lib/sms": "./src/server-lib/sms.ts",
         "./server-lib/webhook-dispatch": "./src/server-lib/webhook-dispatch.ts",
         "./service-auth/mailgun": "./src/service-auth/mailgun.ts",
+        "./service-auth/standard-webhooks": "./src/service-auth/standard-webhooks.ts",
         "./service-auth/verify": "./src/service-auth/verify.ts",
         "./service-auth/webhook": "./src/service-auth/webhook.ts",
         "./testing": "./src/testing/index.ts",

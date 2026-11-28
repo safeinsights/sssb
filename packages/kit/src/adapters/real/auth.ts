@@ -359,8 +359,9 @@ export const realAuth: AuthPort = {
      * `auth-dev` cutover row's to settle.
      *
      * The page goes to Clerk as a PATH, which Clerk's `redirectUrl` accepts ("The full URL or path"), never as the
-     * absolute URL it arrives as: that is built from the request's URL, whose host behind `SssbApp` is the server's own
-     * (`localhost`), not the app's (safeinsights/sssb#131).
+     * absolute URL it arrives as, so the link Clerk mails is right whatever origin the caller built it on. Callers
+     * build it on `publicOrigin` (../edge-headers.ts); before that existed, on `request.url`, whose host behind
+     * `SssbApp` is the server's own (`localhost`), not the app's (safeinsights/sssb#131).
      */
     async createInvite(invite: InviteInput): Promise<CreatedInvite> {
         const { userId } = await sessionAuth()
