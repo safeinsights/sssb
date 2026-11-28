@@ -779,7 +779,8 @@ the showcase carries the same route over the same function.
       that one is running and leaves it to be stopped where it was started. Your app's Simulator has no such control; the
       route is the showcase's app code, and an app that wants one copies it.
 
-    The answer is `{"ok":true,"spawned":0,"failed":0,"deliveries":{…}}`, which `pnpm tick` prints as one line. In a
+    The answer is `{"ok":true,"spawned":0,"failed":0,"deferred":0,"stoppedBy":null,"retries":{…},"deliveries":{…}}`, which
+    `pnpm tick` prints as one line. In a
     simulated world "now" is the Simulator's world clock (real time plus whatever offset a demo advanced), so a tick
     honours a clock a demo moved. A schedule whose spawn failed, or a delivery that failed, shows in that line; the tick
     itself succeeded, so the exit code stays 0. The next tick retries a failed delivery, and a schedule whose failure

@@ -14,12 +14,14 @@ it and ran its e2e against `next dev`, so CI never ran `next build` for it: a ch
 `start:e2e` scripts, and its `playwright.config.ts` builds and serves the production build when `E2E_BUILD=1`, with a
 longer server start-up budget for the build. Locally, with the flag unset, the suite stays on `next dev`.
 
-**To adopt.** In an existing workspace, add to `apps/<app>/package.json`:
+**To adopt.** In an existing workspace, add two scripts to `apps/<app>/package.json`, under its `"scripts"`:
 
 ```json
 {
-    "build:e2e": "NEXT_TELEMETRY_DISABLED=1 E2E_BUILD=1 APP_MODE=simulated next build",
-    "start:e2e": "E2E_BUILD=1 APP_MODE=simulated sssb serve-standalone"
+    "scripts": {
+        "build:e2e": "NEXT_TELEMETRY_DISABLED=1 E2E_BUILD=1 APP_MODE=simulated next build",
+        "start:e2e": "E2E_BUILD=1 APP_MODE=simulated sssb serve-standalone"
+    }
 }
 ```
 
