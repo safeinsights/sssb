@@ -46,8 +46,14 @@ const SETTLE_CHUNK = 200
  */
 export const EVENTS_PER_STATEMENT = 10_000
 
-/** The most clearing statements one settle runs after the first, whatever time is left. */
+/** The most clearing statements one settle runs after its settling ones, whatever time is left. */
 const MAX_CLEARING_STATEMENTS = 100
+
+/**
+ * The longest one settling or clearing statement may take, lock waits included (an owner-side lock of a tenant row,
+ * through the hints' foreign keys, say): one that takes longer gives up, and its tenants are listed again.
+ */
+const SETTLE_TIMEOUT_MS = 2_000
 
 /**
  * The longest the read may take: half of what is left of the drain's window, never under 50 ms nor over 5 s. A read
@@ -131,8 +137,8 @@ export async function settleHints(
     if (read.snapshot === null || settled.length === 0) return
     const cap = new Date(now.getTime() + MAX_SKIP_MS)
     const raw = db.getDb().withSchema('public')
-    const set: string[] = []
-    let more = false
+    // Each chunk's tenants, kept for clearing only when its first statement deleted a full statement's worth.
+    const piled: string[][] = []
     for (let i = 0; i < settled.length; i += SETTLE_CHUNK) {
         const rows = settled.slice(i, i + SETTLE_CHUNK).map((l) => ({
             tenantId: l.tenant.id,
@@ -146,31 +152,39 @@ export async function settleHints(
             version: l.tenant.hintVersion,
         }))
         try {
-            const result = await family.settleDueHints(raw, drain, read.snapshot, rows, EVENTS_PER_STATEMENT)
-            set.push(...result.settled)
-            if (result.deleted >= EVENTS_PER_STATEMENT) more = true
+            const result = await family.settleDueHints(
+                raw,
+                drain,
+                read.snapshot,
+                rows,
+                EVENTS_PER_STATEMENT,
+                SETTLE_TIMEOUT_MS,
+            )
+            if (result.deleted >= EVENTS_PER_STATEMENT) piled.push(result.settled)
         } catch (error) {
             console.warn(`SSSB tick: could not set the ${drain} drain's due hints: ${messageOf(error)}`)
         }
     }
-    // The rest of the settled tenants' accounted-for events, a bounded statement at a time, while the window lasts.
+    // The rest of those tenants' accounted-for events, a bounded statement at a time, while the window lasts: a chunk
+    // is cleared again only while its last statement deleted a full statement's worth, and every statement counts.
     const clock = window.clock ?? Date.now
-    for (let statements = 0; more && statements < MAX_CLEARING_STATEMENTS && clock() < window.deadline; statements++) {
-        more = false
-        for (let i = 0; i < set.length && clock() < window.deadline; i += SETTLE_CHUNK) {
-            try {
-                const deleted = await family.clearDueHintEvents(
-                    raw,
-                    drain,
-                    read.snapshot,
-                    set.slice(i, i + SETTLE_CHUNK),
-                    EVENTS_PER_STATEMENT,
-                )
-                if (deleted >= EVENTS_PER_STATEMENT) more = true
-            } catch (error) {
-                console.warn(`SSSB tick: could not clear the ${drain} drain's due-hint events: ${messageOf(error)}`)
-                return
-            }
+    let statements = 0
+    while (piled.length > 0 && statements < MAX_CLEARING_STATEMENTS && clock() < window.deadline) {
+        const chunk = piled.shift()!
+        statements += 1
+        try {
+            const deleted = await family.clearDueHintEvents(
+                raw,
+                drain,
+                read.snapshot,
+                chunk,
+                EVENTS_PER_STATEMENT,
+                SETTLE_TIMEOUT_MS,
+            )
+            if (deleted >= EVENTS_PER_STATEMENT) piled.push(chunk)
+        } catch (error) {
+            console.warn(`SSSB tick: could not clear the ${drain} drain's due-hint events: ${messageOf(error)}`)
+            return
         }
     }
 }

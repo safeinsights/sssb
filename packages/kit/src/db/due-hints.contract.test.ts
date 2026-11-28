@@ -86,16 +86,22 @@ describe('the due hints at a size, on real Postgres with its statistics', () => 
         expect(read.tenants.map((t) => t.id)).toEqual([piled.id])
         expect(read.tenants[0]?.unhinted).toBeUndefined()
         expect(elapsed).toBeLessThan(1_000)
-        // However Postgres plans it, the events are read once: no per-tenant subplan, one scan node over them.
-        const { dueHintsReadQuery } = await import('./family')
+        // Under the settings every due-hint statement runs with, the events are only ever probed through an index.
+        const { dueHintsPlanner, dueHintsReadQuery } = await import('./family')
         const cap = new Date(now.getTime() + 24 * 3_600_000)
-        const plan = (
-            await sql<{ 'QUERY PLAN': string }>`EXPLAIN ${dueHintsReadQuery('retries', now, cap)}`.execute(
-                realDb.getDb(),
-            )
-        ).rows.map((r) => r['QUERY PLAN'])
-        expect(plan.filter((line) => /SubPlan/.test(line))).toEqual([])
-        expect(plan.filter((line) => /Scan.* on due_hint_events/.test(line))).toHaveLength(1)
+        const plan = await realDb
+            .getDb()
+            .transaction()
+            .execute(async (trx) => {
+                await dueHintsPlanner(5_000).execute(trx)
+                return (
+                    await sql<{ 'QUERY PLAN': string }>`EXPLAIN ${dueHintsReadQuery('retries', now, cap)}`.execute(trx)
+                ).rows.map((r) => r['QUERY PLAN'])
+            })
+        expect(
+            plan.filter((line) => /Seq Scan on due_hint_events|Bitmap Heap Scan on due_hint_events/.test(line)),
+        ).toEqual([])
+        expect(plan.some((line) => /Index (Only )?Scan.* on due_hint_events/.test(line))).toBe(true)
     }, 300_000)
 
     test('a read that cannot finish inside its window gives up, and the drain lists every tenant', async () => {
@@ -146,5 +152,90 @@ describe('the due hints at a size, on real Postgres with its statistics', () => 
         expect(result.stoppedBy).toBeNull()
         expect(await eventsOf(piled.id)).toBe(0)
         expect(elapsed).toBeLessThan(2_500)
+    }, 300_000)
+
+    test("a clearing statement stays short when statistics spread the events over every tenant but one tenant's pile", async () => {
+        // The review's shape: every tenant one event, one tenant a million, ANALYZE; a 200-tenant chunk with the pile
+        // tenant last, where an estimate per tenant from the average once led to a bitmap scan and a sort of the pile.
+        const now = new Date()
+        const admin = realDb.getDb()
+        await sql`DELETE FROM due_hint_events`.execute(admin)
+        await sql`
+            INSERT INTO due_hint_events (tenant_id, drain, due)
+            SELECT id, 'retries', ${new Date(now.getTime() - 3_600_000)}::timestamptz FROM tenants WHERE id <> ${piled.id}::uuid
+        `.execute(admin)
+        await sql`
+            INSERT INTO due_hint_events (tenant_id, drain, due)
+            SELECT ${piled.id}::uuid, 'retries', ${new Date(now.getTime() - 3_600_000)}::timestamptz
+            FROM generate_series(1, 1000000)
+        `.execute(admin)
+        await sql`ANALYZE due_hint_events`.execute(admin)
+        const { family } = await import('./family')
+        const { EVENTS_PER_STATEMENT } = await import('./due-hints')
+        const others = (
+            await admin.selectFrom('tenants').select('id').where('id', '<>', piled.id).limit(199).execute()
+        ).map((t) => t.id)
+        const { rows } = await sql<{ snapshot: string }>`SELECT pg_current_snapshot()::text AS snapshot`.execute(admin)
+        const raw = admin.withSchema('public')
+        const timings: number[] = []
+        for (let i = 0; i < 5; i++) {
+            const started = Date.now()
+            const deleted = await family.clearDueHintEvents(
+                raw,
+                'retries',
+                rows[0]!.snapshot,
+                [...others, piled.id],
+                EVENTS_PER_STATEMENT,
+                5_000,
+            )
+            timings.push(Date.now() - started)
+            expect(deleted).toBe(EVENTS_PER_STATEMENT)
+        }
+        expect(Math.max(...timings.slice(1))).toBeLessThan(150)
+        await sql`DELETE FROM due_hint_events`.execute(admin)
+    }, 300_000)
+
+    test('a settle beside an owner transaction that holds a tenant row gives up inside its bound', async () => {
+        const now = new Date()
+        const admin = realDb.getDb()
+        const lone = await admin
+            .insertInto('tenants')
+            .values({ slug: 'locked-tenant', name: 'Locked' })
+            .returning('id')
+            .executeTakeFirstOrThrow()
+        const { settleHints } = await import('./due-hints')
+        const { rows } = await sql<{ snapshot: string }>`SELECT pg_current_snapshot()::text AS snapshot`.execute(admin)
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => (release = resolve))
+        let locked!: () => void
+        const held = new Promise<void>((resolve) => (locked = resolve))
+        // An owner-side lock the hint's foreign-key check must wait on (no tenant can take one: app_user may only read).
+        const holder = admin.transaction().execute(async (trx) => {
+            await sql`SELECT id FROM tenants WHERE id = ${lone.id}::uuid FOR UPDATE`.execute(trx)
+            locked()
+            await gate
+        })
+        await held
+        const timer = setTimeout(() => release(), 6_000)
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const started = Date.now()
+        try {
+            await settleHints(
+                realDb,
+                'retries',
+                now,
+                { tenants: [{ id: lone.id, hintVersion: null }], snapshot: rows[0]!.snapshot },
+                [{ tenant: { id: lone.id, hintVersion: null }, hadRows: false, nextDue: null }],
+                { deadline: Date.now() + 1_000 },
+            )
+            expect(Date.now() - started).toBeLessThan(3_500)
+        } finally {
+            clearTimeout(timer)
+            warn.mockRestore()
+            release()
+            await holder
+        }
+        const hint = await admin.selectFrom('due_hints').select('list_after').where('tenant_id', '=', lone.id).execute()
+        expect(hint, 'not set: listed again next tick').toEqual([])
     }, 300_000)
 })
