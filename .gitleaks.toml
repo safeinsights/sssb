@@ -32,6 +32,17 @@ paths = ['''packages/(keel|kit)/src/db/audit\.test\.ts''']
 regexes = ['''sk_live_51HxYz''']
 regexTarget = "line"
 
+# The Standard Webhooks specification's published example secret, not a credential: standard-webhooks.test.ts checks the
+# verifier against the specification's worked example. The test now BUILDS the value; this entry exists only because
+# the whole literal is in the history of the commit that added the test, and gitleaks scans every commit.
+# `condition = "AND"`: skipped only in that file AND on a line holding that string.
+[[allowlists]]
+description = "standard-webhooks.test.ts specification example secret, in history only"
+condition = "AND"
+paths = ['''packages/kit/src/service-auth/standard-webhooks\.test\.ts''']
+regexes = ['''MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw''']
+regexTarget = "line"
+
 # Not a credential: a base64url cursor carrying a SQL-injection payload, used by the keyset proofs to
 # show a crafted cursor cannot widen a scope. Kept OUT of this allowlist on purpose — the proofs now
 # BUILD the envelope from its readable payload instead of pasting the blob, because a high-entropy

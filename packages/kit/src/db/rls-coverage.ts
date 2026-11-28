@@ -50,27 +50,56 @@ import type { DB } from './schema'
  * Schema-qualified, so a table in another schema can never be exempted by a bare name.
  *
  * These are INFRA tables read while resolving who is calling — before any tenant context exists — so
- * `app_user` holds a cross-tenant `SELECT` on them and no policy applies.
+ * `app_user` holds a cross-tenant `SELECT` on them that no policy narrows.
  *
- * Adding a name here removes a relation from the guarantee `SECURITY.md` makes, so it is a security
- * decision and belongs in that file too — which `EXPECTED_EXEMPTIONS` below makes a two-file edit
- * rather than something that can be slipped in. A stale entry is a hazard rather than dead weight: it
- * would silently exempt a FUTURE relation reusing the name, so an entry naming nothing also fails.
+ * An exempt relation is SELECT-only unless its entry declares `writes`. A declared write is held to
+ * row-level security that reads the tenant setting, as a tenant table's is, though not to FORCE
+ * (`provenWrite` below says why), so the exemption stays one of READING across tenants. TRUNCATE is not declarable, because it
+ * ignores row-level security altogether.
+ *
+ * Adding a name here, or a write to a name, removes something from the guarantee `SECURITY.md` makes, so
+ * it is a security decision and belongs in that file too — which `EXPECTED_EXEMPTIONS` below makes a
+ * two-file edit rather than something that can be slipped in. A stale entry is a hazard rather than dead
+ * weight: it would silently exempt a FUTURE relation reusing the name, so an entry naming nothing fails,
+ * and so does a declared write `app_user` does not hold.
  */
-const RLS_EXEMPT: Record<string, string> = {
-    'public.tenants': 'the tenant registry itself, read to resolve a tenant before any tenant context exists',
-    'public.organizations':
-        'read to resolve a caller org before a tenant context exists; holds a team slug and display name only',
-    'public.service_keys':
-        'read to verify a service token before a tenant context exists; holds PUBLIC key material only, so its boundary is cryptographic',
+const RLS_EXEMPT: Record<string, Exemption> = {
+    'public.tenants': {
+        reason: 'the tenant registry itself, read to resolve a tenant before any tenant context exists',
+    },
+    'public.organizations': {
+        reason: 'read to resolve a caller org before a tenant context exists; holds a team slug and display name only',
+        // A request creates, renames and deletes its own tenant's teams (0018_organizations_write).
+        writes: ['INSERT', 'UPDATE', 'DELETE'],
+    },
+    'public.service_keys': {
+        reason: 'read to verify a service token before a tenant context exists; holds PUBLIC key material only, so its boundary is cryptographic',
+    },
 }
 
 /**
- * The exemption list, pinned. Changing `RLS_EXEMPT` without changing this fails, and the assertion
- * message says to update `SECURITY.md` in the same commit — because that file enumerates these three
- * to the public and was already caught once promising more than the code delivered.
+ * The exemption list, pinned, each name with the writes it declares. Changing `RLS_EXEMPT` without
+ * changing this fails, and the assertion message says to update `SECURITY.md` in the same commit —
+ * because that file enumerates these three to the public and was already caught once promising more
+ * than the code delivered.
  */
-const EXPECTED_EXEMPTIONS = ['public.organizations', 'public.service_keys', 'public.tenants']
+const EXPECTED_EXEMPTIONS = ['public.organizations (DELETE, INSERT, UPDATE)', 'public.service_keys', 'public.tenants']
+
+/** The privileges an exempt relation may declare, and the policy command (`pg_policy.polcmd`) each runs under. */
+const WRITE_COMMANDS = { INSERT: 'a', UPDATE: 'w', DELETE: 'd' } as const
+type ExemptWrite = keyof typeof WRITE_COMMANDS
+
+interface Exemption {
+    /** Why `app_user` may read it across tenants. */
+    reason: string
+    /** The writes `app_user` may hold on it, each held to tenant-scoped row-level security. Absent: SELECT only. */
+    writes?: readonly ExemptWrite[]
+}
+
+function pinnedName(name: string, exemption: Exemption): string {
+    const writes = [...(exemption.writes ?? [])].sort()
+    return writes.length === 0 ? name : `${name} (${writes.join(', ')})`
+}
 
 /**
  * Framework tables the framework's own migrations always create. Used as a SHAPE floor rather than a
@@ -112,6 +141,8 @@ interface RelationRow {
     enabled: boolean
     forced: boolean
     is_partition: boolean
+    /** `app_user` has its OWNER's privileges (a member of the owning role), so ENABLE-only RLS does not hold it. */
+    app_user_owns: boolean
 }
 
 interface PolicyRow {
@@ -119,6 +150,8 @@ interface PolicyRow {
     table_name: string
     policy_name: string
     permissive: boolean
+    /** `pg_policy.polcmd`: r SELECT, a INSERT, w UPDATE, d DELETE, * ALL. */
+    command: string
     using_src: string | null
     check_src: string | null
 }
@@ -132,8 +165,9 @@ interface PrivilegeRow {
 
 /**
  * Fails if anything `app_user` can reach is unprotected, if an exemption is stale or unexpected, if
- * the catalog query has stopped seeing the schema, or if an exempt relation has grown a write grant
- * at table OR column level.
+ * the catalog query has stopped seeing the schema, if an exempt relation has grown a write grant
+ * at table OR column level that its entry does not declare, or if a declared write is not held or not
+ * confined to the request's tenant by row-level security.
  */
 export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown) => ProofExpectation): Promise<void> {
     // Every relation on which app_user — or PUBLIC, which app_user is a member of — holds any
@@ -160,7 +194,8 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
                c.relkind::text                                                    AS kind,
                c.relrowsecurity                                                   AS enabled,
                c.relforcerowsecurity                                              AS forced,
-               c.relispartition                                                   AS is_partition
+               c.relispartition                                                   AS is_partition,
+               pg_has_role('app_user', c.relowner, 'USAGE')                       AS app_user_owns
         FROM reachable r
         JOIN pg_class c ON c.oid = r.oid
         JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -175,6 +210,7 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
                c.relname                                AS table_name,
                p.polname                                AS policy_name,
                p.polpermissive                          AS permissive,
+               p.polcmd::text                           AS command,
                pg_get_expr(p.polqual, p.polrelid)       AS using_src,
                pg_get_expr(p.polwithcheck, p.polrelid)  AS check_src
         FROM pg_policy p
@@ -200,11 +236,13 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
         }
     }
 
-    const exemptions = Object.keys(RLS_EXEMPT).sort()
+    const exemptions = Object.entries(RLS_EXEMPT)
+        .map(([exempt, exemption]) => pinnedName(exempt, exemption))
+        .sort()
     if (exemptions.join(',') !== [...EXPECTED_EXEMPTIONS].sort().join(',')) {
         failures.push(
             `RLS_EXEMPT changed to [${exemptions.join(', ')}] — update EXPECTED_EXEMPTIONS and SECURITY.md's ` +
-                `list of deliberately exempt tables in the same commit`,
+                `list of deliberately exempt tables, and the writes each may hold, in the same commit`,
         )
     }
     for (const exempt of Object.keys(RLS_EXEMPT)) {
@@ -261,8 +299,9 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
         }
     }
 
-    // Makes SECURITY.md's "the grants are SELECT-only" a proof rather than a promise — including the
-    // column-level and TRUNCATE/REFERENCES forms that has_table_privilege does not report.
+    // Makes SECURITY.md's "the grants are SELECT-only, but for the writes declared" a proof rather than a
+    // promise — including the column-level and TRUNCATE/REFERENCES forms that has_table_privilege does not
+    // report.
     const { rows: privileges } = await sql<PrivilegeRow>`
         SELECT n.nspname AS schema_name, c.relname AS table_name, a.privilege_type AS privilege_type, 'table' AS scope
         FROM pg_class c
@@ -280,14 +319,91 @@ export async function proveRlsCoverage(db: Kysely<DB>, expect: (actual: unknown)
           AND a.privilege_type <> 'SELECT'
     `.execute(db)
 
+    const held = new Set<string>()
     for (const privilege of privileges) {
         const key = `${privilege.schema_name}.${privilege.table_name}`
-        if (RLS_EXEMPT[key] === undefined) continue
+        const exemption = RLS_EXEMPT[key]
+        if (exemption === undefined) continue
+        held.add(`${key} ${privilege.privilege_type}`)
+        if (declares(exemption, privilege.privilege_type)) continue
         failures.push(
             `app_user holds ${privilege.privilege_type} (${privilege.scope}-level) on the exempt relation ${key}, ` +
-                `which SECURITY.md promises is SELECT-only`,
+                `which SECURITY.md promises is SELECT-only unless RLS_EXEMPT declares the write`,
         )
     }
 
+    // A declared write is the one thing an exempt relation may hold beyond SELECT, so it is proved here
+    // rather than trusted: held (a declaration app_user no longer needs is a stale hole), and scoped to the
+    // tenant by row-level security.
+    for (const [key, exemption] of Object.entries(RLS_EXEMPT)) {
+        const relation = rows.find((row) => name(row) === key)
+        if (relation === undefined) continue // reported above as a stale exemption
+        for (const write of exemption.writes ?? []) {
+            if (!Object.hasOwn(WRITE_COMMANDS, write)) {
+                failures.push(`RLS_EXEMPT declares ${write} on ${key}; only INSERT, UPDATE and DELETE can be declared`)
+                continue
+            }
+            if (!held.has(`${key} ${write}`)) {
+                failures.push(
+                    `RLS_EXEMPT declares ${write} on ${key}, which app_user does not hold — stale declaration`,
+                )
+                continue
+            }
+            failures.push(...provenWrite(key, relation, write, policiesOf.get(key) ?? []))
+        }
+    }
+
     expect(failures.join('\n')).toBe('')
+}
+
+function declares(exemption: Exemption, privilege: string): boolean {
+    return (exemption.writes as readonly string[] | undefined)?.includes(privilege) ?? false
+}
+
+/**
+ * Why a declared write on an exempt relation is NOT confined to the request's tenant, as failure lines; none
+ * when it is. The relation must have row-level security ENABLED (an exempt relation is not held to FORCE: its
+ * owner is the privileged path that seeds rows with no tenant context, and `withTenant` writes as `app_user`), an
+ * owner whose privileges `app_user` does not hold (they skip every policy that is not forced), and some
+ * PERMISSIVE policy must admit the command, or the grant reaches nothing. Every permissive policy that
+ * applies to the command (its own, or ALL) is then read the way the tenant tables' policies are, but only in
+ * the expressions that command evaluates: an INSERT its WITH CHECK, an UPDATE both, a DELETE its USING, an
+ * absent WITH CHECK falling back to USING. An absent expression the command evaluates admits every row. A
+ * SELECT policy is the exemption itself and is not read; RESTRICTIVE policies only narrow.
+ */
+function provenWrite(key: string, relation: RelationRow, write: ExemptWrite, policies: PolicyRow[]): string[] {
+    if (!relation.enabled) {
+        return [`RLS_EXEMPT declares ${write} on ${key}, which has no ROW LEVEL SECURITY to confine it to a tenant`]
+    }
+    // Without FORCE the owner skips every policy, and so does any role with the owner's privileges: a member of the
+    // owning role. A tenant table's FORCE holds such a role; an exempt one's ENABLE does not.
+    if (relation.app_user_owns && !relation.forced) {
+        return [
+            `RLS_EXEMPT declares ${write} on ${key}, whose owner's privileges app_user holds, so no policy applies to it`,
+        ]
+    }
+    const command = WRITE_COMMANDS[write]
+    const applying = policies.filter(
+        (policy) => policy.permissive && (policy.command === command || policy.command === '*'),
+    )
+    if (applying.length === 0) {
+        return [
+            `RLS_EXEMPT declares ${write} on ${key}, but no permissive policy admits ${write}: the grant reaches nothing`,
+        ]
+    }
+    const failures: string[] = []
+    for (const policy of applying) {
+        const check = policy.check_src ?? policy.using_src
+        const evaluated =
+            write === 'INSERT' ? [check] : write === 'UPDATE' ? [policy.using_src, check] : [policy.using_src]
+        const blind = evaluated.filter((expression) => expression === null || !expression.includes(TENANT_SETTING))
+        if (blind.length > 0) {
+            failures.push(
+                `${key} declares ${write}, and its permissive policy \`${policy.policy_name}\` admits ${write} ` +
+                    `without reading ${TENANT_SETTING}, so the write is not confined to a tenant: ` +
+                    blind.map((expression) => expression ?? '(no expression: every row)').join(' / '),
+            )
+        }
+    }
+    return failures
 }

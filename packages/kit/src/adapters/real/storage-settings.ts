@@ -5,10 +5,13 @@
  * secret pasted into the wrong one never reaches a log, never repeats a value that could hold one (the endpoint).
  */
 
-/** `STORAGE_UPLOAD_TARGET`: `post` if the store accepts a presigned POST, `none` if it does not. */
-export function parseUploadTarget(value: string): 'post' | 'none' {
-    if (value === 'post' || value === 'none') return value
-    throw new Error(`STORAGE_UPLOAD_TARGET must be post or none (got "${value}")`)
+/**
+ * `STORAGE_UPLOAD_TARGET`: `post` if the store accepts a presigned POST, `put` if it takes a presigned PUT instead
+ * (Cloudflare R2), `none` if the app takes no browser uploads.
+ */
+export function parseUploadTarget(value: string): 'post' | 'put' | 'none' {
+    if (value === 'post' || value === 'put' || value === 'none') return value
+    throw new Error(`STORAGE_UPLOAD_TARGET must be post, put or none (got "${value}")`)
 }
 
 /** `STORAGE_FORCE_PATH_STYLE`: `true`, `false`, or unset (an empty value counts as unset) for the SDK's own addressing. */

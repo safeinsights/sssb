@@ -307,6 +307,84 @@ export const a11yLiteralSelector = {
         'aria-label/placeholder/title/alt carry user-visible copy — route them through next-intl (t()), never a string literal (ADR-0008).',
 }
 
+// The visitor's origin and address (safeinsights/sssb#131, #132), read only through @sssb/kit/adapters/edge-headers
+// (`publicOrigin`, `clientAddress`). Behind SssbApp, `request.url` and `nextUrl` name the server's own bind address
+// and port, never the visitor's host; the first X-Forwarded-For entry, X-Real-IP and CF-Connecting-IP hold whatever the
+// visitor wrote; and the Forwarded the function drops is the visitor's anywhere else. The obvious forms, never an alias:
+// - a header that names the visitor's host or address, by its name as a string (any case), read from something that is
+//   plainly a request's headers: `.get`, `.has` or `.getAll` on `<x>.headers`, on `headers()` or `await headers()`
+//   (next/headers), or on a variable whose name says header; or a computed key on `<x>.headers` (Node's
+//   `req.headers[...]`). A `searchParams.get('host')` or `process.env['HOST']` is not a request's header;
+// - the `origin`, `host`, `hostname` or `href` of `new URL(<x>.url)` or of `<x>.nextUrl`, by member or destructuring;
+// - `new URL(path, <x>.url)` (or `<x>.nextUrl`), an absolute URL on the server's own host; in the app's proxy alone
+//   (`proxy.*`, `middleware.*`) it may be handed straight to a `redirect` or `rewrite`, because Next relativizes a
+//   same-origin redirect only when the proxy answers it (`next/dist/server/web/adapter.js`): a route handler's
+//   `NextResponse.redirect(new URL('/en', request.url))` sends the visitor to the server's bind address;
+// - `baseUrl: <x>.url`, the argument SSSB's own `sendOrgInvite` and `applyDemoPreset` take.
+// In the three URL forms `<x>` must be named like the request (`requestNamed` below): another object's `.url` is not the
+// server's. Path and search parameters of the same URLs are right and stay allowed. Redirects, clones and strings of the
+// request's URL, and the URL through a variable, are not caught yet (safeinsights/sssb#242).
+const VISITOR_HEADER =
+    '/^(host|forwarded|x-forwarded-(for|host|proto|port)|x-real-ip|x-client-ip|cf-connecting-ip|true-client-ip|' +
+    'cloudfront-viewer-address|x-sssb-viewer-address)$/i'
+const HEADERS_OBJECT = (at) =>
+    `:matches([${at}.property.name="headers"], [${at}.name=/header/i], [${at}.callee.name="headers"], ` +
+    `[${at}.argument.callee.name="headers"])`
+const HEADER_READ = `CallExpression[callee.property.name=/^(get|has|getAll)$/]${HEADERS_OBJECT('callee.object')}`
+export const visitorHeaderSelector = {
+    selector:
+        `:matches(${HEADER_READ}[arguments.0.value=${VISITOR_HEADER}], ` +
+        `${HEADER_READ}[arguments.0.type="TemplateLiteral"][arguments.0.expressions.length=0]` +
+        `[arguments.0.quasis.0.value.cooked=${VISITOR_HEADER}], ` +
+        `MemberExpression[computed=true][property.value=${VISITOR_HEADER}]${HEADERS_OBJECT('object')})`,
+    message:
+        "Read the visitor's address with clientAddress(request), and their origin with publicOrigin(request), from " +
+        '@sssb/kit/adapters/edge-headers, never from a forwarded header: behind CloudFront the first X-Forwarded-For ' +
+        "entry, X-Real-IP and CF-Connecting-IP hold what the visitor wrote, and Host is the server's own.",
+}
+// The request, by its name: `req`, `request`, `nextRequest` (an optional leading underscore), or a `.req`/`.request`
+// member (`ctx.request`). A `.url` or `.nextUrl` on anything else (a webhook's, a row's, a form field's) is someone
+// else's URL, and reading its origin, or building on it, is correct code.
+const REQUEST_IDENTIFIER = '/^_?(req|request|nextRequest)$/i'
+const REQUEST_MEMBER = '/^(req|request)$/'
+const requestNamed = (at) =>
+    `:matches([${at}.type="Identifier"][${at}.name=${REQUEST_IDENTIFIER}], ` +
+    `[${at}.type="MemberExpression"][${at}.property.name=${REQUEST_MEMBER}])`
+const REQUEST_URL = (at) =>
+    `:matches([${at}.type="NewExpression"][${at}.callee.name="URL"][${at}.arguments.length=1]` +
+    `[${at}.arguments.0.property.name="url"]${requestNamed(`${at}.arguments.0.object`)}, ` +
+    `[${at}.property.name="nextUrl"]${requestNamed(`${at}.object`)})`
+const ORIGIN_PART = '/^(origin|host|hostname|href)$/'
+const URL_ON_REQUEST =
+    'NewExpression[callee.name="URL"][arguments.length=2][arguments.1.property.name=/^(url|nextUrl)$/]' +
+    requestNamed('arguments.1.object')
+const requestOriginSelectorWith = (urlOnRequest) =>
+    `:matches(MemberExpression[property.name=${ORIGIN_PART}]${REQUEST_URL('object')}, ` +
+    `VariableDeclarator${REQUEST_URL('init')} > ObjectPattern > Property[key.name=${ORIGIN_PART}], ` +
+    `${urlOnRequest}, ` +
+    `Property[key.name="baseUrl"][value.type="MemberExpression"][value.property.name="url"]${requestNamed('value.object')})`
+/**
+ * The file Next runs as the app's proxy, where a same-origin redirect or rewrite is relativized: `proxy.*` or
+ * `middleware.*` in a directory named `src`, as the app's `src/proxy.ts` is (the rule runs on the app's `src/` alone). A `middleware.ts` elsewhere, a route
+ * handler's wrapper say, is not Next's proxy, and its redirect is not relativized.
+ */
+export const PROXY_FILE = /(^|[\\/])src[\\/](proxy|middleware)\.[cm]?[jt]sx?$/
+const REQUEST_ORIGIN_MESSAGE =
+    'Build an absolute URL on publicOrigin(request) from @sssb/kit/adapters/edge-headers: behind SssbApp, the ' +
+    "request's own URL names the server's bind address and port, not the app's. Its path and " +
+    'search parameters are right as they are.'
+export const requestOriginSelector = {
+    selector: requestOriginSelectorWith(URL_ON_REQUEST),
+    message: REQUEST_ORIGIN_MESSAGE,
+}
+/** The same, in the app's proxy, where a URL on the request handed straight to a redirect or rewrite is right. */
+export const proxyRequestOriginSelector = {
+    selector: requestOriginSelectorWith(
+        `${URL_ON_REQUEST}:not(CallExpression[callee.property.name=/^(redirect|rewrite)$/] > NewExpression)`,
+    ),
+    message: REQUEST_ORIGIN_MESSAGE,
+}
+
 // Every pattern frozen, its lists included: the rules read them when they run, and an app's config is code that could
 // reach this module by its file path.
 for (const pattern of [
@@ -328,6 +406,9 @@ for (const pattern of [
     runModeEnvDestructureSelector,
     appRealAdapterDynamicSelector,
     a11yLiteralSelector,
+    visitorHeaderSelector,
+    requestOriginSelector,
+    proxyRequestOriginSelector,
 ]) {
     if (pattern.group) Object.freeze(pattern.group)
     Object.freeze(pattern)

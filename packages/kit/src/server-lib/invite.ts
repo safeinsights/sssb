@@ -32,7 +32,11 @@ export async function sendOrgInvite(input: {
     role: Role
     /** The org's current members (the caller already fetched them for its duplicate check). */
     members: Membership[]
-    /** Any absolute URL on this host; the accept link is built against its origin. */
+    /**
+     * The app's public origin, `publicOrigin(request)` from `@sssb/kit/adapters/edge-headers`, or any absolute URL on
+     * it; the accept link is built against its origin. Never `request.url`, whose host behind `SssbApp` is the
+     * server's own (`localhost`).
+     */
     baseUrl: string
 }): Promise<Membership> {
     // The adapter builds the link the invitee follows, from the app's accept page: only it knows what that page reads
