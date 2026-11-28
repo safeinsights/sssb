@@ -1,4 +1,5 @@
 import { InvalidTransitionError } from '../../core/state-machine'
+import { shuffled } from '../../db/drain-budget'
 import { recordJobStatus } from '../../db/jobs'
 import { type JobRunPorts, runJobInProcess } from '../../jobs/run-in-process'
 import type { JobsPort } from '../../ports/jobs'
@@ -73,9 +74,12 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
         },
         // Fault-isolated per tenant and per job, as `runDueSchedules` is per schedule: one failure is logged and the
         // sweep goes on, and nothing it throws reaches the tick.
-        async sweep(now) {
+        async sweep(now, budget) {
             const before = new Date(now.getTime() - IN_PROCESS_LOST_AFTER_MS).toISOString()
             let failed = 0
+            // Bounded by the tick's budget (safeinsights/sssb#252): no job failed after its deadline or past its count.
+            const clock = budget?.clock ?? Date.now
+            const spent = () => budget !== undefined && (failed >= budget.maxItems || clock() >= budget.deadline)
             let tenants: { id: string }[]
             try {
                 tenants = await ports.db.getDb().selectFrom('tenants').select('id').execute()
@@ -83,7 +87,9 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                 console.warn(`SSSB jobs: the in-process sweep could not list tenants: ${messageOf(error)}`)
                 return 0
             }
-            for (const tenant of tenants) {
+            // In a fresh random order under a bound, so a sweep it stops short does not always leave the same tenants.
+            for (const tenant of budget ? shuffled(tenants, budget, (t) => t.id) : tenants) {
+                if (spent()) break
                 let lost: { id: string; status: string }[]
                 try {
                     lost = await ports.db.withTenant(tenant.id, (trx) =>
@@ -116,6 +122,7 @@ export function createInProcessJobs(ports: JobRunPorts, notify: NotifyJobTermina
                     continue
                 }
                 for (const { id, status } of lost) {
+                    if (spent()) break
                     try {
                         await recordJobStatus(ports.db, tenant.id, id, 'failed', {
                             now,

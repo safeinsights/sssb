@@ -64,7 +64,7 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
   neither app's: **never reach for an app's slugs, tables or job kinds in a `packages/kit` test** —
   that regression is what the odd vocabulary exists to make obvious, and it is what used to leave
   deleting the showcase with a red gate.
-- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 146 published subpaths
+- **`@sssb/kit`'s public surface is `packages/kit/package.json`'s `exports` map** — 148 published subpaths
   (its `exports` keys minus `.` and `./package.json`; count it, never remember it). Lint-enforced
   (`sssb/public-surface`, which reads that map, so the map is the only list). Adding a module does NOT
   publish it; add the `exports` line deliberately, and never widen the map to silence the rule.
@@ -225,9 +225,13 @@ screen does; a sortable table does not (`docs/recipes/list-kit.md`).
 - **Scratch directories in this repo's tests**: `tests/support/tmp-dir.ts` re-exports `@sssb/tools/testing/tmp-dir`,
   and the framework's own tests use its copy, `packages/kit/src/testing/tmp-dir.ts`; `sssb/no-direct-mkdtemp` bans the
   raw calls in test files, and `test:unit`, `test:coverage` and `test:contract` run through `sssb check-tmpdir-leak`.
-- **E2E `workers` stays 1** (the old "10GB VM / OOM" reason was wrong; measured). Parallelism belongs where the worlds
-  are separate: across apps locally, across CI shards. Read
-  [safeinsights/sssb#99](https://github.com/safeinsights/sssb/issues/99) before raising it.
+- **E2E `workers` is 1 by default, and can be raised only on a production build.** In the showcase, `E2E_BUILD=1
+E2E_WORKERS=<n>` gives each Playwright worker a server and a world of its own (`apps/showcase/tests/e2e/support/worlds.ts`;
+  `next dev` allows one server per app directory, so under it there is one worker). It stays 1 on CI because it does not
+  pay there: measured 2026-11-27, two workers take the showcase's shards from 1.5-2.0 to 1.1-1.4 min of tests, four no
+  further, and a pull request waits on `lint-typecheck-unit` (6 to 10 min) whatever the e2e shards do. The starter has no
+  per-worker worlds: its `workers` stays 1, as the guide says for an adopter's app. Read
+  [safeinsights/sssb#99](https://github.com/safeinsights/sssb/issues/99) and the decision log before raising either.
 - Component workshop: `pnpm ladle` (screens AND react-email templates).
 - **The dev ticker** (the guide's dev loop) is `@sssb/tools/ticker` (start, stop, status), policy-free; all of it
   lives in `packages/tools/src/tick`. Here `pnpm tick` ticks the showcase and `pnpm tick:starter` the starter, and

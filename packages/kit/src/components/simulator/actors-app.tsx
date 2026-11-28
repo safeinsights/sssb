@@ -11,7 +11,7 @@ import { chipStyle } from './people-app'
  * router- and transport-blind — and catalog-blind: WHICH counterparties exist is app vocabulary, so
  * their copy belongs in the app's catalog and arrives here as finished strings, exactly like
  * SimulatorExtraTab.label). The
- * real glue hands over a same-origin iframe src pointing at the actor's own page; the static twin
+ * app on the server host hands over a same-origin iframe src pointing at the actor's own page; the static twin
  * hands over an already-mounted ActorShell node running inline. A discriminated union keeps the two
  * shapes mutually exclusive rather than an always-both-optional prop bag.
  */

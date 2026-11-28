@@ -11,7 +11,7 @@ import { readJsonObject, withPortErrors } from '../respond'
  * org — the same two boundaries as tickets/jobs (ADR-0004). GET lists the team's ready
  * attachments each with a signed download URL. POST is the MINT step of a two-step upload: it authorizes,
  * builds a SERVER-SIDE storage key, records a pending row, and hands back a presigned upload target the
- * browser POSTs the file to directly; POST /api/attachments/[id]/confirm then finalizes the row.
+ * browser sends the file to directly (a POST form or a PUT, whichever the store gives); POST /api/attachments/[id]/confirm then finalizes the row.
  */
 export async function GET(): Promise<Response> {
     return withPortErrors(async () => {
@@ -47,11 +47,14 @@ export async function POST(request: Request): Promise<Response> {
         }
         if (typeof kind !== 'string' || !isAttachmentKind(kind))
             return Response.json({ error: 'unknown-kind' }, { status: 400 })
-        // Fail fast when the client already knows the file is over the ceiling (the upload target
-        // enforces it for real — this just avoids minting a doomed pending row).
-        if (typeof sizeBytes === 'number' && sizeBytes > ATTACHMENT_MAX_BYTES) {
-            return Response.json({ error: 'too-large' }, { status: 400 })
+        // The browser says how big the file is. A POST upload target holds the ceiling in its policy whatever the
+        // client claims, but a PUT has none: it signs THIS size into the URL, so the store holds the upload to it
+        // (and confirm re-checks what was stored). Refuse one that is not a size, or is over the ceiling, here, which
+        // also avoids minting a doomed pending row.
+        if (typeof sizeBytes !== 'number' || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+            return Response.json({ error: 'invalid-size' }, { status: 400 })
         }
+        if (sizeBytes > ATTACHMENT_MAX_BYTES) return Response.json({ error: 'too-large' }, { status: 400 })
         const type = contentType?.trim() || 'application/octet-stream'
         // Printable ASCII only: control chars (esp. newlines) would ambiguate the fake target's
         // canonical HMAC string and pollute the real S3 policy/Content-Type header.
@@ -69,6 +72,13 @@ export async function POST(request: Request): Promise<Response> {
         // The storage key is built ENTIRELY server-side — tenant + a fresh uuid + the sanitized name —
         // so the client can never steer where bytes land (the resultKey prefix-lock lesson).
         const storageKey = `attachments/${tenantId}/${crypto.randomUUID()}/${sanitizeFilename(filename)}`
+        // The target is minted BEFORE the pending row is written: an adapter that refuses (a misconfigured store, a size
+        // it cannot sign) then leaves no orphan row behind.
+        const upload = await storage.createUploadTarget(storageKey, {
+            contentType: type,
+            maxBytes: ATTACHMENT_MAX_BYTES,
+            sizeBytes,
+        })
         const { id } = await createAttachment(db, {
             tenantId,
             orgId,
@@ -77,10 +87,6 @@ export async function POST(request: Request): Promise<Response> {
             contentType: type,
             storageKey,
             uploadedByUserId: user.id,
-        })
-        const upload = await storage.createUploadTarget(storageKey, {
-            contentType: type,
-            maxBytes: ATTACHMENT_MAX_BYTES,
         })
         // Audit trail: record the mint. The matching attachment.confirmed event lands when the
         // browser finalizes the upload — a minted-but-never-confirmed row leaves only this event, which

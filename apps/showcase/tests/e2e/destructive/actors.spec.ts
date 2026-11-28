@@ -1,10 +1,10 @@
 import { rmSync } from 'node:fs'
-import path from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { openSimulatorPanel } from '../support/simulator'
 import { signInAs } from '../support/people'
 import { setWorldFlag } from '../support/world-flags'
 import { coldRoute } from '../support/budgets'
+import { worldPath } from '../support/worlds'
 
 /**
  * THE AUTOMATED ACTOR. service-flow.spec.ts drives the service/webhook loop BY HAND; this spec proves
@@ -21,7 +21,7 @@ import { coldRoute } from '../support/budgets'
 
 test.describe.configure({ mode: 'serial' })
 
-const simulatorState = path.resolve(__dirname, '../../../.data/simulator/state.json')
+const simulatorState = worldPath('simulator', 'state.json')
 
 function clearSimulatorState() {
     try {

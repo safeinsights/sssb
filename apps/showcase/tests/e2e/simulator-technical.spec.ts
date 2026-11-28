@@ -1,8 +1,8 @@
 import { rmSync } from 'node:fs'
-import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import { openSimulatorPanel } from './support/simulator'
 import { signInAs } from './support/people'
+import { worldPath } from './support/worlds'
 
 async function openSimulatorTab(
     page: import('@playwright/test').Page,
@@ -16,7 +16,7 @@ async function openSimulatorTab(
 // bleed into other suites or reruns, even if a test fails before restoring it.
 test.afterAll(() => {
     try {
-        rmSync(path.resolve(__dirname, '../../.data/analytics/flags.json'))
+        rmSync(worldPath('analytics', 'flags.json'))
     } catch {
         // never existed / already gone — fine
     }
@@ -38,7 +38,7 @@ test('page views are captured through the analytics port and shown in the Simula
 
     await openSimulatorTab(page, 'events')
 
-    // the glue polls /api/simulator/events every few seconds while this tab is open; Playwright's
+    // SSSB's Simulator host polls /api/simulator/events every few seconds while this tab is open; Playwright's
     // own assertion retrying covers the wait, no manual reload needed (unlike the old RSC page).
     await expect(page.getByTestId('events-list')).toContainText('page_view', { timeout: 15_000 })
 })
@@ -49,11 +49,11 @@ test('the demo-banner feature flag toggles an app-wide banner via the analytics 
     await openSimulatorTab(page, 'snapshots')
     await expect(page.getByTestId('demo-banner-flag')).toHaveCount(0)
 
-    // toggle on — the glue POSTs to /api/simulator/flags then reloads; the layout re-reads the
+    // toggle on — the host POSTs to /api/simulator/flags then reloads; the layout re-reads the
     // flag. Banner-visible implies that reload has committed, so later navigations can't race it.
     await page.getByTestId('flag-toggle-demo-banner').click()
     await expect(page.getByTestId('demo-banner-flag')).toBeVisible()
-    // and it's app-wide, not just on this page (a full goto avoids racing the glue's reload)
+    // and it's app-wide, not just on this page (a full goto avoids racing the host's reload)
     await page.goto('/en/dashboard')
     await expect(page.getByTestId('demo-banner-flag')).toBeVisible()
 

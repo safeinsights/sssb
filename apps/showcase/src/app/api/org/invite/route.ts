@@ -1,3 +1,4 @@
+import { publicOrigin } from '@sssb/kit/adapters/edge-headers'
 import { auth } from '@sssb/kit/adapters/index'
 import { authorize } from '@sssb/kit/authz/authorize'
 import { isAssignableRole } from '@sssb/kit/core/roles'
@@ -50,7 +51,7 @@ export async function POST(request: Request): Promise<Response> {
             email: inviteEmail,
             role: body.role,
             members: existing,
-            baseUrl: request.url,
+            baseUrl: publicOrigin(request),
         })
 
         return Response.json({ membership })

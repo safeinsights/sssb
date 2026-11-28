@@ -85,7 +85,7 @@ function ClearMailControl({ onClear }: { onClear: () => void }) {
 /**
  * Router-agnostic Mail tab (ADR-0006 twin lives in @sssb/kit/demo-static): a per-person inbox over the
  * fake email adapter's catch store, plus an "all mail" scope, styled like a small mail client.
- * Data and callbacks only — the glue (src/app/[locale]/simulator-glue.tsx) owns fetching, scope
+ * Data and callbacks only — the host (`./simulator-host`) owns fetching, scope
  * persistence, and deciding what a link is allowed to do.
  */
 export function MailApp({

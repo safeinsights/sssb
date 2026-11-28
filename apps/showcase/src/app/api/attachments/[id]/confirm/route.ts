@@ -1,20 +1,22 @@
 import { auth, db, storage } from '@sssb/kit/adapters/index'
 import { authorize } from '@sssb/kit/authz/authorize'
 import { recordAuditEvent } from '@sssb/kit/db/audit'
+import { ATTACHMENT_MAX_BYTES } from '@/domain/attachments'
 import { attachmentForOrg, confirmAttachment } from '@/domain/db/attachments'
 import { resolveOrgContext } from '../../../org-context'
 import { requireUuidParam, withPortErrors } from '../../../respond'
 
 /**
- * The CONFIRM step of a two-step upload. After the browser has POSTed the file to the mint
+ * The CONFIRM step of a two-step upload. After the browser has sent the file (a POST or a PUT) to the mint
  * step's upload target, it calls this to finalize the pending attachment row. We re-authorize the same
  * create ability (finalizing one's own upload) FIRST, against the active org, so a person who may not
  * finalize gets the same 403 whether or not the id exists; then resolve the row org-scoped (a foreign
  * org's id is indistinguishable from a missing one — jobForOrg doctrine, safeinsights/sssb#137); then
- * VERIFY the object actually landed in storage before recording its true size and flipping status to ready. Verifying here is
- * what stops a caller minting + confirming without ever uploading, which would leave a dead download
- * link. Real-mode note: existence+size come from a GetObject (the storage port has no head); a
- * HeadObject optimization is a cutover nicety, not correctness.
+ * VERIFY the object actually landed in storage, and is within the ceiling, before recording its true size and
+ * flipping status to ready. Verifying here is what stops a caller minting + confirming without ever uploading,
+ * which would leave a dead download link. The size is checked from `head` (the bytes are not read), because a PUT
+ * upload target holds the ceiling only as far as the store honours the signed length
+ * (`StoragePort.createUploadTarget`): an object over it is deleted and refused, never marked ready.
  */
 export async function POST(_request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
     return withPortErrors(async () => {
@@ -32,12 +34,24 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         const attachment = await attachmentForOrg(db, tenantId, orgId, id)
         if (!attachment) return Response.json({ error: 'not found' }, { status: 404 })
 
-        const object = await storage.get(attachment.storageKey)
-        if (!object) return Response.json({ error: 'upload-missing' }, { status: 400 })
+        // A row that is no longer pending is already finalized: a re-confirm (double-click, retried request) is
+        // idempotent and touches nothing in storage. It must never reach the ceiling check below, which deletes: a
+        // ready attachment's object is not this request's to remove (a later, lower ceiling would otherwise delete
+        // an old good file and leave a ready row with a dead download link).
+        if (attachment.status !== 'pending') {
+            return Response.json({ attachmentId: id, idempotent: true }, { status: 200 })
+        }
 
-        const updated = await confirmAttachment(db, tenantId, orgId, id, object.body.byteLength)
+        const stored = await storage.head(attachment.storageKey)
+        if (!stored) return Response.json({ error: 'upload-missing' }, { status: 400 })
+        if (stored.size > ATTACHMENT_MAX_BYTES) {
+            await storage.delete([attachment.storageKey])
+            return Response.json({ error: 'too-large' }, { status: 400 })
+        }
+
+        const updated = await confirmAttachment(db, tenantId, orgId, id, stored.size)
         if (updated === 0) {
-            // Already ready: a re-confirm (double-click, retried request) is idempotent — and the
+            // Became ready between the status read above and this write (two confirms at once): idempotent — and the
             // audit trail records only what actually happened, so NO second confirmed event.
             return Response.json({ attachmentId: id, idempotent: true }, { status: 200 })
         }

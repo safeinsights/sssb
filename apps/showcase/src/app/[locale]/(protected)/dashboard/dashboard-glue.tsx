@@ -9,6 +9,8 @@ import { TicketsCard, type TicketAssignee, type TicketItem } from '@/components/
 import type { AttachmentKind } from '@/domain/attachments'
 import { type JobStatus, jobStatusMachine } from '@sssb/kit/core/jobs'
 import { askAssistant } from './ask-assistant'
+import { sendToUploadTarget } from './send-to-upload-target'
+import type { UploadTarget } from '@sssb/kit/ports/storage'
 
 interface EscalationLists {
     sent: EscalationItem[]
@@ -93,8 +95,8 @@ export function DashboardGlue({
 
     /**
      * The three-step browser-direct upload, adapter-agnostic: (1) MINT — ask the server for a presigned
-     * target + a pending attachment row; (2) POST the file straight to that target (the fake local
-     * endpoint, or S3 in real mode — identical client code, the fields just differ); (3) CONFIRM so the
+     * target + a pending attachment row; (2) send the file straight to that target (the fake local
+     * endpoint, or the store in real mode — identical client code, whichever form the target has); (3) CONFIRM so the
      * server verifies the object landed and finalizes the row. Throws on any failure so the card shows
      * its error state; refreshes the list on success.
      */
@@ -113,13 +115,12 @@ export function DashboardGlue({
             if (!minted.ok) throw new Error('mint failed')
             const { attachmentId, upload } = (await minted.json()) as {
                 attachmentId: string
-                upload: { url: string; fields: Record<string, string> }
+                upload: UploadTarget
             }
 
-            const form = new FormData()
-            for (const [name, value] of Object.entries(upload.fields)) form.append(name, value)
-            form.append('file', file)
-            const uploaded = await fetch(upload.url, { method: 'POST', body: form })
+            // The target comes in two forms (`UploadTarget`): a POST of multipart fields then the file, or a PUT of the
+            // file as the body with the headers it names. The store the deployment runs decides which.
+            const uploaded = await sendToUploadTarget(upload, file)
             if (!uploaded.ok) throw new Error('upload failed')
 
             const confirmed = await fetch(`/api/attachments/${attachmentId}/confirm`, { method: 'POST' })

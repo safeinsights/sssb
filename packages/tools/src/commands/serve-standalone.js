@@ -60,7 +60,8 @@ export async function run(args) {
     // directory, and this child's is `serverDir`, somewhere inside `.next/standalone/…`. Left alone it writes its
     // world THERE, which is invisible from the app directory: `rm -rf .data` looks like it reset everything and
     // resets nothing, so state leaks between runs. That cost two e2e failures that looked like product bugs before
-    // the cause was found. An explicit APP_DATA_DIR still wins, which is how the shard runner gives each shard its own.
+    // the cause was found. An explicit APP_DATA_DIR still wins, which is how SSSB's showcase gives each of its e2e workers a
+    // world of its own (its tests/e2e/support/worlds.ts), a server per worker over one build.
     const dataDir = process.env['APP_DATA_DIR'] ?? path.join(root, '.data')
 
     console.log(`serving standalone build on http://localhost:${port} (world: ${dataDir})`)
