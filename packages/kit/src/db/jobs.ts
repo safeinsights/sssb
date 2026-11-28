@@ -4,7 +4,6 @@ import { InvalidTransitionError } from '../core/state-machine'
 import type { DbPort } from '../ports/db'
 import { NotFoundError } from '../ports/errors'
 import { type JobsPort, mayHaveStarted } from '../ports/jobs'
-import { type HintedTenant, raiseHint, tenantsToList } from './due-hints'
 import {
     beforeDeadline,
     type DrainBudget,
@@ -235,18 +234,14 @@ export async function runDueRetries(
     let failed = 0
     if (!beforeDeadline(limit)) return { started, failed, deferred: 0, stoppedBy: 'time' }
     await db.ready()
-    // With due hints (the tick's), only the tenants whose hint has come are listed (./due-hints.ts, #202).
-    const hinted = limit.dueHints === true
-    const tenants: HintedTenant[] = hinted
-        ? await tenantsToList(db, 'retries', now)
-        : (await db.getDb().selectFrom('tenants').select('id').execute()).map((t) => ({ id: t.id, hintVersion: null }))
+    const tenants = await db.getDb().selectFrom('tenants').select('id').execute()
     const perTenant = listingLimit(limit)
     const left = await drainFairly(
         tenants,
         limit,
         (tenantId) =>
-            db.withTenant(tenantId, async (trx) => {
-                const rows = await trx
+            db.withTenant(tenantId, (trx) =>
+                trx
                     .selectFrom('jobs')
                     .select('id')
                     .where('status', '=', 'queued')
@@ -255,18 +250,8 @@ export async function runDueRetries(
                     .orderBy('run_after', 'asc')
                     .orderBy('id', 'asc')
                     .$if(perTenant !== null, (qb) => qb.limit(perTenant ?? 0))
-                    .execute()
-                if (!hinted || rows.length > 0) return { rows }
-                // Nothing due: when the tenant next has work, in the same transaction, so its hint can be raised.
-                const next = await trx
-                    .selectFrom('jobs')
-                    .select((eb) => eb.fn.min('run_after').as('next'))
-                    .where('status', '=', 'queued')
-                    .where('run_after', 'is not', null)
-                    .where('run_after', '>', now)
-                    .executeTakeFirst()
-                return { rows, nextDue: next?.next ? new Date(next.next as Date | string) : null }
-            }),
+                    .execute(),
+            ),
         (row) => row.id,
         async (row, tenantId) => {
             try {
@@ -276,9 +261,6 @@ export async function runDueRetries(
                 failed += 1
             }
         },
-        hinted
-            ? (tenant: HintedTenant, nextDue: Date | null) => raiseHint(db, tenant, 'retries', now, nextDue)
-            : undefined,
     )
     return { started, failed, ...left }
 }
