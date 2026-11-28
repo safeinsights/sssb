@@ -4127,6 +4127,27 @@ describe('round-3 review of the page scan: asset and package allowances narrowed
                 options,
             ),
         ).toBe('reads nothing')
+        // A declaration TypeScript lands on that is not the asset's own sibling (another alias target's) is refused.
+        const split = {
+            compilerOptions: {
+                moduleResolution: 'bundler',
+                module: 'esnext',
+                allowArbitraryExtensions: true,
+                paths: { '@/*': ['./decl/*', './assets/*'] },
+            },
+        }
+        expect(
+            scan(
+                {
+                    'page.tsx': ASSET('@/members.css'),
+                    'assets/members.css': '.x {}\n',
+                    'decl/members.d.css.ts': 'export default {}\n',
+                },
+                {},
+                '',
+                split,
+            ),
+        ).toMatch(/^refusal: `asset` is a default import/)
         // The alias maps to two places: the file exists in one, and TypeScript lands on code in the other.
         const twice = {
             compilerOptions: {
