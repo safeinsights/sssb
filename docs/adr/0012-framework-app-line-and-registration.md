@@ -1221,3 +1221,53 @@ left for a follow-up; growing INERT_IMPORTS instead of a page list, which would 
 `reads-only` name excuse `auth` on a page, which would let an entry re-open the leak #259 found; an allowance for
 `analytics.isFlagEnabled` and `next/og`'s `ImageResponse`, which neither app's pages needed once the pages that read
 data authorized (an image metadata route names `ImageResponse` in its app's entry).
+
+## Addendum (2026-11-27, after review): a reads-only name is pinned to its module
+
+The whole-branch review of the three addenda above (its Z1, Z2 and Z4) found the page allow-list too narrow for pages
+an adopter writes every day, and a `reads-only` gate weaker than the app guide said. This addendum amends both; the
+text above stands as the record of what was first decided.
+
+**A reads-only gate pins each name to a module.** The gate's `names` was a list of export names, and the scan compared
+names only, so an entry written for `corsHeaders`, a constant headers object, also passed a read importing a different
+`corsHeaders` (a query keyed by the request's `?org=`) from another module, while the guide promised each name came
+"from one module, so the reason covers exactly what it reads". `names` is now a map of each exported name to its module,
+`{ corsHeaders: 'src/lib/cors.ts' }`, and the gate holds only when every import of every listed name answers to its pin.
+An import answers to:
+
+- the specifier it writes, when that specifier is not relative and resolves from the app's own directory to the file it
+  resolves to from the importing file: a package (`'next/headers'`, `'@acme/ui'`, `'@sssb/kit/adapters/fake/auth'`) or
+  an alias (`'@/lib/cors'`). A relative specifier names another module from each importing file, so it is never one; and
+  a `node_modules` nearer the importing file than the app's own cannot swap a package under its pin;
+- the path from the app's directory, `/`-separated and with its extension, of the file the import resolves to, and of
+  the file that declares the export, followed through re-exports as the client-component check follows one
+  (`'src/seed/index.ts'`, or `'src/lib/cors.ts'` behind a `src/lib/index.ts` barrel). A file outside the app's
+  directory or through a `node_modules` has no path pin; it is named by its specifier.
+
+An import the scan cannot place answers to nothing, so the gate fails closed. A pin is validated with the entry: a
+non-empty string with no `.` or `..` segment, no leading `/` or `./`, no backslash and no surrounding space, under an
+identifier key, in a map with at least one entry. A read that imports a listed name from another module fails, naming
+the module it imported and the pin, and the entry fails beside it (an `authz-exemptions.mjs` problem), since a reason
+written for one module does not cover another's export of the same name. This replaces the "more than one module"
+check, which caught only a name two governed reads imported from two modules, never one read's wrong module. The format
+changed before 0.10.0 shipped, so no released app wrote the list.
+
+**What a pin still does not prove.** It names the module the reason was written for, not what that module does: an
+edit to `src/lib/cors.ts` that makes `corsHeaders` read rows is still out of sight, as any helper in another module is.
+A package pin trusts the package and its version as a whole. As with every gate, it proves the KIND of read.
+
+**Four page shapes.** The page allow-list grows by three named imports, each a request-scoped reader with no org data:
+React's `use` (next-intl's documented synchronous page unwraps its params with it; `use` only unwraps what it is
+handed, and that value's names are judged), `getLocale` (`next-intl/server`, the request's locale) and `headers`
+(`next/headers`, what the client sent). `cookies` is left out: it carries the session, which a page reads through
+`auth`'s listed members alone. And a page may hand on an imported Server Action by reference, as the whole value of a
+JSX attribute (`<form action={saveItem}>`), when the module that declares it is a `'use server'` file under the app's
+`src`, or its function's own body opens with `'use server'`: the Server Action scan judges it as the POST it is, and
+nothing of it runs in the render. Called, or used any other way, it is counted, as is any other import handed on as a
+prop. A module-level `const` of the page's file is still refused, by design (code of the file can change it); its
+failure now names the ways through, inline or a module the entry lists.
+
+**A read that reads nothing passes under a required gate.** `service/`'s gate (the handler is `withServiceCaller`'s
+call) was checked before the reads-nothing pass, so an inline-headers CORS `OPTIONS` under `api/service/` failed with
+no way through. A read that names nothing but inert values reads no data, so the wrapper that builds the actor it would
+authorize adds nothing: the pass now comes first. Every other read there, and every mutation, still needs the wrapper.

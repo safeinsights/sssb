@@ -9051,3 +9051,68 @@ The two limits accepted in `fix/lost-builds-and-failing-schedules`, now fixed.
 - **Review.** Two Opus rounds. Round 1: the MEDIUM above (fail as found), and two LOWs, no test of the shuffles, and
   the tick's budget type requiring the new fields (now optional). Round 2: no HIGH or MEDIUM; the budget check above,
   and #267. Then a claims pass over the prose.
+
+## Common page shapes pass, and a reads-only name is pinned to its module (2026-11-27, `fix/review-page-shapes`)
+
+The whole-branch review of the authorization changes before 0.10.0 (findings Z1, Z2, Z4, and the doc drift of Z8 and
+Z9). The design is ADR-0012's addendum "a reads-only name is pinned to its module"; the calls it did not settle:
+
+- **Seen failing first.** The reviewer's scratch app with four everyday pages failed four times at `cfe96f2`: a sync
+  page's `use(params)` ("it names `use`"), a page calling `getLocale()` and `headers()`, a page handing
+  `<Form action={saveItem} />` an imported Server Action, and a module-level `const LINKS = [...]`. After: the first three
+  pass, and the fourth still fails, its message naming the ways through.
+- **The page allow-list, three more entries** (pages only; routes keep INERT_IMPORTS), each named in PAGE_IMPORTS with
+  its reason:
+    - `use` (`react`): next-intl's documented sync page, `const { locale } = use(params)`. `use` only unwraps the
+      promise or context it is handed; what it is handed is the page's own parameter or another name, judged where the
+      page writes it.
+    - `getLocale` (`next-intl/server`): the request's locale. The pages entry above left it out because neither app
+      needed it; an adopter's page does.
+    - `headers` (`next/headers`): the request's own headers, what the client sent, no org data.
+    - **Not `cookies`**: it carries the session cookie, and a page reaches the session through `auth`'s listed members
+      alone. No page of either app needs it; a page that does lists it in its entry, pinned to `next/headers`.
+- **A Server Action handed on by reference.** Only as the whole value of a JSX attribute (`action={saveItem}`,
+  `formAction={…}`, any attribute), by a named or default import, when the module that declares it (followed through
+  re-exports, the client-component walk reused as `declaringBinding`) is a file under the app's `src`, not through a
+  `node_modules` (the tree the Server Action walk judges), and its prologue is `'use server'` or the exported function's
+  own body opens with `'use server'`. Counted, as before: a call, `saveItem.bind(null, id)` (a member read: a later
+  allowance could take `.bind` with judged arguments, not taken here), a parenthesized or spread value, an action
+  outside `src` or in a package, a `'use server'` file's re-export of a plain module's function (followed to the plain
+  module, which is no action), and any non-action import handed on as a prop (`load={load}` may run in the render).
+- **The module-level `const` stays refused.** Code of the file can change an object or array there, as four rounds of
+  the reads review showed. Its message now says: write the value inline where the page uses it, render it as a
+  component of the file, or move it into a module and list the import (a primitive `const` is already inert).
+- **Z4: reads-nothing before a required gate.** `judge` asked `service/`'s `withServiceCaller` gate before the
+  reads-nothing pass, so an inline-headers preflight there had no way through. Moved, for route handlers only:
+  `judgePage` keeps its order, since a page cannot be the wrapper's call and the pages changeset refuses an unwrapped
+  page under `service/` as before.
+- **Z2: the pin, and its format.** `names` changes from `['corsHeaders']` to `{ corsHeaders: 'src/lib/cors.ts' }`, before
+  0.10.0 ships, so no released app wrote the list. Decided:
+    - **What a pin matches** (`pinsOf`, computed when the facts are, so `gateHolds` stays a pure check): the import's
+      specifier when it is not relative and resolves from the app's directory to the same file (packages and aliases;
+      a nearer `node_modules` cannot swap the module); and the app-relative path of the file it resolves to and of the
+      file that declares the export. Both the resolved and the declaring file are accepted: a barrel is a module the
+      reason can name, as a package is, and the declaring file is where the value is written.
+    - **A path carries its extension.** `'src/lib/cors.ts'`, never `'src/lib/cors'` or `'src/seed'` for an `index.ts`:
+      a pin names one file, and the failure prints the exact path to copy. Rejected: matching an extensionless path,
+      which would be a second resolution with its own corner cases (`cors.ts` beside `cors/index.ts`).
+    - **Never a pin:** a relative specifier (another module from each file), a path with `.` or `..`, a leading `/` or
+      `./`, a file through a `node_modules` or outside the app (named by its specifier instead). `isGate` refuses the
+      malformed ones with an entry problem that shows the format.
+    - **Both sides fail.** A read importing a listed name from another module fails, and the entry gets a problem
+      naming both modules; the old "more than one module among governed reads" check is gone, since the pin is stricter.
+    - The apps' entries: the starter pins its seed reads to `src/seed/index.ts` and `listAllPeople` to
+      `@sssb/kit/adapters/fake/auth`; the showcase pins `@app/seed`, `@sssb/kit/theme`, the fake auth adapter and
+      `src/app-config/actors.ts`.
+- **Docs.** The pages changeset now shows both entries an app from an earlier generator needs (its layouts' seed reads
+  and its sign-in page, pinned), checked by scanning the reviewer's 0.9.1-generated app with them (0 failures,
+  0 problems), and repeats the may-reach limit beside its self-only advice (Z8). The reads changeset names
+  `withStandardWebhookSignature` (Z9); `/sssb:pre-pr` looks for a read, page or Server Action without `authorize`;
+  `judgeServerAction`'s message names the always-rethrow exception the guide has.
+- **Proofs.** `route-scan.test.ts` ("the page shapes the authorization review found failing") and
+  `app-exemptions.test.ts` (the pin's matching rules, a nearer `node_modules`, the malformed formats, a page handing on
+  an unauthorized action that still fails as an action). Each new guard was mutated and seen red; the list is in the
+  pull request.
+- **Left alone:** Z3 (one URL-keyed entry covers a sibling layout), Z5 (an exact reads-only entry shadows a prefix's
+  gate for the file's other reads), Z6 (`User` read) and Z7 (an intercepting public page, an app-owned `routing`),
+  filed separately.

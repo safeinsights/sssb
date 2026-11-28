@@ -8,9 +8,15 @@
 
 **Action.** required
 
-**What changed.** An app's `authz-exemptions.mjs` takes a new gate kind, `{ kind: 'reads-only', names: [...] }`, for
-a read (GET, HEAD or OPTIONS) that names nothing from outside itself but inert values and the listed imports (by
-exported name); a value of the route's own file cannot be listed (import it from a module instead). Such an entry applies to
+**What changed.** An app's `authz-exemptions.mjs` takes a new gate kind,
+`{ kind: 'reads-only', names: { <exported name>: '<module>' } }`, for a read (GET, HEAD or OPTIONS) that names nothing
+from outside itself but inert values and the listed imports, each by its exported name and from the module the entry
+pins it to; a value of the route's own file cannot be listed (import it from a module instead). The pin is the
+module: the specifier the import writes when it is not relative (`'next/headers'`, `'@acme/ui'`,
+`'@sssb/kit/adapters/fake/auth'`, or an alias such as `'@/lib/cors'`), resolving from the app's directory to the same
+file, or the path from the app's directory, with its extension, of the file the import resolves to or of the file that
+declares the name (`'src/lib/cors.ts'`). A read that imports a listed name from any other module fails, and so does
+the entry, naming both modules: a reason written for one module does not cover another's export of the same name. Such an entry applies to
 reads only: a mutation at its path keeps the gate it had. It is the one kind an app may put outside `src/app/api`,
 under a new key `outsideApi: { files, prefixes }` with keys relative to `src/app` (a public feed, a sitemap route), or
 name one file under SSSB's `webhooks/` prefix (a provider's verification handshake GET, whose POST stays behind the
@@ -26,8 +32,8 @@ An app with such a route may now fail where it passed, and so may an exemption k
 matched by URL too, so `'(public)/'` (only a group) is refused, and `'(g)/webhooks/partner/route.ts'` now overlaps the
 framework's `webhooks/` entry. In the other direction, a framework exemption and an app key now reach a route in a
 group or slot at the same URL, and a key may name a dynamic segment (`items/[id]/route.ts`) for every gate kind. A
-listed name is an import by its exported name: a default import cannot be listed, and the reads one entry covers must
-import each listed name from one module.
+listed name is an import by its exported name: a default import cannot be listed, and every read one entry covers
+imports each listed name from the module it pins.
 
 **To adopt.** Run the conformance suite (`pnpm test:unit`): a route in a route group or slot under `src/app/api` that
 it now names is judged as its URL is (a `service/` route must be wrapped by `withServiceCaller`, as at any other path
@@ -38,15 +44,15 @@ For a read that the check refuses and that reads no org-scoped data, name what i
 export default {
     files: {
         'cors/route.ts': {
-            reason: 'CORS preflight: answers with the constant headers object from ./cors, nothing else',
-            mustMatch: { kind: 'reads-only', names: ['corsHeaders'] },
+            reason: 'CORS preflight: answers with the constant headers object from src/lib/cors.ts, nothing else',
+            mustMatch: { kind: 'reads-only', names: { corsHeaders: 'src/lib/cors.ts' } },
         },
     },
     outsideApi: {
         files: {
             'feed.xml/route.ts': {
                 reason: 'the public feed: published posts only, readable by anyone',
-                mustMatch: { kind: 'reads-only', names: ['publicPosts'] },
+                mustMatch: { kind: 'reads-only', names: { publicPosts: 'src/domain/public-posts.ts' } },
             },
         },
     },
