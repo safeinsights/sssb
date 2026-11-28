@@ -1276,7 +1276,11 @@ class RootScanner {
                 return []
             }
             const captured = specifier.slice(head.length, specifier.length - tail.length)
-            return targets.map((target) => target.replace('*', captured))
+            return targets.map((target) => {
+                // The first `*` of the target takes the captured text as written: `String.replace` would read its `$` patterns (`$&`, `$$`) in it.
+                const at = target.indexOf('*')
+                return at < 0 ? target : `${target.slice(0, at)}${captured}${target.slice(at + 1)}`
+            })
         })
         return mapped.length === 0 ? undefined : mapped.map((target) => path.resolve(this.pathsBase, target))
     }
