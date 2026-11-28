@@ -26,4 +26,4 @@
   after the hour; a retry was failed at once, which armed the next attempt beside a build that might be running and
   dropped that build's result. It now stays `starting` too. A client fault (CodeBuild refused) still fails the attempt
   at once. A runner of your own can say the same: `start` throws an error with `mayHaveStarted: true`, and the port
-  has a `startingRef` (`mayHaveStarted`, `@sssb/kit/ports/jobs`).
+  has a `startingRef` and a `sweep` (`mayHaveStarted`, `@sssb/kit/ports/jobs`).
