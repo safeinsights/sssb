@@ -17,6 +17,8 @@ const codebuild = vi.hoisted(() => ({
     batchFails: false,
     /** When set, the next StartBuild throws an SDK-shaped error with this fault. */
     startFault: undefined as 'client' | 'server' | undefined,
+    /** Called after each BatchGetBuilds answer is made: a test's clock can move there, as a slow read's does. */
+    onBatch: undefined as (() => void) | undefined,
 }))
 vi.mock('@aws-sdk/client-codebuild', () => {
     class StartBuildCommand {
@@ -50,6 +52,7 @@ vi.mock('@aws-sdk/client-codebuild', () => {
                 if (command instanceof BatchGetBuildsCommand) {
                     if (codebuild.batchFails) throw new Error('AccessDeniedException: not authorized to BatchGetBuilds')
                     codebuild.batchCalls.push(command.input.ids)
+                    codebuild.onBatch?.()
                     const builds = command.input.ids.flatMap((id) => {
                         const build = codebuild.builds.get(id)
                         return build ? [{ id, ...build }] : []
@@ -85,6 +88,7 @@ beforeEach(async () => {
     codebuild.batchCalls.length = 0
     codebuild.batchFails = false
     codebuild.startFault = undefined
+    codebuild.onBatch = undefined
 })
 
 const MINUTE = 60_000
@@ -307,6 +311,109 @@ describe('the CodeBuild jobs runner: a bounded sweep (safeinsights/sssb#252)', (
         expect(await jobs.sweep!(new Date(), { maxItems: 3, deadline: 0, clock: () => 1 })).toBe(0)
         expect(await jobs.sweep!(new Date(), { maxItems: 3, deadline: Number.MAX_SAFE_INTEGER })).toBe(1)
         for (const id of ids) expect((await row(id)).status).toBe('failed')
+    })
+
+    test('visits the tenants in a fresh random order under a bound', async () => {
+        const { fakeDb } = await world()
+        const { jobs, notified } = await runner()
+        const { submitJob } = await import('../../db/jobs')
+        const lakeside = await fakeDb
+            .getDb()
+            .selectFrom('tenants')
+            .innerJoin('organizations', 'organizations.tenant_id', 'tenants.id')
+            .select(['tenants.id as tenantId', 'organizations.id as orgId'])
+            .where('tenants.slug', '=', 'lakeside')
+            .executeTakeFirstOrThrow()
+        for (let i = 0; i < 2; i++) {
+            await submitted(jobs)
+            await submitJob(fakeDb, jobs, { ...lakeside, kind: 'export-dockets', payload: {} })
+        }
+        // Every open job is quiet, and CodeBuild has no record of any of their builds: each is lost.
+        await fakeDb
+            .getDb()
+            .updateTable('jobs')
+            .set({ updated_at: new Date(Date.now() - 30 * MINUTE).toISOString() })
+            .where('status', '=', 'queued')
+            .execute()
+        const tenantOf = async (jobId: string) =>
+            (
+                await fakeDb
+                    .getDb()
+                    .selectFrom('jobs')
+                    .select('tenant_id')
+                    .where('id', '=', jobId)
+                    .executeTakeFirstOrThrow()
+            ).tenant_id
+        const failOne = async (random: () => number) => {
+            expect(await jobs.sweep!(new Date(), { maxItems: 1, deadline: Number.MAX_SAFE_INTEGER, random })).toBe(1)
+            return tenantOf(notified.at(-1)!)
+        }
+        // Of two tenants, a random of 0 visits the later id first and one near 1 the earlier; each tenant still has a loss.
+        expect(await failOne(() => 0)).not.toBe(await failOne(() => 0.99))
+    })
+
+    test("asks about a tenant's builds in a fresh random order under a bound", async () => {
+        const { jobs } = await runner()
+        const ids = [
+            await submitted(jobs, 'export-dockets', 30 * MINUTE),
+            await submitted(jobs, 'export-dockets', 30 * MINUTE),
+        ]
+        const builds = await Promise.all(ids.map(async (id) => (await row(id)).runner_ref!))
+        const [low, high] = [...builds].sort()
+        // CodeBuild has no record of either build. A random of 0 reverses the id order of two, so the later is asked
+        // about, and failed, first.
+        expect(await jobs.sweep!(new Date(), { maxItems: 1, deadline: Number.MAX_SAFE_INTEGER, random: () => 0 })).toBe(
+            1,
+        )
+        expect(codebuild.batchCalls).toEqual([[high, low]])
+        expect((await row(ids[builds.indexOf(high!)]!)).status).toBe('failed')
+        expect((await row(ids[builds.indexOf(low!)]!)).status).toBe('queued')
+    })
+
+    test('fails the losses that need no CodeBuild call even when reading builds spends the window', async () => {
+        const { fakeDb, tenantId, orgId } = await world()
+        const { jobs } = await runner()
+        const { submitJob } = await import('../../db/jobs')
+        codebuild.startFault = 'client'
+        await expect(submitJob(fakeDb, jobs, { tenantId, orgId, kind: 'export-dockets', payload: {} })).rejects.toThrow(
+            /StartBuild failed/,
+        )
+        const lostBuild = await submitted(jobs) // CodeBuild has no record of it
+        await fakeDb
+            .getDb()
+            .updateTable('jobs')
+            .set({ updated_at: new Date(Date.now() - 10 * MINUTE).toISOString() })
+            .where('status', '=', 'queued')
+            .execute()
+        const refused = (
+            await fakeDb
+                .getDb()
+                .selectFrom('jobs')
+                .select('id')
+                .where('status', '=', 'queued')
+                .where('runner_ref', '=', 'refused')
+                .executeTakeFirstOrThrow()
+        ).id
+        let now = 0
+        codebuild.onBatch = () => {
+            now = 100 // the read takes the rest of the window
+        }
+        expect(await jobs.sweep!(new Date(), { maxItems: 10, deadline: 50, clock: () => now })).toBe(1)
+        expect((await row(refused)).error).toBe('lost: CodeBuild refused to start its build')
+        expect((await row(lostBuild)).status, 'judged after the deadline: left for the next sweep').toBe('queued')
+    })
+
+    test("fails one read's losses before the next read, so a read cut off by the deadline loses nothing found", async () => {
+        const { jobs } = await runner()
+        // 101 lost builds (CodeBuild has no record of any): two reads, the second of which spends the window.
+        for (let i = 0; i < 101; i++) await submitted(jobs, 'export-dockets', 30 * MINUTE)
+        let now = 0
+        codebuild.onBatch = () => {
+            if (codebuild.batchCalls.length === 2) now = 100
+        }
+        expect(await jobs.sweep!(new Date(), { maxItems: 1000, deadline: 50, clock: () => now })).toBe(100)
+        expect(codebuild.batchCalls.map((ids) => ids.length)).toEqual([100, 1])
+        expect(await jobs.sweep!(new Date()), 'the next sweep fails the rest').toBe(1)
     })
 })
 

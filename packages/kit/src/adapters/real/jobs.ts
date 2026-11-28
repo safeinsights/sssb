@@ -156,10 +156,24 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                     console.warn(`SSSB jobs: the CodeBuild sweep skipped tenant ${tenant.id}: ${messageOf(error)}`)
                     continue
                 }
-                const lost: { id: string; error: string }[] = open
-                    .filter((job) => job.runner_ref === CODEBUILD_REFUSED)
-                    .map((job) => ({ id: job.id, error: 'lost: CodeBuild refused to start its build' }))
-                lost.push(
+                // Each loss is failed as soon as it is known, so time a slow read phase spends never throws away work
+                // already found: first the losses that need no CodeBuild call, then each batch's as it is read.
+                const failAll = async (lost: { id: string; error: string }[]) => {
+                    for (const { id, error } of lost) {
+                        if (spent()) return
+                        try {
+                            if (await failLost({ tenantId: tenant.id, jobId: id, error, now })) failed += 1
+                        } catch (failure) {
+                            console.warn(
+                                `SSSB jobs: the CodeBuild sweep could not fail job ${id}: ${messageOf(failure)}`,
+                            )
+                        }
+                    }
+                }
+                await failAll([
+                    ...open
+                        .filter((job) => job.runner_ref === CODEBUILD_REFUSED)
+                        .map((job) => ({ id: job.id, error: 'lost: CodeBuild refused to start its build' })),
                     ...open
                         .filter(
                             (job) =>
@@ -171,7 +185,7 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                             id: job.id,
                             error: 'lost: its CodeBuild build was never recorded as started',
                         })),
-                )
+                ])
                 const byBuild = new Map<string, string>()
                 for (const job of open) {
                     if (
@@ -182,7 +196,9 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                         byBuild.set(job.runner_ref, job.id)
                     }
                 }
-                const ids = [...byBuild.keys()]
+                // Under a bound the builds are asked about in a fresh random order too, so a tenant with more builds than
+                // one window can read has a different part of them read each tick, not always the first.
+                const ids = budget ? shuffled([...byBuild.keys()], budget, (id) => id) : [...byBuild.keys()]
                 for (let i = 0; i < ids.length; i += BATCH_GET_BUILDS_MAX) {
                     if (spent()) break
                     let answer: BatchGetBuildsCommandOutput
@@ -195,6 +211,7 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                         console.warn(`SSSB jobs: the CodeBuild sweep could not read builds: ${messageOf(error)}`)
                         break
                     }
+                    const lost: { id: string; error: string }[] = []
                     for (const build of answer.builds ?? []) {
                         const jobId = build.id === undefined ? undefined : byBuild.get(build.id)
                         if (!jobId || !build.buildStatus || !ENDED.has(build.buildStatus)) continue
@@ -209,14 +226,7 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                         const jobId = byBuild.get(missing)
                         if (jobId) lost.push({ id: jobId, error: 'lost: CodeBuild has no record of its build' })
                     }
-                }
-                for (const { id, error } of lost) {
-                    if (spent()) break
-                    try {
-                        if (await failLost({ tenantId: tenant.id, jobId: id, error, now })) failed += 1
-                    } catch (failure) {
-                        console.warn(`SSSB jobs: the CodeBuild sweep could not fail job ${id}: ${messageOf(failure)}`)
-                    }
+                    await failAll(lost)
                 }
             }
             return failed

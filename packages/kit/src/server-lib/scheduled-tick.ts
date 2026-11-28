@@ -60,10 +60,10 @@ export interface ScheduledTickResult {
  * server with a 30-second limit: change them only for a server whose limit differs, or to drain less per tick.
  */
 export interface TickBudget {
-    /** The most lost jobs one tick's sweep fails (safeinsights/sssb#252). */
-    maxSweep: number
-    /** Milliseconds from the tick's start after which the sweep judges no more jobs. */
-    sweepWindowMs: number
+    /** The most lost jobs one tick's sweep fails (safeinsights/sssb#252); optional, so a full budget written before it still is one. */
+    maxSweep?: number
+    /** Milliseconds from the tick's start after which the sweep judges no more jobs; optional, as `maxSweep`. */
+    sweepWindowMs?: number
     /** The most due schedules one tick spawns. */
     maxSchedules: number
     /** The most due job retries one tick starts. */
@@ -78,7 +78,7 @@ export interface TickBudget {
     deliveriesWindowMs: number
 }
 
-const DEFAULT_TICK_BUDGET: TickBudget = {
+const DEFAULT_TICK_BUDGET: Required<TickBudget> = {
     maxSweep: DEFAULT_DRAIN_MAX_ITEMS,
     sweepWindowMs: SWEEP_WINDOW_MS,
     maxSchedules: DEFAULT_DRAIN_MAX_ITEMS,
@@ -106,7 +106,7 @@ export async function runScheduledTick(
     const startedAt = clock()
     // Field by field, so a field given as `undefined` (an unset environment value, say) means the default, never a hole.
     const given = options.budget ?? {}
-    const budget: TickBudget = {
+    const budget: Required<TickBudget> = {
         maxSweep: given.maxSweep ?? DEFAULT_TICK_BUDGET.maxSweep,
         sweepWindowMs: given.sweepWindowMs ?? DEFAULT_TICK_BUDGET.sweepWindowMs,
         maxSchedules: given.maxSchedules ?? DEFAULT_TICK_BUDGET.maxSchedules,
