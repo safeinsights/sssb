@@ -8117,6 +8117,43 @@ true })`, in which a backslash escapes the next character in a plain `'…'` lit
 - **Nothing in the framework or the apps writes such a literal** (a search of `packages/kit`, `apps/*/src`, the fixture and
   the seed for a backslash in SQL; the showcase assistant's `escapeLike` escapes a value that is then bound as a parameter, not a literal in the SQL).
 
+## A reads-only gate for public and inert reads (2026-11-27, `fix/authz-public-reads`)
+
+safeinsights/sssb#220. The design and what it accepts are ADR-0012's later 2026-11-27 addendum; the calls it did not
+settle:
+
+- **One gate kind for all three shapes**, not one allowance each. A public feed, a preflight sharing a headers object
+  and a handshake GET differ only in which names they read; a `reads-only` gate lists them, and the scan checks the
+  rest of the handler reads nothing. Rejected: **a second key space for any gate outside `src/app/api`** (a `calls`
+  gate proves only that one call is reached, not that a read outside `api/` does nothing else) and **app entries of
+  any kind under a framework prefix** (a mutation there must keep the framework's gate).
+- **Reads only, by the gate and by the lookup.** The gate never holds for a mutation, and `exemptionFor` skips a
+  `reads-only` entry for a mutating verb, so a POST beside a reads-only GET under `webhooks/` is still judged by
+  `withWebhookSecret`, and one outside `src/app/api` can match no exemption, as before.
+- **An exact entry still wins over its prefix for a read.** A GET under a `reads-only` entry that is also wrapped by the
+  prefix's guard is judged by the entry and fails if it names more; rejected: passing a read on either gate, which made
+  a prefix's gate override every exact entry beneath it (an existing test caught it in the first draft).
+- **`names` are identifiers**, not dotted names: an import's exported name (never a default import, whose local name the author picks), never a
+  value of the route's own file (below). A namespace import is refused outright, since it names the whole module, and so is
+  an aliased one (`import { headers as cors }`), as for every gate.
+- **Narrowed in review.** The first draft let a listed declaration of the file excuse whatever it held (an alias of an
+  import, a helper reading the database, a `declare`d `fetch`): the first fix had the scan read a listed `const` or
+  function and count its names, and refuse an ambient, exported, mutable or import-equals binding. It allowed a reads-only file
+  under `simulator/` too, which the issue did not ask for and whose 404-in-real guarantee such a read does not keep:
+  `webhooks/` only. A listed name nobody reads is a problem. The second round found a listed `const` that the file
+  fills elsewhere (`cache.set(…)` in a POST): a listed declaration used anywhere outside the read is now refused.
+  The third found the same thing through a sibling destructured binding (`const { get, set } = …`). Three rounds of
+  one shape meant following declarations of the file was the wrong tool. A fourth found a literal `const` filled
+  through the handler itself (code of the file calling `GET()` and writing to what it returns). So no value of the
+  route's own file can be listed at all, only imports; a shared headers object goes in a module. Rejected:
+  **following a listed declaration of the file and checking every write to it**, which four rounds showed cannot be
+  closed by syntax.
+  Review also found route groups and parallel-route slots escaping path-keyed rules (`api/(g)/service/…`,
+  `api/@s/service/…` past the `service/` gate), older than this change; the scan now matches by URL, and refuses an
+  intercepting route, whose URL a path cannot tell. That can fail an app that passed, hence `minor`, Action required.
+- **Not built: #221** (pages and metadata routes). It extends the scan to files it does not read today, a change of its
+  own, in its own PR.
+
 ## Lost CodeBuild builds, and schedules that keep failing (2026-11-27, `fix/lost-builds-and-failing-schedules`)
 
 Two fixes in one change. safeinsights/sssb#231: a CodeBuild job whose build died without posting its webhook stayed
@@ -8327,6 +8364,57 @@ catchRequests })`), which the conformance check uses so it never touches an app'
 - **Not done.** The check proves the adapters, not an app's own consumer: whether a route or a screen shows the failure is
   its own test (the showcase's assistant route has one, `route.test.ts`). The port's docs and the guide say what a stream
   can throw and how to test the path.
+
+## A world per e2e worker, and `workers` left at 1 on CI (2026-11-27, `fix/e2e-worker-worlds`)
+
+`safeinsights/sssb#99`: every Playwright worker drove one server holding one `.data`, so `workers` could not be raised
+without specs touching each other's state. Now, in the showcase, `E2E_BUILD=1 E2E_WORKERS=<n>` gives each worker a
+server and a world of its own (`apps/showcase/tests/e2e/support/worlds.ts`, read by `playwright.config.ts` and by every
+spec or helper that reads or writes its world on disk).
+
+- **The design: a server per worker over one production build.** Worker 0 is the suite as it was (the config's first
+  web server on the app's port, the app's `.data`), so one worker changes nothing. Worker `k` gets another
+  `start:e2e` (`sssb serve-standalone`) of the same build, on a port in a per-checkout band (10000 to 19999, below the
+  ports Linux hands out from 32768) and with
+  `APP_DATA_DIR` at an emptied directory under the system's temp directory. The config lists those servers after the
+  first; Playwright starts them in order, and every worker loads the config with `TEST_PARALLEL_INDEX` set, so
+  `baseURL` and `worldPath(...)` follow the worker with no change to a spec's imports (`docs/build-notes.md`, "A world
+  per Playwright worker, from the config alone"). Eleven files that named `.data` by a path relative to themselves
+  now call `worldPath`.
+- **Rejected: one server with a world per request** (a header or cookie keyed through `AsyncLocalStorage` instead of
+  `APP_DATA_DIR`). It is the seam safeinsights/sssb#161 wants for a public demo, but every fake adapter, the pglite
+  instance, the world clock and the Simulator's state would have to become per-world inside one process, and nothing
+  short of that is safe. Rejected: **a worker-scoped fixture that starts each worker's server** (Playwright's documented
+  pattern): it needs every spec to import `test` from a support module, for nothing the config cannot do on its own. Rejected: **a server per worker on `next dev`**: Next 16 allows one dev server per app directory
+  (safeinsights/sssb#113's first attempt), and a `distDir` per worker would put a test-only concern in the app's config
+  and pay a cold compile per worker. So the worlds need `E2E_BUILD`, and asking for more than one worker without it is
+  an error that says so.
+- **Measured on CI** (PR #245, temporary commits that set `E2E_WORKERS` on the e2e job and let the destructive shard use
+  it, reverted): three runs at each count, every shard green, no flaky test.
+
+    | workers                                                         | `e2e (showcase)`, 60 tests | `e2e (showcase-destructive)`, 16 tests | job (showcase / destructive) |
+    | --------------------------------------------------------------- | -------------------------- | -------------------------------------- | ---------------------------- |
+    | 1 (before: #233's last run; the destructive range over 20 runs) | 2.0 min                    | 1.5 to 2.0 min                         | 166 s / 165 s                |
+    | 2                                                               | 1.2 to 1.4 min             | 1.1 to 1.3 min                         | 134 to 151 s / 104 to 123 s  |
+    | 4                                                               | 1.3 to 1.7 min             | 1.1 to 1.2 min                         | 129 to 152 s / 109 to 129 s  |
+
+    Four workers buy nothing over two on a four-CPU runner, where each worker brings a browser and a server. Locally, on
+    a production build at three workers (load average 27 at the start): the showcase's 60 tests in 1.1 min and its 16
+    destructive ones in 1.3 min, against 5.8 min for the destructive project alone under `next dev` (at load ~330).
+
+- **`workers` stays 1 on CI, because it does not pay there.** A pull request waits on `lint-typecheck-unit` (6.3 to 9.6 min in these runs and #233's last) and on `adoption-probe` and `pack-and-consume` (4.4 to 5.6 min); the e2e shards finish inside
+  3 min at any worker count, so more workers save runner time and no one's wait. When e2e becomes the slowest job, the
+  switch is `E2E_WORKERS` on the e2e job, plus dropping `--workers=1` from `sssb ci e2e --project destructive` for an
+  app whose config gives each worker a world (an adopter's app does not, so that flag must stay for them).
+- **Guards, from review:** with more than one world the first server is never reused (a dev server or an earlier
+  build adopted on the app's port would leave the others serving an older build); a worker past the last world
+  (`--workers` above `E2E_WORKERS`) fails at once, naming `E2E_WORKERS`, rather than driving a port nothing listens on;
+  and each world is emptied by its server's own `APP_DATA_DIR`, with no path in a shell command. A port in a worker's band that another
+  program holds (this machine's Dropbox listens on 17600 and 17603) fails that server's start loudly, as a port taken in
+  `@sssb/tools/ports`' own bands does.
+- **The starter keeps one worker and no worlds**: its suite is four tests in under 30 s, and the guide's rule
+  ("Playwright's `workers` stays 1") stays true for an adopter's app, which has no `worlds.ts`. Nothing that ships
+  changes but a comment in `serve-standalone.js` (an empty changeset).
 
 ## The Data API's rollback keeps the work's error, and its resume probes are bounded (2026-11-27, `fix/data-api-rollback-and-probes`)
 

@@ -2,6 +2,7 @@ import { rmSync } from 'node:fs'
 import path from 'node:path'
 import { expect, type Page, test } from '@playwright/test'
 import { openSimulatorPanel } from '../support/simulator'
+import { worldPath } from '../support/worlds'
 
 /**
  * Destructive: advancing the Simulator world clock mutates persisted world state (the clock offset in
@@ -13,7 +14,7 @@ import { openSimulatorPanel } from '../support/simulator'
  * residue afterwards so the world is left at real time with no stray digest mail.
  */
 
-const dataRoot = path.resolve(__dirname, '../../../.data')
+const dataRoot = worldPath()
 const clockFile = path.join(dataRoot, 'simulator/clock.json')
 const simulatorState = path.join(dataRoot, 'simulator/state.json')
 const emailsDir = path.join(dataRoot, 'emails')

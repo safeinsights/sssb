@@ -1,8 +1,8 @@
 import { rmSync } from 'node:fs'
-import path from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { signInAs } from '../support/people'
 import { setWorldFlag } from '../support/world-flags'
+import { worldPath } from '../support/worlds'
 
 /**
  * THE MANUAL ACTOR. This spec performs BY HAND exactly the loop the simulated-world iframe actors
@@ -26,7 +26,7 @@ import { setWorldFlag } from '../support/world-flags'
  * webhook calls additionally present their own Bearer credential (a JWT / the shared secret).
  */
 
-const simulatorState = path.resolve(__dirname, '../../../.data/simulator/state.json')
+const simulatorState = worldPath('simulator', 'state.json')
 
 function clearSimulatorState() {
     try {
