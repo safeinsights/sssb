@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test'
+import { coldRoute } from './budgets'
 
 /**
  * Open the header OrgSwitcher (a Mantine Menu) and pick `slug`, hydration-safe: a click on the
@@ -17,7 +18,7 @@ import { expect, type Page } from '@playwright/test'
  * ACTIVE org, so it is only the picked name once the new document is there (matched exactly: a name that
  * is part of the old one would pass early); and when the org was already active the pick is a no-op with
  * no reload, and the title already matches. The budget is one full reload of a dev-mode route (the same
- * 45s as `untilNewDocument`).
+ * 45s as `untilNewDocument` on `next dev`, and the assertion budget on a production build).
  */
 export async function pickOrg(page: Page, slug: string) {
     const trigger = page.getByTestId('org-switcher')
@@ -30,6 +31,6 @@ export async function pickOrg(page: Page, slug: string) {
         // click closes the menu.
         name = (await item.locator('p').first().innerText({ timeout: 2_000 })).trim()
         await item.click({ timeout: 2_000 })
-    }).toPass({ timeout: 45_000 })
-    await expect(trigger.locator('p').first()).toHaveText(name, { timeout: 45_000 })
+    }).toPass({ timeout: coldRoute(45_000) })
+    await expect(trigger.locator('p').first()).toHaveText(name, { timeout: coldRoute(45_000) })
 }

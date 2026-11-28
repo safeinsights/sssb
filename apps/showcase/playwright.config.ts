@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import { originFor } from '@sssb/tools/ports'
 import { assertNoLiveDevTicker } from '@sssb/tools/ticker-marker'
-import { DESTRUCTIVE_EXPECT_TIMEOUT, DESTRUCTIVE_TEST_TIMEOUT, E2E_BUILD } from './tests/e2e/support/budgets'
+import { CHROMIUM_TEST_TIMEOUT, DESTRUCTIVE_TEST_TIMEOUT, E2E_BUILD, EXPECT_TIMEOUT } from './tests/e2e/support/budgets'
 import { E2E_WORKERS, workerServers, worldOrigin } from './tests/e2e/support/worlds'
 
 // A dev server started with `DEV_TICK_SECONDS` set would be ADOPTED by `reuseExistingServer` below and tick under the
@@ -20,23 +20,20 @@ const BASE_URL = originFor('showcase')
  * so a change that breaks the production build ships green.
  *
  * Local stays on dev deliberately: `reuseExistingServer` keeps a warm server across runs, and a
- * build per attempt would cost more than the compiles it saves. The destructive project's budgets
- * are re-derived for the production build (#100); the chromium project's below are still the dev ones.
+ * build per attempt would cost more than the compiles it saves. Both projects' budgets have a production-build
+ * value derived from CI's numbers (#100, #235) and a dev one, as ./tests/e2e/support/budgets.ts says.
  */
 
 export default defineConfig({
     testDir: './tests/e2e',
     fullyParallel: true,
-    // First hits compile routes on the dev server; give assertions room for cold compiles,
-    // and one local retry — parallel first-compiles can transiently fail a page load.
-    expect: { timeout: 15_000 },
-    // The same reasoning the starter's config already applies to itself, and for the same reason:
-    // routes compile on demand, so a test's budget has to cover a compile it did not cause. Playwright's
-    // 30s default was survivable only while `workers` was pinned to 1 — measured at 3 workers, the two
-    // navigation-heaviest specs (simulator-panel continuity, tenancy) blow through 30s while the dev
-    // server serialises their compiles, and fail as bare waitForURL timeouts. Raising the budget does
-    // not slow a passing test; it stops a queued compile being reported as a product bug.
-    timeout: 60_000,
+    // One pair of budgets for each server the suite runs against (./tests/e2e/support/budgets.ts says how each was
+    // derived): a production build's, from CI's measured durations, and `next dev`'s, where routes compile on their
+    // first hit, so a test's budget has to cover a compile it did not cause (measured at 3 workers on a dev server, the
+    // two navigation-heaviest specs, simulator-panel continuity and tenancy, blew through Playwright's 30 s default).
+    // These are the chromium project's; the destructive project below sets its own test budget.
+    expect: { timeout: EXPECT_TIMEOUT },
+    timeout: CHROMIUM_TEST_TIMEOUT,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 1,
     // ONE WORKER BY DEFAULT, AND NOT BECAUSE OF MEMORY. Measured 2026-07-31 on a 10-core/64GB machine, the flake
@@ -81,7 +78,6 @@ export default defineConfig({
             // reuseExistingServer:false, this pass starts against a COLD server, every route of which compiles on its
             // first hit under `next dev`.
             timeout: DESTRUCTIVE_TEST_TIMEOUT,
-            expect: { timeout: DESTRUCTIVE_EXPECT_TIMEOUT },
         },
     ],
     webServer: [

@@ -6,6 +6,12 @@ import { expect, test, type Page } from '@playwright/test'
  * and one through Snapshots: a world knob turned, then the world reset to the seed.
  */
 
+/**
+ * A wait that only `next dev`'s compile makes long, a page's hydration or a reload after a reset: `ms` on `next dev`, the
+ * config's assertion budget on a production build (`E2E_BUILD=1`, CI), where these took 1.5 s at most (2026-11-28).
+ */
+const onDev = (ms: number): number => (process.env['E2E_BUILD'] === '1' ? 10_000 : ms)
+
 /** The pill renders before React attaches its click handler; the panel stamps `data-hydrated` once it has. */
 async function openPanel(page: Page) {
     const panel = page.getByTestId('simulator-panel')
@@ -13,7 +19,7 @@ async function openPanel(page: Page) {
         if (await panel.isVisible()) return
         await page.locator('[data-testid="simulator-pill"][data-hydrated]').click({ timeout: 2_000 })
         await expect(panel).toBeVisible({ timeout: 2_000 })
-    }).toPass({ timeout: 30_000 })
+    }).toPass({ timeout: onDev(30_000) })
 }
 
 test('the Simulator signs you in as anyone, and serves its mail, jobs and errors tabs', async ({ page }) => {
@@ -59,7 +65,7 @@ async function stampDocument(page: Page) {
 
 async function waitForReload(page: Page) {
     await page.waitForFunction(() => !(window as unknown as { __beforeReload?: boolean }).__beforeReload, undefined, {
-        timeout: 45_000,
+        timeout: onDev(45_000),
     })
 }
 
@@ -70,8 +76,9 @@ test.describe('the world knobs', () => {
     })
 
     test('the Simulator turns a world knob and resets the world to the seed', async ({ page }) => {
-        // A reset closes the world's database, and the next request migrates and seeds it again.
-        test.setTimeout(120_000)
+        // A reset closes the world's database, and the next request migrates and seeds it again: on `next dev` that takes
+        // more than the config's budget, compiling as it goes; on a production build the config's budget holds.
+        if (process.env['E2E_BUILD'] !== '1') test.setTimeout(120_000)
         // From the seed, so a retry after a failure part-way does not start with the knob already turned.
         expect((await page.request.post('/api/simulator/reset', { data: {} })).ok()).toBe(true)
         await page.goto('/en/signin')
