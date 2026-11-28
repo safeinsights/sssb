@@ -26,7 +26,8 @@ What the check newly **accepts**, in a page only (a route is judged as before):
   (`@sssb/kit/adapters/index`), `sameOriginPath` (`@sssb/kit/core/same-origin-path`), `getTenantTheme`
   (`@sssb/kit/theme`) and `mantineHtmlProps` (`@mantine/core`), each a named import under its exported name;
 - an imported component used only as a JSX tag (by any import), and a component of the page's own file used only as a
-  JSX tag (declared once and never reassigned, or a `const` arrow), whose code is read as part of the page;
+  JSX tag (a function declared once and never reassigned, or a `const` bound to a function), whose code is read as part
+  of the page;
 - `const { Form } = await import('…')`, alone or as one element of an awaited `Promise.all([...])` destructured the
   same way, when every name it binds is used only as a JSX tag (the guide's shape for a real adapter's component);
 - a `reads-only` entry under `outsideApi.files` keyed by a page, layout or metadata route file (`[locale]/signin/page.tsx`),
@@ -45,7 +46,7 @@ What it newly **refuses**:
   loaded name used other than as a JSX tag;
 - a page under an intercepting segment (`(.)x`), as a route there is;
 - an app entry of any gate kind but `reads-only` for a page, even under `src/app/api`; and a page under `service/`
-  that is not wrapped by `withServiceCaller`.
+  under `src/app/api/service/` that is not wrapped by `withServiceCaller`.
 
 Pages are matched by URL as routes are, so a route group's layout and its parent layout share one key
 (`[locale]/layout.tsx`): one entry covers both, each judged on its own. The generated app ships an

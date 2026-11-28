@@ -8529,6 +8529,6 @@ Membership` on the active org before `listMembers`, anchored on its slug as the 
   surprising: one entry, each layout judged by it alone. An intercepting page is refused, as an intercepting route is,
   though intercepted pages (a modal) are Next's main use of interception; a page there that authorizes is refused too.
   Left as the issue's brief said; revisit if an adopter needs one.
-- **Found on the way:** `export *` was followed for every judged name, and a page's `default` would have come through
-  one, which JavaScript never re-exports; both lookups now skip it. The check keeps its id `authz-mutations`; its title
+- **Found on the way:** following `export *` for a page's `default`, as the lookups follow it for a verb, would have
+  taken a default JavaScript never re-exports through one; both lookups now skip it. The check keeps its id `authz-mutations`; its title
   and second test name now say pages.

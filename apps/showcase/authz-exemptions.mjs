@@ -3,7 +3,8 @@
  * `@sssb/kit/authz/app-exemptions`): the pages that pass without calling `authorize(...)` because they read nothing
  * org-scoped, each with its reason and the gate it rests on. A `reads-only` gate lists the imports the page may name
  * besides inert values and SSSB's page allow-list. Keys under `outsideApi` are relative to `src/app`, matched by URL
- * (a route group's segment is dropped). Every other page of the showcase authorizes (safeinsights/sssb#221).
+ * (a route group's segment is dropped). Every other page of the showcase reads nothing or authorizes
+ * (safeinsights/sssb#221).
  */
 export default {
     outsideApi: {
