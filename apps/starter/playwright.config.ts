@@ -41,7 +41,8 @@ export default defineConfig({
     // and more workers against one shared world (one `.data` behind one dev server) cost reliability rather than
     // saving time.
     workers: 1,
-    reporter: process.env['CI'] ? 'github' : 'list',
+    // TEMPORARY: the timing reporter is the measurement; the commit that sets the budgets removes it.
+    reporter: process.env['CI'] ? [['github'], ['./tests/e2e/timing-reporter.ts']] : 'list',
     use: {
         baseURL: BASE_URL,
         trace: 'on-first-retry',

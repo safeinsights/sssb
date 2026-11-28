@@ -49,7 +49,8 @@ export default defineConfig({
     // on lint-typecheck-unit (6 to 10 min) and the e2e shards take under 3 min whatever their worker count; the decision
     // log has the numbers. Under `next dev` it is always 1: Next allows one dev server per app directory.
     workers: E2E_WORKERS,
-    reporter: process.env.CI ? 'github' : 'list',
+    // TEMPORARY (safeinsights/sssb#235): the timing reporter is the measurement; the commit that sets the budgets removes it.
+    reporter: process.env.CI ? [['github'], ['./tests/e2e/support/timing-reporter.ts']] : 'list',
     use: {
         // Each worker's own server (./tests/e2e/support/worlds.ts): BASE_URL itself for worker 0, and with one worker.
         baseURL: worldOrigin(BASE_URL),
