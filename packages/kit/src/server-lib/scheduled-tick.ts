@@ -5,6 +5,7 @@ import {
     DELIVERIES_WINDOW_MS,
     RETRIES_WINDOW_MS,
     SCHEDULES_WINDOW_MS,
+    SWEEP_WINDOW_MS,
 } from '../db/drain-budget'
 import { runDueRetries } from '../db/jobs'
 import { runDueSchedules } from '../db/schedules'
@@ -59,6 +60,10 @@ export interface ScheduledTickResult {
  * server with a 30-second limit: change them only for a server whose limit differs, or to drain less per tick.
  */
 export interface TickBudget {
+    /** The most lost jobs one tick's sweep fails (safeinsights/sssb#252). */
+    maxSweep: number
+    /** Milliseconds from the tick's start after which the sweep judges no more jobs. */
+    sweepWindowMs: number
     /** The most due schedules one tick spawns. */
     maxSchedules: number
     /** The most due job retries one tick starts. */
@@ -74,6 +79,8 @@ export interface TickBudget {
 }
 
 const DEFAULT_TICK_BUDGET: TickBudget = {
+    maxSweep: DEFAULT_DRAIN_MAX_ITEMS,
+    sweepWindowMs: SWEEP_WINDOW_MS,
     maxSchedules: DEFAULT_DRAIN_MAX_ITEMS,
     maxRetries: DEFAULT_DRAIN_MAX_ITEMS,
     maxDeliveries: DEFAULT_DRAIN_MAX_ITEMS,
@@ -100,6 +107,8 @@ export async function runScheduledTick(
     // Field by field, so a field given as `undefined` (an unset environment value, say) means the default, never a hole.
     const given = options.budget ?? {}
     const budget: TickBudget = {
+        maxSweep: given.maxSweep ?? DEFAULT_TICK_BUDGET.maxSweep,
+        sweepWindowMs: given.sweepWindowMs ?? DEFAULT_TICK_BUDGET.sweepWindowMs,
         maxSchedules: given.maxSchedules ?? DEFAULT_TICK_BUDGET.maxSchedules,
         maxRetries: given.maxRetries ?? DEFAULT_TICK_BUDGET.maxRetries,
         maxDeliveries: given.maxDeliveries ?? DEFAULT_TICK_BUDGET.maxDeliveries,
@@ -111,7 +120,12 @@ export async function runScheduledTick(
     // A runner that can lose a job mid-run (JOBS_RUNNER=in-process) fails the lost ones first; its own count is not
     // reported here, the failed jobs' errors say it.
     try {
-        await jobs.sweep?.(now)
+        await jobs.sweep?.(now, {
+            maxItems: budget.maxSweep,
+            deadline: startedAt + budget.sweepWindowMs,
+            clock,
+            ...(options.random && { random: options.random }),
+        })
     } catch (error) {
         // A sweep that fails must not stop the schedules and deliveries behind it.
         console.warn(

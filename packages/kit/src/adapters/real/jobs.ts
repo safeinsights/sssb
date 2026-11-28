@@ -4,6 +4,7 @@ import {
     CodeBuildClient,
     StartBuildCommand,
 } from '@aws-sdk/client-codebuild'
+import { shuffled } from '../../db/drain-budget'
 import type { DbPort } from '../../ports/db'
 import type { JobsPort, SubmittedJob } from '../../ports/jobs'
 
@@ -90,8 +91,10 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
         )
 
     const port: JobsPort = {
+        // Every job row this runner starts is written `starting` by its own insert (or the retry claim that readies it),
+        // so there is no write of `start`'s own to fail before StartBuild (safeinsights/sssb#251).
+        startingRef: CODEBUILD_STARTING,
         async start(job) {
-            await setRef(job.tenantId, job.id, CODEBUILD_STARTING)
             const started = await client.send(startBuild(job)).catch(async (error: unknown) => {
                 // A client fault is CodeBuild saying no build started; anything else (a timeout, a server fault) may
                 // have started one, so the job stays `starting` and gets the longer wait.
@@ -119,9 +122,13 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
     if (!failLost) return port
     return {
         ...port,
-        async sweep(now) {
+        async sweep(now, budget) {
             const quietSince = new Date(now.getTime() - CODEBUILD_LOST_AFTER_MS)
             let failed = 0
+            // Bounded by the tick's budget (safeinsights/sssb#252): no tenant looked at, no build asked about and no job
+            // failed after its deadline, and no more failed than its count.
+            const clock = budget?.clock ?? Date.now
+            const spent = () => budget !== undefined && (failed >= budget.maxItems || clock() >= budget.deadline)
             let tenants: { id: string }[]
             try {
                 tenants = await db.getDb().selectFrom('tenants').select('id').execute()
@@ -129,7 +136,9 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                 console.warn(`SSSB jobs: the CodeBuild sweep could not list tenants: ${messageOf(error)}`)
                 return 0
             }
-            for (const tenant of tenants) {
+            // In a fresh random order under a bound, so a sweep it stops short does not always leave the same tenants.
+            for (const tenant of budget ? shuffled(tenants, budget, (t) => t.id) : tenants) {
+                if (spent()) break
                 let open: { id: string; runner_ref: string | null; updated_at: unknown }[]
                 try {
                     open = await db.withTenant(tenant.id, (trx) =>
@@ -173,6 +182,7 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                 }
                 const ids = [...byBuild.keys()]
                 for (let i = 0; i < ids.length; i += BATCH_GET_BUILDS_MAX) {
+                    if (spent()) break
                     let answer: BatchGetBuildsCommandOutput
                     try {
                         answer = await client.send(
@@ -199,6 +209,7 @@ export function createRealJobs(project: string, region: string, db: DbPort, fail
                     }
                 }
                 for (const { id, error } of lost) {
+                    if (spent()) break
                     try {
                         if (await failLost({ tenantId: tenant.id, jobId: id, error, now })) failed += 1
                     } catch (failure) {

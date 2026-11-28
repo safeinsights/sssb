@@ -74,6 +74,11 @@ export const DEFAULT_DRAIN_MAX_ITEMS = 100
  * in-process jobs runner run the job itself (`jobs.start`), which no window can bound; such work belongs on a runner
  * with compute of its own. A change to the server's timeout has to change these too.
  */
+/**
+ * How long after the tick's start the jobs port's sweep may judge lost jobs (safeinsights/sssb#252): two seconds, the
+ * first part of the schedules' window, so a sweep that finds many lost jobs leaves the drains most of theirs.
+ */
+export const SWEEP_WINDOW_MS = 2_000
 /** How long after the tick's start the schedules drain may start a spawn. */
 export const SCHEDULES_WINDOW_MS = 6_000
 /** How long after the tick's start the job-retry drain may start a retry (safeinsights/sssb#135). */

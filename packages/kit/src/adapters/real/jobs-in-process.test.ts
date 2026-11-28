@@ -179,6 +179,27 @@ describe('the in-process jobs runner', () => {
         expect(notified).toContainEqual({ tenantId, jobId: id, status: 'failed' })
     })
 
+    test('a bounded sweep fails at most its count and nothing after its deadline; the next sweep takes the rest (#252)', async () => {
+        const { ports, notify, createInProcessJobs, view, tenantId, orgId } = await harness()
+        const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')
+        const { submitJob } = await import('../../db/jobs')
+        const dying = { start: async () => Promise.reject(new Error('invocation ended')) }
+        const ids: string[] = []
+        for (let i = 0; i < 3; i++) {
+            await submitJob(ports.db, dying, { tenantId, orgId, kind: 'export-dockets', payload: {} }).catch(
+                () => undefined,
+            )
+        }
+        for (const j of await listOrgJobs(ports, tenantId, orgId)) if (j.status === 'queued') ids.push(j.id)
+        expect(ids.length).toBeGreaterThanOrEqual(3)
+        const jobs = createInProcessJobs(ports, notify)
+        const later = new Date(Date.now() + IN_PROCESS_LOST_AFTER_MS + 60_000)
+        expect(await jobs.sweep!(later, { maxItems: 2, deadline: 0, clock: () => 1 }), 'past its deadline').toBe(0)
+        expect(await jobs.sweep!(later, { maxItems: 2, deadline: Number.MAX_SAFE_INTEGER })).toBe(2)
+        expect(await jobs.sweep!(later)).toBe(ids.length - 2)
+        for (const id of ids) expect((await view(id)).status).toBe('failed')
+    })
+
     test("a schedule's job whose start() failed is failed by the sweep, never left queued", async () => {
         const { ports, notify, notified, createInProcessJobs, view, tenantId, orgId } = await harness()
         const { IN_PROCESS_LOST_AFTER_MS } = await import('./jobs-in-process')

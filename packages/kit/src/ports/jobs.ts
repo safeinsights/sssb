@@ -71,12 +71,32 @@ export type JobHandler = (payload: unknown, ctx: JobContext) => Promise<{ result
  * `in-process` runs the handler in the server before `start` returns
  * (packages/kit/src/adapters/real/jobs-in-process.ts), and `none` throws `AbsentPortError`.
  */
+/**
+ * How much of the scheduled tick one `sweep` may spend (safeinsights/sssb#252): at most `maxItems` jobs failed, and
+ * none judged after `deadline` (in `clock`'s milliseconds, `Date.now` by default). `random` shuffles the order the
+ * tenants are looked at, so a bound that stops a sweep short does not always leave the same tenants for later. The
+ * shape of the drains' budget (`@sssb/kit/db/drain-budget`), restated here so the port imports nothing.
+ */
+export interface SweepBudget {
+    maxItems: number
+    deadline: number
+    clock?: () => number
+    random?: () => number
+}
+
 export interface JobsPort {
     start(job: SubmittedJob): Promise<void>
     /**
      * Optional: for a runner whose jobs can be lost mid-run (the in-process runner, whose invocation can end before it
-     * records an outcome), fails each job it judges lost and says how many. The scheduled tick calls it, when the port
-     * has it, before it drains the due schedules.
+     * records an outcome; the CodeBuild runner, whose build can end without reporting), fails each job it judges lost
+     * and says how many. The scheduled tick calls it, when the port has it, before it drains the due schedules, with a
+     * budget of its own: a sweep stops judging once that is spent, and what it leaves the next tick's sweep finds.
      */
-    sweep?(now: Date): Promise<number>
+    sweep?(now: Date, budget?: SweepBudget): Promise<number>
+    /**
+     * Optional: the `jobs.runner_ref` a job's row is written with when this runner is the one to start it, so the row
+     * says so from its first write (safeinsights/sssb#251). The CodeBuild runner's is `starting`, which its sweep can
+     * judge even when `start` never gets as far as a write of its own. A runner without one leaves it null.
+     */
+    startingRef?: string
 }
